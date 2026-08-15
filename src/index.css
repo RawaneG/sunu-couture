@@ -1,0 +1,135 @@
+@import "tailwindcss";
+@custom-variant dark (&:where(.dark, .dark *));
+
+:root {
+  --paper: #f1e6d2;
+  --surface: #fffcf5;
+  --surface-2: #eae0c7;
+  --surface-3: #ddcda3;
+  --ink: #241c34;
+  --ink-soft: #5b5468;
+  --ink-faint: #8c85a0;
+  --line: rgba(36, 28, 52, 0.13);
+  --line-strong: rgba(36, 28, 52, 0.26);
+  --indigo: #2d3a6b;
+  --indigo-soft: #48548f;
+  --indigo-tint: #e8eaf3;
+  --amber: #b87a1f;
+  --amber-tile: #d69a34;
+  --amber-tint: #faf1de;
+  --teal: #257763;
+  --teal-tint: #e6f2ee;
+  --terracotta: #a8471f;
+  --terracotta-tint: #f7e8e0;
+  --grey-status: #7d7489;
+  --focus-ring: #2d3a6b;
+}
+
+.dark {
+  --paper: #130f1e;
+  --surface: #1c1630;
+  --surface-2: #241c3a;
+  --surface-3: #2d2447;
+  --ink: #f1e9d8;
+  --ink-soft: #c6bbd1;
+  --ink-faint: #8b7f9c;
+  --line: rgba(241, 233, 216, 0.11);
+  --line-strong: rgba(241, 233, 216, 0.22);
+  --indigo: #9aa8f2;
+  --indigo-soft: #6d7cd1;
+  --indigo-tint: #242c52;
+  --amber: #edbc72;
+  --amber-tile: #d69a34;
+  --amber-tint: #392a14;
+  --teal: #57c2a6;
+  --teal-tint: #143c31;
+  --terracotta: #e28661;
+  --terracotta-tint: #3a2018;
+  --grey-status: #a79fb5;
+  --focus-ring: #9aa8f2;
+}
+
+@theme {
+  --color-paper: var(--paper);
+  --color-surface: var(--surface);
+  --color-surface-2: var(--surface-2);
+  --color-surface-3: var(--surface-3);
+  --color-ink: var(--ink);
+  --color-ink-soft: var(--ink-soft);
+  --color-ink-faint: var(--ink-faint);
+  --color-line: var(--line);
+  --color-line-strong: var(--line-strong);
+  --color-indigo: var(--indigo);
+  --color-indigo-soft: var(--indigo-soft);
+  --color-indigo-tint: var(--indigo-tint);
+  --color-amber: var(--amber);
+  --color-amber-tile: var(--amber-tile);
+  --color-amber-tint: var(--amber-tint);
+  --color-teal: var(--teal);
+  --color-teal-tint: var(--teal-tint);
+  --color-terracotta: var(--terracotta);
+  --color-terracotta-tint: var(--terracotta-tint);
+  --color-grey-status: var(--grey-status);
+
+  --font-display: "Fraunces Variable", ui-serif, Georgia, serif;
+  --font-sans: "Inter Variable", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+
+  --shadow-soft: 0 1px 2px rgba(36, 28, 52, 0.06), 0 12px 28px -14px rgba(36, 28, 52, 0.28);
+  --shadow-lift: 0 8px 16px -6px rgba(36, 28, 52, 0.32), 0 24px 48px -24px rgba(36, 28, 52, 0.4);
+}
+
+@layer base {
+  html {
+    font-family: var(--font-sans);
+    color-scheme: light;
+  }
+  html.dark {
+    color-scheme: dark;
+  }
+  body {
+    background: var(--color-paper);
+    color: var(--color-ink);
+    font-feature-settings: "cv11", "ss01";
+  }
+  ::selection {
+    background: var(--color-amber-tile);
+    color: #1c1409;
+  }
+  :focus-visible {
+    outline: 2px solid var(--focus-ring);
+    outline-offset: 2px;
+    border-radius: 6px;
+  }
+  * {
+    font-variant-numeric: tabular-nums;
+  }
+}
+
+@layer utilities {
+  .no-scrollbar {
+    scrollbar-width: none;
+    -ms-overflow-style: none;
+  }
+  .no-scrollbar::-webkit-scrollbar {
+    display: none;
+  }
+  .bg-weave {
+    background-image:
+      repeating-linear-gradient(115deg, color-mix(in oklab, var(--color-ink) 5%, transparent) 0px, color-mix(in oklab, var(--color-ink) 5%, transparent) 1px, transparent 1px, transparent 11px),
+      repeating-linear-gradient(25deg, color-mix(in oklab, var(--color-ink) 5%, transparent) 0px, color-mix(in oklab, var(--color-ink) 5%, transparent) 1px, transparent 1px, transparent 11px);
+  }
+  .text-balance {
+    text-wrap: balance;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}

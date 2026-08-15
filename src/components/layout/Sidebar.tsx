@@ -1,0 +1,72 @@
+import { Link, NavLink } from "react-router-dom";
+import clsx from "clsx";
+import { IconHome, IconHanger, IconUsers, IconPlus, IconSun, IconMoon, IconScissors } from "../../lib/icons";
+import { useTheme } from "../../lib/theme";
+
+const NAV = [
+  { to: "/", label: "Accueil", icon: IconHome, end: true },
+  { to: "/commandes", label: "Commandes", icon: IconHanger, end: false },
+  { to: "/clients", label: "Clients", icon: IconUsers, end: false },
+];
+
+export default function Sidebar() {
+  const { dark, toggle } = useTheme();
+
+  return (
+    <aside className="hidden lg:flex lg:w-64 lg:flex-none lg:flex-col lg:border-r lg:border-line lg:bg-surface">
+      <div className="bg-weave px-6 pt-8 pb-7">
+        <Link to="/" className="flex items-center gap-2.5">
+          <span className="flex h-9 w-9 flex-none items-center justify-center rounded-xl bg-indigo text-amber-tile">
+            <IconScissors size={17} />
+          </span>
+          <span className="font-display italic font-bold text-xl leading-none text-ink text-balance">
+            Sunu Couture
+          </span>
+        </Link>
+      </div>
+
+      <div className="px-4">
+        <Link
+          to="/commandes/nouvelle"
+          className="flex items-center justify-center gap-2 rounded-xl bg-amber-tile px-4 py-3 text-sm font-bold text-[#2a1c04] shadow-soft hover:brightness-105 transition"
+        >
+          <IconPlus size={16} strokeWidth={2} />
+          Nouvelle commande
+        </Link>
+      </div>
+
+      <nav className="flex-1 px-3 pt-6">
+        <ul className="flex flex-col gap-1">
+          {NAV.map(({ to, label, icon: Icon, end }) => (
+            <li key={to}>
+              <NavLink
+                to={to}
+                end={end}
+                className={({ isActive }) =>
+                  clsx(
+                    "flex items-center gap-3 rounded-xl px-3.5 py-2.5 text-[14px] font-semibold transition-colors",
+                    isActive ? "bg-indigo-tint text-indigo" : "text-ink-soft hover:bg-surface-2 hover:text-ink"
+                  )
+                }
+              >
+                <Icon size={18} />
+                {label}
+              </NavLink>
+            </li>
+          ))}
+        </ul>
+      </nav>
+
+      <div className="border-t border-line px-4 py-4">
+        <button
+          type="button"
+          onClick={toggle}
+          className="flex w-full items-center gap-3 rounded-xl px-3.5 py-2.5 text-[13px] font-semibold text-ink-soft hover:bg-surface-2 hover:text-ink transition-colors"
+        >
+          {dark ? <IconSun size={17} /> : <IconMoon size={17} />}
+          {dark ? "Thème clair" : "Thème sombre"}
+        </button>
+      </div>
+    </aside>
+  );
+}
