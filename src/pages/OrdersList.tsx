@@ -47,11 +47,11 @@ export default function OrdersList() {
   return (
     <div className="lg:h-full lg:flex lg:flex-col">
       <PageHeader title="Commandes" search={{ query, onQueryChange: setQuery, placeholder: "Client ou vêtement…" }} />
-      <div className="hidden lg:block px-10 -mt-2 pb-4">
+      <div className="hidden lg:block px-6 -mt-2 py-3">
         <p className="text-sm text-ink-soft">{orders.length} commandes au total</p>
       </div>
 
-      <div className="flex gap-2 overflow-x-auto no-scrollbar px-4 lg:px-10 pt-3 pb-3">
+      <div className="flex gap-2 overflow-x-auto no-scrollbar px-4 lg:px-6 pb-4">
         {FILTERS.map((f) => (
           <motion.button
             key={f.key}
@@ -62,7 +62,7 @@ export default function OrdersList() {
             }}
             className={clsx(
               "flex flex-none items-center gap-1.5 rounded-full px-3 py-1.5 text-[12px] font-bold transition-colors",
-              filter === f.key ? "bg-indigo text-white" : "bg-surface-2 text-ink-soft hover:bg-surface-3"
+              filter === f.key ? "bg-indigo text-white" : "glass-chip text-ink-soft hover:bg-surface-3"
             )}
           >
             <span className={clsx("h-1.5 w-1.5 rounded-full", filter === f.key ? "bg-white" : f.dot)} />
@@ -74,7 +74,7 @@ export default function OrdersList() {
       <div className="flex-1 lg:overflow-y-auto px-2.5 lg:px-6 pb-4">
         {filtered.length === 0 ? (
           <div className="mt-10 flex flex-col items-center gap-3 text-ink-faint">
-            <span className="flex h-12 w-12 items-center justify-center rounded-full bg-surface-2">
+            <span className="glass-chip flex h-12 w-12 items-center justify-center rounded-full">
               <IconHanger size={22} />
             </span>
             <p className="text-sm font-semibold">Aucune commande trouvée.</p>

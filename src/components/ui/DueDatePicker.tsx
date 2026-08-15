@@ -34,7 +34,7 @@ export default function DueDatePicker({
 
   return (
     <div>
-      <div className="mb-2.5 inline-flex rounded-full bg-surface-2 p-1">
+      <div className="glass-chip mb-2.5 inline-flex rounded-full p-1">
         <button
           type="button"
           onClick={() => switchMode("single")}
@@ -60,7 +60,7 @@ export default function DueDatePicker({
       {mode === "single" ? (
         <div className="flex flex-col gap-2.5">
           <DayPicker value={dueDate} onChange={(iso) => onChange(iso, null)} days={14} />
-          <label className="relative flex w-fit items-center gap-2 rounded-full bg-surface-2 px-3.5 py-2 text-[12px] font-bold text-ink-soft">
+          <label className="glass-chip relative flex w-fit items-center gap-2 rounded-full px-3.5 py-2 text-[12px] font-bold text-ink-soft">
             <IconCalendar size={14} />
             Autre date · {formatFullDate(dueDate)}
             <input
@@ -95,7 +95,7 @@ function DateField({
   onChange: (iso: string) => void;
 }) {
   return (
-    <label className="relative block rounded-2xl bg-surface-2 px-4 py-3">
+    <label className="glass-chip relative block rounded-2xl px-4 py-3">
       <span className="block text-[10px] font-bold uppercase tracking-wide text-ink-faint">{label}</span>
       <span className="mt-0.5 block text-[13.5px] font-extrabold">{formatFullDate(value)}</span>
       <input

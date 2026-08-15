@@ -105,7 +105,7 @@ export default function VoiceRecorder({
 
   if (value) {
     return (
-      <div className="flex w-full items-center gap-3 rounded-2xl bg-surface-2 px-4 py-3">
+      <div className="glass-card flex w-full items-center gap-3 rounded-2xl px-4 py-3">
         <audio
           ref={audioRef}
           src={value.url}
@@ -149,7 +149,7 @@ export default function VoiceRecorder({
       <button
         type="button"
         onClick={startRecording}
-        className="flex w-full items-center gap-3 rounded-2xl bg-surface-2 px-4 py-3 text-left hover:bg-surface-3 transition-colors"
+        className="glass-card flex w-full items-center gap-3 rounded-2xl px-4 py-3 text-left hover:bg-surface-3 transition-colors"
       >
         <span className="flex h-10 w-10 flex-none items-center justify-center rounded-full bg-terracotta text-white">
           <IconMic size={16} />

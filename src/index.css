@@ -23,6 +23,9 @@
   --terracotta-tint: #f7e8e0;
   --grey-status: #7d7489;
   --focus-ring: #2d3a6b;
+  --glow-1: rgba(45, 58, 107, 0.14);
+  --glow-2: rgba(184, 122, 31, 0.13);
+  --glow-3: rgba(37, 119, 99, 0.11);
 }
 
 .dark {
@@ -47,6 +50,9 @@
   --terracotta-tint: #3a2018;
   --grey-status: #a79fb5;
   --focus-ring: #9aa8f2;
+  --glow-1: rgba(154, 168, 242, 0.16);
+  --glow-2: rgba(237, 188, 114, 0.1);
+  --glow-3: rgba(87, 194, 166, 0.12);
 }
 
 @theme {
@@ -87,7 +93,13 @@
     color-scheme: dark;
   }
   body {
-    background: var(--color-paper);
+    background-color: var(--color-paper);
+    background-image:
+      radial-gradient(760px 520px at 6% -8%, var(--glow-1), transparent 60%),
+      radial-gradient(680px 480px at 106% 8%, var(--glow-2), transparent 60%),
+      radial-gradient(680px 560px at 46% 118%, var(--glow-3), transparent 60%);
+    background-attachment: fixed;
+    background-repeat: no-repeat;
     color: var(--color-ink);
     font-feature-settings: "cv11", "ss01";
   }
@@ -121,16 +133,48 @@
   .text-balance {
     text-wrap: balance;
   }
+  /*
+   * Glass utilities use an inset box-shadow (not `border`) for their hairline rim so they
+   * never collide with Tailwind border-* utilities applied alongside them (e.g. state rings).
+   */
   .glass-card {
-    box-shadow: inset 0 1px 0 0 rgba(255, 255, 255, 0.06);
-    border: 1px solid var(--color-line);
+    background: color-mix(in oklab, var(--color-surface) 70%, transparent);
+    backdrop-filter: blur(20px) saturate(1.4);
+    -webkit-backdrop-filter: blur(20px) saturate(1.4);
+    box-shadow:
+      inset 0 1px 0 0 rgba(255, 255, 255, 0.07),
+      inset 0 0 0 1px color-mix(in oklab, var(--color-line-strong) 45%, transparent);
   }
-  .glass-panel {
-    background: color-mix(in oklab, var(--color-surface) 82%, transparent);
-    backdrop-filter: blur(24px) saturate(1.5);
-    -webkit-backdrop-filter: blur(24px) saturate(1.5);
-    border: 1px solid color-mix(in oklab, var(--color-line-strong) 60%, transparent);
+  .glass-chip {
+    background: color-mix(in oklab, var(--color-surface-2) 62%, transparent);
+    backdrop-filter: blur(14px) saturate(1.3);
+    -webkit-backdrop-filter: blur(14px) saturate(1.3);
+    box-shadow: inset 0 0 0 1px color-mix(in oklab, var(--color-line) 65%, transparent);
   }
+  .glass-input {
+    background: color-mix(in oklab, var(--color-surface-2) 58%, transparent);
+    backdrop-filter: blur(16px) saturate(1.3);
+    -webkit-backdrop-filter: blur(16px) saturate(1.3);
+    box-shadow: inset 0 0 0 1px color-mix(in oklab, var(--color-line) 55%, transparent);
+  }
+}
+
+/*
+ * Telegram-style circular reveal on theme switch, via the View Transitions API.
+ * The new (post-toggle) frame always sits above the old one, static, while our
+ * clip-path animation in theme.ts grows it outward from the click origin — so the
+ * incoming theme visibly wipes over the outgoing one instead of the two cross-fading.
+ */
+::view-transition-old(root),
+::view-transition-new(root) {
+  animation: none;
+  mix-blend-mode: normal;
+}
+::view-transition-old(root) {
+  z-index: 1;
+}
+::view-transition-new(root) {
+  z-index: 2;
 }
 
 @media (prefers-reduced-motion: reduce) {

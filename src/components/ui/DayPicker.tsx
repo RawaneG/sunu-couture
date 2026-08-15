@@ -20,7 +20,7 @@ export default function DayPicker({
   }, [value]);
 
   return (
-    <div className="flex gap-2 overflow-x-auto no-scrollbar pb-1 -mx-1 px-1">
+    <div className="flex gap-2 overflow-x-auto no-scrollbar pt-2 -mt-2 pb-1 -mx-1 px-1">
       {DAYS.map((iso) => {
         const { num, label } = formatDay(iso);
         const selected = iso.slice(0, 10) === value.slice(0, 10);
@@ -32,10 +32,10 @@ export default function DayPicker({
             onClick={() => onChange(iso)}
             aria-pressed={selected}
             className={clsx(
-              "relative flex w-14 flex-none flex-col items-center gap-0.5 rounded-2xl py-2.5 border-2",
+              "relative flex w-14 flex-none flex-col items-center gap-0.5 rounded-2xl py-2.5 border-2 transition-colors",
               selected
                 ? "bg-indigo border-indigo text-white"
-                : "bg-surface-2 border-transparent text-ink hover:bg-surface-3"
+                : "glass-chip border-transparent text-ink hover:bg-surface-3"
             )}
           >
             {selected && (

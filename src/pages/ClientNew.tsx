@@ -34,7 +34,7 @@ export default function ClientNew() {
         transition={{ duration: 0.22, ease: "easeOut" }}
         className="px-4 lg:px-10 py-4 lg:py-8 max-w-md lg:mx-auto"
       >
-        <div className="lg:rounded-3xl lg:bg-surface lg:shadow-soft lg:p-10 flex flex-col gap-5">
+        <div className="glass-card rounded-2xl p-4 lg:rounded-3xl lg:shadow-soft lg:p-10 flex flex-col gap-5">
           <ClientFields
             photo={photo}
             onPhotoChange={setPhoto}

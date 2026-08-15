@@ -19,12 +19,12 @@ export default function MobileBrandBar() {
       <motion.button
         type="button"
         whileTap={{ scale: 0.88, rotate: -12 }}
-        onClick={() => {
+        onClick={(e) => {
           haptic();
-          toggle();
+          toggle({ x: e.clientX, y: e.clientY });
         }}
         aria-label="Changer de thème"
-        className="flex h-9 w-9 items-center justify-center rounded-full bg-surface-2 text-ink-soft"
+        className="glass-chip flex h-9 w-9 items-center justify-center rounded-full text-ink-soft"
       >
         {dark ? <IconSun size={16} /> : <IconMoon size={16} />}
       </motion.button>

@@ -71,7 +71,7 @@ export default function OrderDetail() {
           <StatusPill order={order} className="sm:hidden" />
         </div>
 
-        <div className="glass-card mt-6 rounded-2xl bg-surface-2 px-4 py-4">
+        <div className="glass-card mt-6 rounded-2xl px-4 py-4">
           <Stepper status={order.status} />
           <p className="mt-4 text-center text-[13px] font-semibold text-ink-soft">
             {STATUS_DESCRIPTION[order.status]}
@@ -79,13 +79,13 @@ export default function OrderDetail() {
         </div>
 
         <div className="mt-5 grid grid-cols-2 gap-3">
-          <div className="glass-card rounded-2xl bg-surface-2 px-4 py-3">
+          <div className="glass-card rounded-2xl px-4 py-3">
             <p className="text-[10px] font-bold uppercase tracking-wide text-ink-faint">Livraison</p>
             <p className="mt-0.5 text-[14px] font-extrabold leading-snug">
               {order.dueDateStart ? formatFullDateRange(order.dueDateStart, order.dueDate) : formatFullDate(order.dueDate)}
             </p>
           </div>
-          <div className="glass-card rounded-2xl bg-surface-2 px-4 py-3">
+          <div className="glass-card rounded-2xl px-4 py-3">
             <p className="text-[10px] font-bold uppercase tracking-wide text-ink-faint">Prix</p>
             <p className="mt-0.5 text-[15px] font-extrabold tabular-nums">{formatFCFA(order.price)} FCFA</p>
           </div>
@@ -95,12 +95,12 @@ export default function OrderDetail() {
           <p className="mb-2 text-[11px] font-bold uppercase tracking-wide text-ink-faint">Mesures</p>
           {order.voiceNote && <VoiceNotePlayer note={order.voiceNote} />}
           {order.measurementsText && (
-            <p className={clsx("rounded-2xl bg-surface-2 px-4 py-3 text-[13.5px] font-semibold leading-relaxed", order.voiceNote && "mt-2")}>
+            <p className={clsx("glass-card rounded-2xl px-4 py-3 text-[13.5px] font-semibold leading-relaxed", order.voiceNote && "mt-2")}>
               {order.measurementsText}
             </p>
           )}
           {!hasMeasurements && (
-            <div className="flex items-center gap-3 rounded-2xl bg-surface-2 px-4 py-3 text-ink-faint">
+            <div className="glass-card flex items-center gap-3 rounded-2xl px-4 py-3 text-ink-faint">
               <span className="flex h-10 w-10 flex-none items-center justify-center rounded-full bg-surface-3">
                 <IconMic size={16} />
               </span>

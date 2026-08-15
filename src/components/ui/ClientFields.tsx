@@ -31,7 +31,7 @@ export default function ClientFields({
           value={name}
           onChange={(e) => onNameChange(e.target.value)}
           placeholder="Nom du client"
-          className="w-full rounded-2xl bg-surface-2 px-4 py-3 text-sm font-semibold outline-none placeholder:text-ink-faint focus:bg-surface-3"
+          className="glass-input w-full rounded-2xl px-4 py-3 text-sm font-semibold outline-none placeholder:text-ink-faint focus:bg-surface-3"
         />
       </div>
 
@@ -42,7 +42,7 @@ export default function ClientFields({
           onChange={(e) => onPhoneChange(e.target.value)}
           placeholder="77 000 00 00"
           inputMode="tel"
-          className="w-full rounded-2xl bg-surface-2 px-4 py-3 text-sm font-semibold outline-none placeholder:text-ink-faint focus:bg-surface-3"
+          className="glass-input w-full rounded-2xl px-4 py-3 text-sm font-semibold outline-none placeholder:text-ink-faint focus:bg-surface-3"
         />
       </div>
     </div>

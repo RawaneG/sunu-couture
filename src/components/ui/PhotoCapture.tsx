@@ -77,7 +77,7 @@ export default function PhotoCapture({
           whileTap={{ scale: 0.96 }}
           onClick={openSheet}
           className={clsx(
-            "flex flex-col items-center justify-center gap-2 border-2 border-dashed border-line-strong bg-surface-2 text-ink-faint transition-colors",
+            "glass-chip flex flex-col items-center justify-center gap-2 border-2 border-dashed border-line-strong text-ink-faint transition-colors",
             circle ? "h-28 w-28 rounded-full" : "h-40 w-full rounded-2xl"
           )}
         >
@@ -151,7 +151,7 @@ function PhotoSourceSheet({
         <button
           type="button"
           onClick={onClose}
-          className="mt-1.5 flex w-full items-center justify-center rounded-2xl bg-surface-2 px-4 py-3 text-[14px] font-bold text-ink-soft active:scale-[0.98] transition-transform"
+          className="glass-chip mt-1.5 flex w-full items-center justify-center rounded-2xl px-4 py-3 text-[14px] font-bold text-ink-soft active:scale-[0.98] transition-transform"
         >
           Annuler
         </button>

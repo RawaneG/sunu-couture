@@ -93,7 +93,7 @@ export default function SwipeRow({
         }}
         className={
           "relative flex cursor-pointer items-center gap-3 rounded-2xl px-3 py-2.5 transition-colors " +
-          (active ? "bg-indigo-tint" : "bg-surface hover:bg-surface-2")
+          (active ? "bg-indigo-tint" : "glass-card hover:bg-surface-2")
         }
       >
         {children}

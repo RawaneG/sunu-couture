@@ -25,7 +25,7 @@ export default function ClientsList() {
       to="/clients/nouveau"
       onClick={() => haptic()}
       aria-label="Nouveau client"
-      className="flex h-8 w-8 flex-none items-center justify-center rounded-full bg-indigo text-white active:scale-90 transition-transform lg:h-10 lg:w-10"
+      className="flex h-8 w-8 flex-none items-center justify-center rounded-full bg-indigo text-white shadow-soft active:scale-90 transition-transform lg:h-10 lg:w-10"
     >
       <IconPlus size={16} strokeWidth={2} />
     </Link>
@@ -34,14 +34,14 @@ export default function ClientsList() {
   return (
     <div className="lg:h-full lg:flex lg:flex-col">
       <PageHeader title="Clients" actions={addButton} search={{ query, onQueryChange: setQuery, placeholder: "Nom ou téléphone…" }} />
-      <div className="hidden lg:block px-10 -mt-2 pb-4">
+      <div className="hidden lg:block px-6 -mt-2 pt-2">
         <p className="text-sm text-ink-soft">{clients.length} clients</p>
       </div>
 
       <div className="flex-1 lg:overflow-y-auto px-2.5 lg:px-6 py-2 pb-4 pt-3">
         {filtered.length === 0 ? (
           <div className="mt-10 flex flex-col items-center gap-3 text-ink-faint">
-            <span className="flex h-12 w-12 items-center justify-center rounded-full bg-surface-2">
+            <span className="glass-chip flex h-12 w-12 items-center justify-center rounded-full">
               <IconUsers size={22} />
             </span>
             <p className="text-sm font-semibold">Aucun client trouvé.</p>

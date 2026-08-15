@@ -91,7 +91,7 @@ export default function ClientPickerSheet({
                   <button
                     type="button"
                     onClick={handleClose}
-                    className="flex h-8 w-8 flex-none items-center justify-center rounded-full bg-surface-2 text-ink-faint"
+                    className="glass-chip flex h-8 w-8 flex-none items-center justify-center rounded-full text-ink-faint"
                     aria-label="Fermer"
                   >
                     <IconX size={15} />
@@ -99,7 +99,7 @@ export default function ClientPickerSheet({
                 </div>
 
                 <div className="px-5 pb-3">
-                  <label className="flex items-center gap-2 rounded-2xl bg-surface-2 px-3.5 py-2.5">
+                  <label className="glass-input flex items-center gap-2 rounded-2xl px-3.5 py-2.5">
                     <IconSearch size={15} className="flex-none text-ink-faint" />
                     <input
                       autoFocus
@@ -162,7 +162,7 @@ export default function ClientPickerSheet({
                   <button
                     type="button"
                     onClick={() => setView("list")}
-                    className="flex h-8 w-8 flex-none items-center justify-center rounded-full bg-surface-2 text-ink"
+                    className="glass-chip flex h-8 w-8 flex-none items-center justify-center rounded-full text-ink"
                     aria-label="Retour"
                   >
                     <IconX size={15} />

@@ -12,7 +12,7 @@ export default function VoiceNotePlayer({ note }: { note: VoiceNote | null }) {
 
   if (!note) {
     return (
-      <div className="flex items-center gap-3 rounded-2xl bg-surface-2 px-4 py-3 text-ink-faint">
+      <div className="glass-card flex items-center gap-3 rounded-2xl px-4 py-3 text-ink-faint">
         <span className="flex h-10 w-10 flex-none items-center justify-center rounded-full bg-surface-3">
           <IconMic size={16} />
         </span>
@@ -22,7 +22,7 @@ export default function VoiceNotePlayer({ note }: { note: VoiceNote | null }) {
   }
 
   return (
-    <div className="flex items-center gap-3 rounded-2xl bg-surface-2 px-4 py-3">
+    <div className="glass-card flex items-center gap-3 rounded-2xl px-4 py-3">
       <audio
         ref={audioRef}
         src={note.url}

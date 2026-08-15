@@ -133,7 +133,7 @@ export default function ImageCropper({
           <button
             type="button"
             onClick={onCancel}
-            className="flex flex-1 items-center justify-center gap-2 rounded-2xl bg-surface-2 px-4 py-3 text-sm font-bold text-ink-soft"
+            className="glass-chip flex flex-1 items-center justify-center gap-2 rounded-2xl px-4 py-3 text-sm font-bold text-ink-soft"
           >
             <IconX size={15} />
             Annuler

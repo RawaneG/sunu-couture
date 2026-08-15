@@ -11,7 +11,7 @@ export default function PriceInput({ value, onChange }: { value: number; onChang
 
   return (
     <div>
-      <div className="flex items-center gap-2 rounded-2xl bg-surface-2 px-4 py-3 focus-within:ring-2 focus-within:ring-indigo">
+      <div className="glass-input flex items-center gap-2 rounded-2xl px-4 py-3 focus-within:ring-2 focus-within:ring-indigo">
         <input
           type="text"
           inputMode="numeric"
@@ -30,7 +30,7 @@ export default function PriceInput({ value, onChange }: { value: number; onChang
             onClick={() => onChange(p)}
             className={clsx(
               "rounded-full px-3 py-1.5 text-[11.5px] font-bold transition-colors",
-              value === p ? "bg-indigo text-white" : "bg-surface-2 text-ink-soft hover:bg-surface-3"
+              value === p ? "bg-indigo text-white" : "glass-chip text-ink-soft hover:bg-surface-3"
             )}
           >
             {formatFCFA(p)}

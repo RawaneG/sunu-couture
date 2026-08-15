@@ -63,7 +63,7 @@ export default function PageHeader({
               initial={{ opacity: 0, scale: 0.97 }}
               animate={{ opacity: 1, scale: 1 }}
               transition={{ duration: 0.18, ease: "easeOut" }}
-              className="flex flex-1 items-center gap-2 rounded-full bg-surface-2 px-3.5 py-2"
+              className="glass-input flex flex-1 items-center gap-2 rounded-full px-3.5 py-2"
             >
               <IconSearch size={15} className="flex-none text-ink-faint" />
               <input
@@ -88,7 +88,7 @@ export default function PageHeader({
               {backTo && (
                 <Link
                   to={backTo}
-                  className="flex h-8 w-8 flex-none items-center justify-center rounded-full bg-surface-2 text-ink active:scale-90 transition-transform"
+                  className="glass-chip flex h-8 w-8 flex-none items-center justify-center rounded-full text-ink active:scale-90 transition-transform"
                   aria-label="Retour"
                 >
                   <IconBack size={16} />
@@ -107,7 +107,7 @@ export default function PageHeader({
                 setSearchOpen(true);
               }}
               aria-label="Rechercher"
-              className="flex h-8 w-8 flex-none items-center justify-center rounded-full bg-surface-2 text-ink-soft"
+              className="glass-chip flex h-8 w-8 flex-none items-center justify-center rounded-full text-ink-soft"
             >
               <IconSearch size={15} />
             </motion.button>
@@ -117,27 +117,27 @@ export default function PageHeader({
       </div>
 
       {/* desktop: editorial page title */}
-      <div className="hidden lg:flex items-center justify-between gap-4 px-10 pt-9 pb-2">
-        <h1 className="font-display italic font-bold text-3xl text-ink text-balance">{title}</h1>
-        <div className="flex items-center gap-2.5">
-          {search && (
-            <label className="flex w-64 items-center gap-2 rounded-full bg-surface-2 px-3.5 py-2.5 focus-within:ring-2 focus-within:ring-indigo">
-              <IconSearch size={14} className="flex-none text-ink-faint" />
-              <input
-                value={search.query}
-                onChange={(e) => search.onQueryChange(e.target.value)}
-                placeholder={search.placeholder}
-                className="w-full min-w-0 bg-transparent text-[13px] font-semibold outline-none placeholder:text-ink-faint placeholder:font-normal"
-              />
-              {search.query && (
-                <button type="button" onClick={() => search.onQueryChange("")} aria-label="Effacer" className="flex-none text-ink-faint">
-                  <IconX size={13} />
-                </button>
-              )}
-            </label>
-          )}
-          {actions}
+      <div className="hidden lg:flex lg:flex-col gap-3 px-6 pt-9 pb-2">
+        <div className="flex items-center justify-between gap-4">
+          <h1 className="min-w-0 flex-1 font-display italic font-bold text-3xl text-ink text-balance">{title}</h1>
+          {actions && <div className="flex flex-none items-center gap-2.5">{actions}</div>}
         </div>
+        {search && (
+          <label className="glass-input flex w-full items-center gap-2 rounded-full px-3.5 py-2.5 focus-within:ring-2 focus-within:ring-indigo">
+            <IconSearch size={14} className="flex-none text-ink-faint" />
+            <input
+              value={search.query}
+              onChange={(e) => search.onQueryChange(e.target.value)}
+              placeholder={search.placeholder}
+              className="w-full min-w-0 bg-transparent text-[13px] font-semibold outline-none placeholder:text-ink-faint placeholder:font-normal"
+            />
+            {search.query && (
+              <button type="button" onClick={() => search.onQueryChange("")} aria-label="Effacer" className="flex-none text-ink-faint">
+                <IconX size={13} />
+              </button>
+            )}
+          </label>
+        )}
       </div>
     </>
   );

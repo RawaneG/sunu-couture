@@ -41,7 +41,7 @@ export default function GarmentPicker({ value, onChange }: { value: string; onCh
               }}
               className={clsx(
                 "flex aspect-square flex-col items-center justify-center gap-1.5 rounded-2xl transition-colors",
-                selected ? "bg-indigo text-white" : "bg-surface-2 text-ink-soft hover:bg-surface-3"
+                selected ? "bg-indigo text-white" : "glass-chip text-ink-soft hover:bg-surface-3"
               )}
             >
               <Icon size={22} strokeWidth={1.6} />
@@ -57,7 +57,7 @@ export default function GarmentPicker({ value, onChange }: { value: string; onCh
           }}
           className={clsx(
             "flex aspect-square flex-col items-center justify-center gap-1.5 rounded-2xl transition-colors",
-            customMode ? "bg-indigo text-white" : "bg-surface-2 text-ink-soft hover:bg-surface-3"
+            customMode ? "bg-indigo text-white" : "glass-chip text-ink-soft hover:bg-surface-3"
           )}
         >
           <IconPlus size={20} />
@@ -70,7 +70,7 @@ export default function GarmentPicker({ value, onChange }: { value: string; onCh
           value={value}
           onChange={(e) => onChange(e.target.value)}
           placeholder="Précisez le vêtement"
-          className="mt-2.5 w-full rounded-xl bg-surface-2 px-3.5 py-2.5 text-sm font-semibold outline-none placeholder:text-ink-faint focus:bg-surface-3"
+          className="glass-input mt-2.5 w-full rounded-xl px-3.5 py-2.5 text-sm font-semibold outline-none placeholder:text-ink-faint focus:bg-surface-3"
         />
       )}
     </div>

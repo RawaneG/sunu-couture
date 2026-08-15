@@ -21,7 +21,7 @@ export default function MeasurementsInput({
 
   return (
     <div>
-      <div className="mb-2 inline-flex rounded-full bg-surface-2 p-1">
+      <div className="glass-chip mb-2 inline-flex rounded-full p-1">
         <button
           type="button"
           onClick={() => setMode("voice")}
@@ -54,7 +54,7 @@ export default function MeasurementsInput({
           onChange={(e) => onTextChange(e.target.value)}
           placeholder="Ex : épaule 44, poitrine 96, longueur 110"
           rows={3}
-          className="w-full resize-none rounded-2xl bg-surface-2 px-4 py-3 text-sm font-semibold outline-none placeholder:font-normal placeholder:text-ink-faint focus:bg-surface-3"
+          className="glass-input w-full resize-none rounded-2xl px-4 py-3 text-sm font-semibold outline-none placeholder:font-normal placeholder:text-ink-faint focus:bg-surface-3"
         />
       )}
     </div>

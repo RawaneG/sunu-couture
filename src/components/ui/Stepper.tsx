@@ -28,7 +28,7 @@ export default function Stepper({ status, className }: { status: OrderStatus; cl
                   "flex h-10 w-10 items-center justify-center rounded-full flex-none",
                   state === "done" && "bg-teal text-white",
                   state === "now" && "bg-amber-tile text-[#2a1c04] shadow-soft ring-4 ring-amber-tint",
-                  state === "next" && "bg-surface-2 text-ink-faint"
+                  state === "next" && "glass-chip text-ink-faint"
                 )}
               >
                 {state === "done" ? <IconCheck size={16} strokeWidth={2} /> : <Icon size={17} strokeWidth={1.8} />}

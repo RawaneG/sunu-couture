@@ -44,7 +44,7 @@ export default function Dashboard() {
               <h2 className="font-display italic font-bold text-lg">En retard</h2>
             </header>
             {late.length === 0 ? (
-              <p className="rounded-2xl bg-surface-2 px-4 py-6 text-center text-sm text-ink-faint">
+              <p className="glass-card rounded-2xl px-4 py-6 text-center text-sm text-ink-faint">
                 Aucune commande en retard.
               </p>
             ) : (
@@ -66,7 +66,7 @@ export default function Dashboard() {
               <h2 className="font-display italic font-bold text-lg">Prêt à livrer</h2>
             </header>
             {ready.length === 0 ? (
-              <p className="rounded-2xl bg-surface-2 px-4 py-6 text-center text-sm text-ink-faint">
+              <p className="glass-card rounded-2xl px-4 py-6 text-center text-sm text-ink-faint">
                 Rien de prêt pour le moment.
               </p>
             ) : (

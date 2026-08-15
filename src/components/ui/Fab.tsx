@@ -6,8 +6,8 @@ import { haptic } from "../../lib/haptics";
 export default function Fab({ to, label = "Nouvelle commande" }: { to: string; label?: string }) {
   return (
     <motion.div
-      className="fixed right-4 z-30 lg:hidden"
-      style={{ bottom: "calc(92px + env(safe-area-inset-bottom))" }}
+      className="fixed right-4 z-40 lg:hidden"
+      style={{ bottom: "calc(112px + env(safe-area-inset-bottom))" }}
       initial={{ opacity: 0, scale: 0.7, y: 12 }}
       animate={{ opacity: 1, scale: 1, y: 0 }}
       transition={{ type: "spring", stiffness: 380, damping: 24, delay: 0.1 }}

@@ -78,14 +78,14 @@ export default function OrderNew() {
         initial={{ opacity: 0, y: 10 }}
         animate={{ opacity: 1, y: 0 }}
         transition={{ duration: 0.22, ease: "easeOut" }}
-        className="px-4 lg:px-10 py-4 lg:py-8 max-w-3xl lg:mx-auto"
+        className="px-4 lg:px-10 py-4 lg:py-8 max-w-3xl lg:max-w-5xl lg:mx-auto"
       >
-        <div className="lg:rounded-3xl lg:bg-surface lg:shadow-soft lg:p-10">
-          <div className="grid gap-6 lg:grid-cols-2 lg:gap-x-10 lg:gap-y-7">
+        <div className="glass-card rounded-2xl p-4 lg:rounded-3xl lg:shadow-soft lg:p-10">
+          <div className="grid gap-6 lg:grid-cols-2 lg:gap-x-12 lg:gap-y-7">
             <section className="min-w-0 flex flex-col gap-5">
               <Field label="Client">
                 {selectedClient ? (
-                  <div className="flex items-center gap-3 rounded-2xl bg-surface-2 px-3.5 py-2.5">
+                  <div className="glass-chip flex items-center gap-3 rounded-2xl px-3.5 py-2.5">
                     <Avatar photo={selectedClient.photo} seed={selectedClient.colorSeed} size={42} />
                     <span className="min-w-0 flex-1">
                       <span className="block truncate text-[13.5px] font-bold">{selectedClient.name}</span>
@@ -96,14 +96,14 @@ export default function OrderNew() {
                     <button
                       type="button"
                       onClick={() => setPickerOpen(true)}
-                      className="flex-none rounded-full bg-surface px-3 py-1.5 text-[11.5px] font-bold text-indigo"
+                      className="glass-input flex-none rounded-full px-3 py-1.5 text-[11.5px] font-bold text-indigo"
                     >
                       Changer
                     </button>
                     <button
                       type="button"
                       onClick={() => setClientId(null)}
-                      className="flex h-8 w-8 flex-none items-center justify-center rounded-full bg-surface text-ink-faint"
+                      className="glass-input flex h-8 w-8 flex-none items-center justify-center rounded-full text-ink-faint"
                       aria-label="Retirer le client"
                     >
                       <IconX size={14} />
@@ -113,7 +113,7 @@ export default function OrderNew() {
                   <button
                     type="button"
                     onClick={() => setPickerOpen(true)}
-                    className="flex w-full items-center gap-3 rounded-2xl border-2 border-dashed border-line-strong bg-surface-2 px-3.5 py-3 text-left hover:bg-surface-3 transition-colors"
+                    className="glass-chip flex w-full items-center gap-3 rounded-2xl border-2 border-dashed border-line-strong px-3.5 py-3 text-left hover:bg-surface-3 transition-colors"
                   >
                     <span className="flex h-9 w-9 flex-none items-center justify-center rounded-full bg-surface-3 text-ink-faint">
                       <IconUsers size={16} />
