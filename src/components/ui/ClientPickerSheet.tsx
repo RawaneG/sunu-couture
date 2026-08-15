@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { createPortal } from "react-dom";
 import { motion, useDragControls } from "framer-motion";
 import { useStore } from "../../lib/store";
 import { matchesQuery } from "../../lib/search";
@@ -54,7 +55,7 @@ export default function ClientPickerSheet({
 
   if (!open) return null;
 
-  return (
+  return createPortal(
     <div className="fixed inset-0 z-50 flex items-end justify-center lg:items-center">
           <motion.div
             className="absolute inset-0 bg-ink/40 backdrop-blur-sm"
@@ -200,6 +201,7 @@ export default function ClientPickerSheet({
               </>
             )}
       </motion.div>
-    </div>
+    </div>,
+    document.body
   );
 }

@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { motion } from "framer-motion";
 import { IconCheck, IconX } from "../../lib/icons";
 
@@ -83,7 +84,7 @@ export default function ImageCropper({
     onConfirm(canvas.toDataURL("image/jpeg", 0.92));
   }
 
-  return (
+  return createPortal(
     <div className="fixed inset-0 z-[60] flex flex-col items-center justify-center bg-ink/85 backdrop-blur-sm px-4">
       <motion.div
         initial={{ opacity: 0, scale: 0.94 }}
@@ -148,6 +149,7 @@ export default function ImageCropper({
           </button>
         </div>
       </motion.div>
-    </div>
+    </div>,
+    document.body
   );
 }

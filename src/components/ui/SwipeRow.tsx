@@ -1,5 +1,5 @@
 import { useRef, useState } from "react";
-import { motion, useMotionValue, animate, type PanInfo } from "framer-motion";
+import { motion, useMotionValue, useTransform, animate, type PanInfo } from "framer-motion";
 import { IconPhone } from "../../lib/icons";
 import { haptic } from "../../lib/haptics";
 
@@ -20,6 +20,7 @@ export default function SwipeRow({
   children: React.ReactNode;
 }) {
   const x = useMotionValue(0);
+  const callOpacity = useTransform(x, [-REVEAL, -REVEAL * 0.4, 0], [1, 0.5, 0]);
   const [revealed, setRevealed] = useState(false);
   const draggedRef = useRef(false);
   const canCall = Boolean(phone);
@@ -55,7 +56,10 @@ export default function SwipeRow({
   return (
     <div className="relative overflow-hidden rounded-2xl">
       {canCall && (
-        <div className="absolute inset-y-0 right-0 flex w-[76px] items-center justify-center">
+        <motion.div
+          style={{ opacity: callOpacity }}
+          className="absolute inset-y-0 right-0 flex w-[76px] items-center justify-center"
+        >
           <a
             href={`tel:${phone!.replace(/\s/g, "")}`}
             onPointerDown={(e) => e.stopPropagation()}
@@ -65,7 +69,7 @@ export default function SwipeRow({
           >
             <IconPhone size={17} />
           </a>
-        </div>
+        </motion.div>
       )}
 
       <motion.div

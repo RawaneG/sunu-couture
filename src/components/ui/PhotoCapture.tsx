@@ -1,4 +1,5 @@
 import { useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import clsx from "clsx";
 import { motion } from "framer-motion";
 import { IconCamera, IconImage, IconX } from "../../lib/icons";
@@ -129,7 +130,7 @@ function PhotoSourceSheet({
   onGallery: () => void;
   onClose: () => void;
 }) {
-  return (
+  return createPortal(
     <div className="fixed inset-0 z-[70] flex items-end justify-center lg:items-center">
       <motion.div
         className="absolute inset-0 bg-ink/40 backdrop-blur-sm"
@@ -156,7 +157,8 @@ function PhotoSourceSheet({
           Annuler
         </button>
       </motion.div>
-    </div>
+    </div>,
+    document.body
   );
 }
 

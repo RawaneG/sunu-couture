@@ -51,7 +51,7 @@ export default function OrdersList() {
         <p className="text-sm text-ink-soft">{orders.length} commandes au total</p>
       </div>
 
-      <div className="flex gap-2 overflow-x-auto no-scrollbar px-4 lg:px-6 pb-4">
+      <div className="flex gap-2 overflow-x-auto no-scrollbar px-4 lg:px-6 pt-3 lg:pt-0 pb-4">
         {FILTERS.map((f) => (
           <motion.button
             key={f.key}

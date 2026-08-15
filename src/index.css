@@ -159,24 +159,6 @@
   }
 }
 
-/*
- * Telegram-style circular reveal on theme switch, via the View Transitions API.
- * The new (post-toggle) frame always sits above the old one, static, while our
- * clip-path animation in theme.ts grows it outward from the click origin — so the
- * incoming theme visibly wipes over the outgoing one instead of the two cross-fading.
- */
-::view-transition-old(root),
-::view-transition-new(root) {
-  animation: none;
-  mix-blend-mode: normal;
-}
-::view-transition-old(root) {
-  z-index: 1;
-}
-::view-transition-new(root) {
-  z-index: 2;
-}
-
 @media (prefers-reduced-motion: reduce) {
   *,
   *::before,
