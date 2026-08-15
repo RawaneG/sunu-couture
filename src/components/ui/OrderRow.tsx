@@ -7,7 +7,17 @@ import StatusPill from "./StatusPill";
 import SwipeRow from "./SwipeRow";
 import { formatCompactDate, formatCompactRange, formatFCFA } from "../../lib/format";
 
-export default function OrderRow({ order, active, index = 0 }: { order: Order; active?: boolean; index?: number }) {
+export default function OrderRow({
+  order,
+  active,
+  index = 0,
+  swipeHint,
+}: {
+  order: Order;
+  active?: boolean;
+  index?: number;
+  swipeHint?: boolean;
+}) {
   const navigate = useNavigate();
   const client = useStore((s) => s.getClient(order.clientId));
   const dateLabel = order.dueDateStart
@@ -25,6 +35,7 @@ export default function OrderRow({ order, active, index = 0 }: { order: Order; a
         phone={client?.phone}
         callLabel={`Appeler ${client?.name ?? ""}`}
         active={active}
+        hint={swipeHint}
         onTap={() => navigate(`/commandes/${order.id}`)}
       >
         <Avatar photo={client?.photo} seed={client?.colorSeed} size={44} />

@@ -54,6 +54,11 @@ export default function OrdersList() {
     return result;
   }, [orders, clients, filter, query]);
 
+  const firstCallableIndex = useMemo(
+    () => filtered.findIndex((o) => Boolean(clients.find((c) => c.id === o.clientId)?.phone)),
+    [filtered, clients]
+  );
+
   return (
     <div className="lg:h-full lg:flex lg:flex-col">
       <PageHeader title="Commandes" search={{ query, onQueryChange: setQuery, placeholder: "Client ou vêtement…" }} />
@@ -93,7 +98,13 @@ export default function OrdersList() {
           <div className="flex flex-col gap-2">
             <AnimatePresence initial={false}>
               {filtered.map((o, i) => (
-                <OrderRow key={o.id} order={o} active={activeMatch?.params.id === o.id} index={i} />
+                <OrderRow
+                  key={o.id}
+                  order={o}
+                  active={activeMatch?.params.id === o.id}
+                  index={i}
+                  swipeHint={i === firstCallableIndex}
+                />
               ))}
             </AnimatePresence>
           </div>

@@ -19,6 +19,7 @@ export default function ClientsList() {
   const [query, setQuery] = useState("");
 
   const filtered = clients.filter((c) => matchesQuery(query, c.name, c.phone));
+  const firstCallableIndex = filtered.findIndex((c) => Boolean(c.phone));
 
   const addButton = (
     <Link
@@ -62,6 +63,7 @@ export default function ClientsList() {
                     phone={c.phone}
                     callLabel={`Appeler ${c.name}`}
                     active={active}
+                    hint={i === firstCallableIndex}
                     onTap={() => navigate(`/clients/${c.id}`)}
                   >
                     <Avatar photo={c.photo} seed={c.colorSeed} size={44} />
