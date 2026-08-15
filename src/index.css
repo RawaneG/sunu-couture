@@ -88,6 +88,9 @@
   html {
     font-family: var(--font-sans);
     color-scheme: light;
+    /* Without this, Chrome's scroll-anchoring heuristic fights the SPA's own
+       scroll-to-top-on-navigate reset once the new route's content reflows. */
+    overflow-anchor: none;
   }
   html.dark {
     color-scheme: dark;

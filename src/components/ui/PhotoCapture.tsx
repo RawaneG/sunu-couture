@@ -56,16 +56,18 @@ export default function PhotoCapture({
       <input ref={galleryInputRef} type="file" accept="image/*" onChange={handleFile} className="hidden" />
 
       {value ? (
-        <div
-          className={clsx("relative overflow-hidden", circle ? "h-28 w-28 rounded-full" : "h-40 w-full rounded-2xl")}
-        >
-          <img src={value} alt="" className="h-full w-full object-cover" />
+        <div className={clsx("relative", circle ? "h-28 w-28" : "h-40 w-full")}>
+          <div
+            className={clsx("h-full w-full overflow-hidden", circle ? "rounded-full" : "rounded-2xl")}
+          >
+            <img src={value} alt="" className="h-full w-full object-cover" />
+          </div>
           <button
             type="button"
             onClick={remove}
             className={clsx(
-              "absolute flex h-8 w-8 items-center justify-center rounded-full bg-black/55 text-white backdrop-blur-md active:scale-90 transition-transform",
-              circle ? "bottom-0 right-0" : "right-2.5 top-2.5"
+              "absolute z-10 flex h-8 w-8 items-center justify-center rounded-full bg-black/55 text-white backdrop-blur-md active:scale-90 transition-transform",
+              circle ? "-bottom-1 -right-1" : "right-2.5 top-2.5"
             )}
             aria-label="Retirer la photo"
           >

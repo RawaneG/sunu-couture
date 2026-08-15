@@ -1,4 +1,5 @@
-import { Routes, Route } from "react-router-dom";
+import { useEffect } from "react";
+import { Routes, Route, useLocation } from "react-router-dom";
 import AppShell from "./components/layout/AppShell";
 import Dashboard from "./pages/Dashboard";
 import OrdersLayout from "./pages/OrdersLayout";
@@ -10,9 +11,18 @@ import ClientsEmptyState from "./pages/ClientsEmptyState";
 import ClientDetail from "./pages/ClientDetail";
 import ClientNew from "./pages/ClientNew";
 
+function ScrollToTop() {
+  const { pathname } = useLocation();
+  useEffect(() => {
+    window.scrollTo(0, 0);
+  }, [pathname]);
+  return null;
+}
+
 export default function App() {
   return (
     <AppShell>
+      <ScrollToTop />
       <Routes>
         <Route path="/" element={<Dashboard />} />
         <Route path="/commandes/nouvelle" element={<OrderNew />} />

@@ -1,3 +1,4 @@
+import { useRef } from "react";
 import { Link, NavLink } from "react-router-dom";
 import clsx from "clsx";
 import { IconHome, IconHanger, IconUsers, IconPlus, IconSun, IconMoon, IconScissors } from "../../lib/icons";
@@ -11,6 +12,7 @@ const NAV = [
 
 export default function Sidebar() {
   const { dark, toggle } = useTheme();
+  const themeBtnRef = useRef<HTMLButtonElement>(null);
 
   return (
     <aside className="hidden lg:flex lg:w-64 lg:flex-none lg:flex-col lg:border-r lg:border-line/70 lg:bg-surface/65 lg:backdrop-blur-2xl lg:backdrop-saturate-150">
@@ -59,8 +61,12 @@ export default function Sidebar() {
 
       <div className="border-t border-line px-4 py-4">
         <button
+          ref={themeBtnRef}
           type="button"
-          onClick={(e) => toggle({ x: e.clientX, y: e.clientY })}
+          onClick={() => {
+            const rect = themeBtnRef.current?.getBoundingClientRect();
+            toggle(rect ? { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 } : undefined);
+          }}
           className="flex w-full items-center gap-3 rounded-xl px-3.5 py-2.5 text-[13px] font-semibold text-ink-soft hover:bg-surface-2 hover:text-ink transition-colors"
         >
           {dark ? <IconSun size={17} /> : <IconMoon size={17} />}

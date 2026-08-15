@@ -12,15 +12,24 @@ export default function DayPicker({
   onChange: (iso: string) => void;
   days?: number;
 }) {
+  const containerRef = useRef<HTMLDivElement>(null);
   const selectedRef = useRef<HTMLButtonElement>(null);
   const DAYS = useMemo(() => nextDays(days), [days]);
 
   useEffect(() => {
-    selectedRef.current?.scrollIntoView({ inline: "center", block: "nearest", behavior: "smooth" });
+    // Scroll only this strip's own horizontal axis via scrollLeft, never
+    // scrollIntoView — that cascades up through every scrollable ancestor
+    // (including the window itself), yanking the whole page down to reveal
+    // a picker that's simply lower on the page.
+    const container = containerRef.current;
+    const button = selectedRef.current;
+    if (!container || !button) return;
+    const target = button.offsetLeft - container.clientWidth / 2 + button.clientWidth / 2;
+    container.scrollTo({ left: Math.max(0, target), behavior: "smooth" });
   }, [value]);
 
   return (
-    <div className="flex gap-2 overflow-x-auto no-scrollbar pt-2 -mt-2 pb-1 -mx-1 px-1">
+    <div ref={containerRef} className="flex gap-2 overflow-x-auto no-scrollbar pt-2 -mt-2 pb-1 -mx-1 px-1">
       {DAYS.map((iso) => {
         const { num, label } = formatDay(iso);
         const selected = iso.slice(0, 10) === value.slice(0, 10);

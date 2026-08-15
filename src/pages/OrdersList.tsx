@@ -6,17 +6,24 @@ import { useStore } from "../lib/store";
 import OrderRow from "../components/ui/OrderRow";
 import Fab from "../components/ui/Fab";
 import PageHeader from "../components/ui/PageHeader";
+import { STATUS_DOT_COLOR } from "../components/ui/StatusPill";
 import { IconHanger } from "../lib/icons";
 import { isDueToday } from "../lib/format";
 import { matchesQuery } from "../lib/search";
 import { haptic } from "../lib/haptics";
 
+// Each order shows exactly one badge at a time (see StatusPill: "En retard" always
+// wins over the step status when late). These filters mirror that — they're mutually
+// exclusive buckets matching what's actually printed on each card, not overlapping
+// views of the same order under two different labels.
 const FILTERS = [
   { key: "all", label: "Toutes", dot: "bg-ink-faint" },
-  { key: "today", label: "Aujourd'hui", dot: "bg-indigo" },
-  { key: "late", label: "Retard", dot: "bg-terracotta" },
-  { key: "pret", label: "Prêt", dot: "bg-teal" },
-  { key: "encours", label: "En cours", dot: "bg-amber-tile" },
+  { key: "late", label: "En retard", dot: "bg-terracotta" },
+  { key: "today", label: "Dû aujourd'hui", dot: "bg-indigo-soft" },
+  { key: "recu", label: "Reçues", dot: STATUS_DOT_COLOR.recu },
+  { key: "couture", label: "En couture", dot: STATUS_DOT_COLOR.couture },
+  { key: "pret", label: "Prêtes", dot: STATUS_DOT_COLOR.pret },
+  { key: "livre", label: "Livrées", dot: STATUS_DOT_COLOR.livre },
 ] as const;
 
 export default function OrdersList() {
@@ -30,10 +37,13 @@ export default function OrdersList() {
   const filtered = useMemo(() => {
     const sorted = [...orders].sort((a, b) => +new Date(a.dueDate) - +new Date(b.dueDate));
     let result = sorted;
-    if (filter === "today") result = result.filter((o) => isDueToday(o.dueDate, o.dueDateStart, o.status));
-    else if (filter === "late") result = result.filter((o) => o.late);
-    else if (filter === "pret") result = result.filter((o) => o.status === "pret");
-    else if (filter === "encours") result = result.filter((o) => o.status === "couture");
+    if (filter === "late") result = result.filter((o) => o.late);
+    else if (filter === "today")
+      result = result.filter((o) => !o.late && isDueToday(o.dueDate, o.dueDateStart, o.status));
+    else if (filter === "recu") result = result.filter((o) => !o.late && o.status === "recu");
+    else if (filter === "couture") result = result.filter((o) => !o.late && o.status === "couture");
+    else if (filter === "pret") result = result.filter((o) => !o.late && o.status === "pret");
+    else if (filter === "livre") result = result.filter((o) => o.status === "livre");
 
     if (query.trim()) {
       result = result.filter((o) => {
