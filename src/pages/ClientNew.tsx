@@ -5,6 +5,7 @@ import { useStore } from "../lib/store";
 import PageHeader from "../components/ui/PageHeader";
 import ClientFields from "../components/ui/ClientFields";
 import { IconCheck } from "../lib/icons";
+import { haptic } from "../lib/haptics";
 
 export default function ClientNew() {
   const navigate = useNavigate();
@@ -18,6 +19,7 @@ export default function ClientNew() {
 
   function handleSubmit() {
     if (!canSubmit) return;
+    haptic(16);
     const id = addClient({ name, phone, photo });
     navigate(`/clients/${id}`);
   }

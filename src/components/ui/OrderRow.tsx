@@ -1,12 +1,14 @@
-import { Link } from "react-router-dom";
+import { useNavigate } from "react-router-dom";
 import { motion } from "framer-motion";
 import type { Order } from "../../lib/types";
 import { useStore } from "../../lib/store";
 import Avatar from "./Avatar";
 import StatusPill from "./StatusPill";
+import SwipeRow from "./SwipeRow";
 import { formatCompactDate, formatCompactRange, formatFCFA } from "../../lib/format";
 
-export default function OrderRow({ order, active }: { order: Order; active?: boolean }) {
+export default function OrderRow({ order, active, index = 0 }: { order: Order; active?: boolean; index?: number }) {
+  const navigate = useNavigate();
   const client = useStore((s) => s.getClient(order.clientId));
   const dateLabel = order.dueDateStart
     ? formatCompactRange(order.dueDateStart, order.dueDate)
@@ -17,15 +19,13 @@ export default function OrderRow({ order, active }: { order: Order; active?: boo
       layout="position"
       initial={{ opacity: 0, y: 6 }}
       animate={{ opacity: 1, y: 0 }}
-      transition={{ type: "spring", stiffness: 400, damping: 34 }}
-      whileTap={{ scale: 0.985 }}
+      transition={{ type: "spring", stiffness: 400, damping: 34, delay: Math.min(index * 0.035, 0.28) }}
     >
-      <Link
-        to={`/commandes/${order.id}`}
-        className={
-          "flex items-center gap-3 rounded-2xl px-3 py-2.5 transition-colors " +
-          (active ? "bg-indigo-tint" : "hover:bg-surface-2")
-        }
+      <SwipeRow
+        phone={client?.phone}
+        callLabel={`Appeler ${client?.name ?? ""}`}
+        active={active}
+        onTap={() => navigate(`/commandes/${order.id}`)}
       >
         <Avatar photo={client?.photo} seed={client?.colorSeed} size={44} />
         <span className="min-w-0 flex-1">
@@ -41,7 +41,7 @@ export default function OrderRow({ order, active }: { order: Order; active?: boo
           <StatusPill order={order} />
           <span className="text-[11px] font-bold text-ink-faint tabular-nums">{formatFCFA(order.price)} F</span>
         </span>
-      </Link>
+      </SwipeRow>
     </motion.div>
   );
 }

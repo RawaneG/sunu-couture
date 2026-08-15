@@ -1,20 +1,25 @@
 import { Link } from "react-router-dom";
 import { motion } from "framer-motion";
 import { IconPlus } from "../../lib/icons";
+import { haptic } from "../../lib/haptics";
 
 export default function Fab({ to, label = "Nouvelle commande" }: { to: string; label?: string }) {
   return (
     <motion.div
-      className="fixed right-5 z-30 lg:hidden"
-      style={{ bottom: "calc(78px + env(safe-area-inset-bottom))" }}
-      whileTap={{ scale: 0.92 }}
+      className="fixed right-4 z-30 lg:hidden"
+      style={{ bottom: "calc(92px + env(safe-area-inset-bottom))" }}
+      initial={{ opacity: 0, scale: 0.7, y: 12 }}
+      animate={{ opacity: 1, scale: 1, y: 0 }}
+      transition={{ type: "spring", stiffness: 380, damping: 24, delay: 0.1 }}
+      whileTap={{ scale: 0.9 }}
     >
       <Link
         to={to}
+        onClick={() => haptic(12)}
         aria-label={label}
-        className="flex h-14 w-14 items-center justify-center rounded-full bg-amber-tile text-[#2a1c04] shadow-lift"
+        className="relative flex h-14 w-14 items-center justify-center rounded-full bg-gradient-to-br from-amber-tile to-[#b87a1f] text-[#2a1c04] shadow-lift shadow-[inset_0_1px_0_0_rgba(255,255,255,0.35)] ring-1 ring-black/5"
       >
-        <IconPlus size={24} strokeWidth={2} />
+        <IconPlus size={24} strokeWidth={2.2} />
       </Link>
     </motion.div>
   );

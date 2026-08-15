@@ -1,10 +1,11 @@
 import { useState } from "react";
-import { motion } from "framer-motion";
+import { motion, useDragControls } from "framer-motion";
 import { useStore } from "../../lib/store";
 import { matchesQuery } from "../../lib/search";
 import Avatar from "./Avatar";
 import ClientFields from "./ClientFields";
 import { IconCheck, IconPlus, IconSearch, IconUsers, IconX } from "../../lib/icons";
+import { haptic } from "../../lib/haptics";
 
 export default function ClientPickerSheet({
   open,
@@ -17,6 +18,7 @@ export default function ClientPickerSheet({
 }) {
   const clients = useStore((s) => s.clients);
   const addClient = useStore((s) => s.addClient);
+  const dragControls = useDragControls();
 
   const [query, setQuery] = useState("");
   const [view, setView] = useState<"list" | "new">("list");
@@ -62,11 +64,26 @@ export default function ClientPickerSheet({
             onClick={handleClose}
           />
           <motion.div
-            initial={{ y: 40, opacity: 0 }}
+            initial={{ y: 60, opacity: 0 }}
             animate={{ y: 0, opacity: 1 }}
-            transition={{ duration: 0.2, ease: "easeOut" }}
-            className="relative z-10 flex max-h-[88dvh] w-full flex-col rounded-t-3xl bg-surface shadow-lift lg:max-h-[640px] lg:w-[420px] lg:rounded-3xl"
+            transition={{ type: "spring", stiffness: 420, damping: 38 }}
+            drag="y"
+            dragListener={false}
+            dragControls={dragControls}
+            dragConstraints={{ top: 0, bottom: 0 }}
+            dragElastic={{ top: 0, bottom: 0.65 }}
+            onDragEnd={(_, info) => {
+              if (info.offset.y > 110 || info.velocity.y > 600) handleClose();
+            }}
+            className="relative z-10 flex max-h-[88dvh] w-full flex-col rounded-t-3xl border border-line-strong/30 bg-surface/85 shadow-lift backdrop-blur-2xl backdrop-saturate-150 lg:max-h-[640px] lg:w-[420px] lg:rounded-3xl"
           >
+            <div
+              className="mx-auto mb-1 mt-2 h-1.5 w-10 flex-none touch-none rounded-full bg-line-strong lg:hidden"
+              onPointerDown={(e) => {
+                haptic();
+                dragControls.start(e);
+              }}
+            />
             {view === "list" ? (
               <>
                 <div className="flex items-center gap-2.5 px-5 pt-5 pb-3">
@@ -94,16 +111,20 @@ export default function ClientPickerSheet({
                   </label>
                 </div>
 
-                <button
+                <motion.button
                   type="button"
-                  onClick={() => setView("new")}
+                  whileTap={{ scale: 0.98 }}
+                  onClick={() => {
+                    haptic();
+                    setView("new");
+                  }}
                   className="mx-5 mb-2 flex items-center gap-3 rounded-2xl bg-indigo-tint px-3.5 py-2.5 text-left"
                 >
                   <span className="flex h-9 w-9 flex-none items-center justify-center rounded-full bg-indigo text-white">
                     <IconPlus size={16} />
                   </span>
                   <span className="text-[13.5px] font-bold text-indigo">Nouveau client</span>
-                </button>
+                </motion.button>
 
                 <div className="flex-1 overflow-y-auto px-2.5 pb-4">
                   {filtered.length === 0 ? (
@@ -113,11 +134,15 @@ export default function ClientPickerSheet({
                     </div>
                   ) : (
                     filtered.map((c) => (
-                      <button
+                      <motion.button
                         key={c.id}
                         type="button"
-                        onClick={() => handleSelect(c.id)}
-                        className="flex w-full items-center gap-3 rounded-2xl px-2.5 py-2.5 text-left hover:bg-surface-2 transition-colors"
+                        whileTap={{ scale: 0.98 }}
+                        onClick={() => {
+                          haptic();
+                          handleSelect(c.id);
+                        }}
+                        className="flex w-full items-center gap-3 rounded-2xl px-2.5 py-2.5 text-left hover:bg-surface-2 active:bg-surface-2 transition-colors"
                       >
                         <Avatar photo={c.photo} seed={c.colorSeed} size={42} />
                         <span className="min-w-0 flex-1">
@@ -126,7 +151,7 @@ export default function ClientPickerSheet({
                             {c.phone || "Numéro non renseigné"}
                           </span>
                         </span>
-                      </button>
+                      </motion.button>
                     ))
                   )}
                 </div>
@@ -158,15 +183,19 @@ export default function ClientPickerSheet({
                 </div>
 
                 <div className="px-5 pb-5 pt-2">
-                  <button
+                  <motion.button
                     type="button"
+                    whileTap={newName.trim() ? { scale: 0.97 } : undefined}
                     disabled={!newName.trim()}
-                    onClick={handleCreate}
+                    onClick={() => {
+                      haptic(14);
+                      handleCreate();
+                    }}
                     className="flex w-full items-center justify-center gap-2 rounded-2xl bg-amber-tile px-4 py-3.5 font-bold text-[#2a1c04] shadow-soft disabled:bg-surface-3 disabled:text-ink-faint"
                   >
                     <IconCheck size={17} strokeWidth={2} />
                     Ajouter et sélectionner
-                  </button>
+                  </motion.button>
                 </div>
               </>
             )}

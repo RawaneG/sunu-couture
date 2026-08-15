@@ -12,6 +12,7 @@ import Avatar from "../components/ui/Avatar";
 import { IconPhone, IconCheck, IconMic } from "../lib/icons";
 import { formatFCFA, formatFullDate, formatFullDateRange } from "../lib/format";
 import { ORDER_STEPS, STATUS_ACTION_LABEL, STATUS_DESCRIPTION } from "../lib/types";
+import { haptic } from "../lib/haptics";
 
 export default function OrderDetail() {
   const { id } = useParams();
@@ -70,7 +71,7 @@ export default function OrderDetail() {
           <StatusPill order={order} className="sm:hidden" />
         </div>
 
-        <div className="mt-6 rounded-2xl bg-surface-2 px-4 py-4">
+        <div className="glass-card mt-6 rounded-2xl bg-surface-2 px-4 py-4">
           <Stepper status={order.status} />
           <p className="mt-4 text-center text-[13px] font-semibold text-ink-soft">
             {STATUS_DESCRIPTION[order.status]}
@@ -78,13 +79,13 @@ export default function OrderDetail() {
         </div>
 
         <div className="mt-5 grid grid-cols-2 gap-3">
-          <div className="rounded-2xl bg-surface-2 px-4 py-3">
+          <div className="glass-card rounded-2xl bg-surface-2 px-4 py-3">
             <p className="text-[10px] font-bold uppercase tracking-wide text-ink-faint">Livraison</p>
             <p className="mt-0.5 text-[14px] font-extrabold leading-snug">
               {order.dueDateStart ? formatFullDateRange(order.dueDateStart, order.dueDate) : formatFullDate(order.dueDate)}
             </p>
           </div>
-          <div className="rounded-2xl bg-surface-2 px-4 py-3">
+          <div className="glass-card rounded-2xl bg-surface-2 px-4 py-3">
             <p className="text-[10px] font-bold uppercase tracking-wide text-ink-faint">Prix</p>
             <p className="mt-0.5 text-[15px] font-extrabold tabular-nums">{formatFCFA(order.price)} FCFA</p>
           </div>
@@ -127,7 +128,10 @@ export default function OrderDetail() {
                 initial={{ opacity: 0 }}
                 animate={{ opacity: 1 }}
                 whileTap={{ scale: 0.97 }}
-                onClick={() => advanceOrder(order.id)}
+                onClick={() => {
+                  haptic(16);
+                  advanceOrder(order.id);
+                }}
                 className="flex w-full items-center justify-center gap-2 rounded-2xl bg-teal px-4 py-3.5 font-bold text-white shadow-soft"
               >
                 <IconCheck size={17} strokeWidth={2} />
@@ -140,7 +144,7 @@ export default function OrderDetail() {
         {otherOrders.length > 0 && (
           <div className="mt-8">
             <h2 className="mb-2 font-display italic font-bold text-base">Autres commandes de {client?.name}</h2>
-            <div className="flex flex-col gap-0.5">
+            <div className="flex flex-col gap-2">
               <AnimatePresence initial={false}>
                 {otherOrders.map((o) => (
                   <OrderRow key={o.id} order={o} />

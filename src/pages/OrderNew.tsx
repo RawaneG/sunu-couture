@@ -15,6 +15,7 @@ import Avatar from "../components/ui/Avatar";
 import { IconCheck, IconUsers, IconChevronRight, IconX } from "../lib/icons";
 import { nextDays } from "../lib/format";
 import { detectDominantColor } from "../lib/color";
+import { haptic } from "../lib/haptics";
 import type { VoiceNote } from "../lib/types";
 
 export default function OrderNew() {
@@ -54,6 +55,7 @@ export default function OrderNew() {
 
   function handleSubmit() {
     if (!canSubmit || !clientId) return;
+    haptic(16);
     const id = addOrder({
       clientId,
       garment: garment.trim(),

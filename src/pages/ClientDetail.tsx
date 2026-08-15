@@ -64,7 +64,7 @@ export default function ClientDetail() {
             {orders.length > 0 ? `${orders.length} commande${orders.length > 1 ? "s" : ""}` : "Aucune commande"}
           </h2>
           {orders.length > 0 && (
-            <div className="flex flex-col gap-0.5">
+            <div className="flex flex-col gap-2">
               <AnimatePresence initial={false}>
                 {orders.map((o) => (
                   <OrderRow key={o.id} order={o} />

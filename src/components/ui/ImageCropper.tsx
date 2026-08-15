@@ -88,7 +88,7 @@ export default function ImageCropper({
       <motion.div
         initial={{ opacity: 0, scale: 0.94 }}
         animate={{ opacity: 1, scale: 1 }}
-        className="flex w-full max-w-sm flex-col items-center gap-5 rounded-3xl bg-surface p-6 shadow-lift"
+        className="flex w-full max-w-sm flex-col items-center gap-5 rounded-3xl border border-line-strong/30 bg-surface/85 p-6 shadow-lift backdrop-blur-2xl backdrop-saturate-150"
       >
         <p className="text-sm font-bold text-ink">Ajustez la photo</p>
 

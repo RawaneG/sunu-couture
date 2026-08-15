@@ -29,10 +29,10 @@ export default function Dashboard() {
 
       <div className="px-4 lg:px-10 pt-2 lg:pt-6">
         <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 lg:gap-4">
-          <Tile to="/commandes/nouvelle" variant="amber" icon={<IconPlus size={24} />} label="Nouvelle commande" />
-          <Tile to="/commandes" variant="indigo" icon={<IconHanger size={24} />} label="Commandes" badge={orders.length} />
-          <Tile to="/clients" variant="teal" icon={<IconUsers size={24} />} label="Clients" badge={clients.length} />
-          <Tile to="/commandes?filter=today" variant="terracotta" icon={<IconClock size={24} />} label="À livrer aujourd'hui" badge={dueToday.length} />
+          <Tile index={0} to="/commandes/nouvelle" variant="amber" icon={<IconPlus size={24} />} label="Nouvelle commande" />
+          <Tile index={1} to="/commandes" variant="indigo" icon={<IconHanger size={24} />} label="Commandes" badge={orders.length} />
+          <Tile index={2} to="/clients" variant="teal" icon={<IconUsers size={24} />} label="Clients" badge={clients.length} />
+          <Tile index={3} to="/commandes?filter=today" variant="terracotta" icon={<IconClock size={24} />} label="À livrer aujourd'hui" badge={dueToday.length} />
         </div>
 
         <div className="mt-8 grid gap-8 lg:grid-cols-2 lg:mt-10">
@@ -48,7 +48,7 @@ export default function Dashboard() {
                 Aucune commande en retard.
               </p>
             ) : (
-              <div className="flex flex-col gap-1 rounded-2xl bg-surface p-1.5 lg:bg-transparent lg:p-0">
+              <div className="flex flex-col gap-2">
                 <AnimatePresence initial={false}>
                   {late.map((o) => (
                     <OrderRow key={o.id} order={o} />
@@ -70,7 +70,7 @@ export default function Dashboard() {
                 Rien de prêt pour le moment.
               </p>
             ) : (
-              <div className="flex flex-col gap-1 rounded-2xl bg-surface p-1.5 lg:bg-transparent lg:p-0">
+              <div className="flex flex-col gap-2">
                 <AnimatePresence initial={false}>
                   {ready.map((o) => (
                     <OrderRow key={o.id} order={o} />
