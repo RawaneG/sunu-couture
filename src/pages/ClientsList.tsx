@@ -96,7 +96,7 @@ export default function ClientsList() {
         )}
       </div>
 
-      <Fab to="/clients/nouveau" label="Nouveau client" />
+      <Fab to="/clients/nouveau" label="Nouveau client" color="teal" />
     </div>
   );
 }

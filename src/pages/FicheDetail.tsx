@@ -38,23 +38,37 @@ export default function FicheDetail() {
     navigate("/carnet");
   }
 
-  const deleteButton = (
-    <button
-      type="button"
-      onClick={() => {
-        haptic();
-        setConfirmDeleteOpen(true);
-      }}
-      aria-label="Supprimer la fiche"
-      className="glass-chip flex h-8 w-8 flex-none items-center justify-center rounded-full text-terracotta lg:h-10 lg:w-10"
-    >
-      <IconTrash size={15} />
-    </button>
+  const phoneDigits = (fiche.telephone ?? "").replace(/\s/g, "");
+
+  const headerActions = (
+    <>
+      {phoneDigits && (
+        <a
+          href={`tel:${phoneDigits}`}
+          onClick={() => haptic(12)}
+          aria-label={`Appeler le ${fiche.telephone}`}
+          className="glass-chip flex h-8 w-8 flex-none items-center justify-center rounded-full text-teal shadow-soft ring-1 ring-line-strong/40 lg:h-10 lg:w-10"
+        >
+          <IconPhone size={14} />
+        </a>
+      )}
+      <button
+        type="button"
+        onClick={() => {
+          haptic();
+          setConfirmDeleteOpen(true);
+        }}
+        aria-label="Supprimer la fiche"
+        className="glass-chip flex h-8 w-8 flex-none items-center justify-center rounded-full text-terracotta shadow-soft ring-1 ring-line-strong/40 lg:h-10 lg:w-10"
+      >
+        <IconTrash size={15} />
+      </button>
+    </>
   );
 
   return (
     <div>
-      <PageHeader title={`Fiche n° ${fiche.numero}`} backTo="/carnet" actions={deleteButton} />
+      <PageHeader title={`Fiche n° ${fiche.numero}`} backTo="/carnet" actions={headerActions} />
 
       <ConfirmDialog
         open={confirmDeleteOpen}

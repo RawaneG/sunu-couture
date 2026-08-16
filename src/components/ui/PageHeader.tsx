@@ -90,7 +90,7 @@ export default function PageHeader({
               {backTo && (
                 <Link
                   to={backTo}
-                  className="glass-chip flex h-8 w-8 flex-none items-center justify-center rounded-full text-ink active:scale-90 transition-transform"
+                  className="glass-chip flex h-8 w-8 flex-none items-center justify-center rounded-full text-ink shadow-soft ring-1 ring-line-strong/40 active:scale-90 transition-transform"
                   aria-label="Retour"
                 >
                   <IconBack size={16} />
@@ -109,7 +109,7 @@ export default function PageHeader({
                 setSearchOpen(true);
               }}
               aria-label="Rechercher"
-              className="glass-chip flex h-8 w-8 flex-none items-center justify-center rounded-full text-ink-soft"
+              className="glass-chip flex h-8 w-8 flex-none items-center justify-center rounded-full text-ink-soft shadow-soft ring-1 ring-line-strong/40"
             >
               <IconSearch size={15} />
             </motion.button>

@@ -15,3 +15,21 @@ export function markSwipeHintSeen(): void {
     // ignore
   }
 }
+
+const CARNET_PAGE_HINT_KEY = "sunu-carnet-page-hint-seen";
+
+export function hasSeenCarnetPageHint(): boolean {
+  try {
+    return localStorage.getItem(CARNET_PAGE_HINT_KEY) === "1";
+  } catch {
+    return true;
+  }
+}
+
+export function markCarnetPageHintSeen(): void {
+  try {
+    localStorage.setItem(CARNET_PAGE_HINT_KEY, "1");
+  } catch {
+    // ignore
+  }
+}

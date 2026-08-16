@@ -184,6 +184,13 @@ export const IconNotebook = base(
     <path d="M9 3.5v17M5 7.5h1.2M5 11.5h1.2M5 15.5h1.2" />
   </>
 );
+export const IconSwipe = base(
+  <>
+    <path d="M4 12h13.5" />
+    <path d="M13 7.2 17.8 12l-4.8 4.8" />
+    <circle cx="20" cy="12" r="1.6" fill="currentColor" stroke="none" />
+  </>
+);
 export const IconRotateCcw = base(
   <>
     <path d="M4 4.5V10h5.5" />

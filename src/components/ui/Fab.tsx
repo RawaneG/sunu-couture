@@ -3,7 +3,21 @@ import { motion } from "framer-motion";
 import { IconPlus } from "../../lib/icons";
 import { haptic } from "../../lib/haptics";
 
-export default function Fab({ to, label = "Nouvelle commande" }: { to: string; label?: string }) {
+const COLOR_STYLES = {
+  amber: "bg-gradient-to-br from-amber-tile to-[#b87a1f] text-[#2a1c04]",
+  teal: "bg-gradient-to-br from-teal to-[#0f5a49] text-white",
+  indigo: "bg-gradient-to-br from-indigo-soft to-indigo text-white",
+} as const;
+
+export default function Fab({
+  to,
+  label = "Nouvelle commande",
+  color = "amber",
+}: {
+  to: string;
+  label?: string;
+  color?: keyof typeof COLOR_STYLES;
+}) {
   return (
     <motion.div
       className="fixed right-4 z-40 lg:hidden"
@@ -17,7 +31,7 @@ export default function Fab({ to, label = "Nouvelle commande" }: { to: string; l
         to={to}
         onClick={() => haptic(12)}
         aria-label={label}
-        className="relative flex h-14 w-14 items-center justify-center rounded-full bg-gradient-to-br from-amber-tile to-[#b87a1f] text-[#2a1c04] shadow-lift shadow-[inset_0_1px_0_0_rgba(255,255,255,0.35)] ring-1 ring-black/5"
+        className={`relative flex h-14 w-14 items-center justify-center rounded-full shadow-lift shadow-[inset_0_1px_0_0_rgba(255,255,255,0.35)] ring-1 ring-black/5 ${COLOR_STYLES[color]}`}
       >
         <IconPlus size={24} strokeWidth={2.2} />
       </Link>
