@@ -123,7 +123,7 @@ export default function PhotoCapture({
   );
 }
 
-function PhotoSourceSheet({
+export function PhotoSourceSheet({
   onCamera,
   onGallery,
   onClose,

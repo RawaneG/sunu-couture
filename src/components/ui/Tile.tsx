@@ -9,6 +9,7 @@ const VARIANT: Record<string, string> = {
   indigo: "from-indigo-soft to-indigo",
   teal: "from-[#3ba189] to-teal",
   terracotta: "from-[#c96a44] to-terracotta",
+  plum: "from-[#948aa8] to-grey-status",
 };
 
 export default function Tile({

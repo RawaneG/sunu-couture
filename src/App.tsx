@@ -10,6 +10,8 @@ import ClientsLayout from "./pages/ClientsLayout";
 import ClientsEmptyState from "./pages/ClientsEmptyState";
 import ClientDetail from "./pages/ClientDetail";
 import ClientNew from "./pages/ClientNew";
+import CarnetList from "./pages/CarnetList";
+import FicheDetail from "./pages/FicheDetail";
 
 function ScrollToTop() {
   const { pathname } = useLocation();
@@ -30,6 +32,8 @@ export default function App() {
           <Route index element={<OrdersEmptyState />} />
           <Route path=":id" element={<OrderDetail />} />
         </Route>
+        <Route path="/carnet" element={<CarnetList />} />
+        <Route path="/carnet/:id" element={<FicheDetail />} />
         <Route path="/clients/nouveau" element={<ClientNew />} />
         <Route path="/clients" element={<ClientsLayout />}>
           <Route index element={<ClientsEmptyState />} />

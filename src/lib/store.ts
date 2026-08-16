@@ -1,9 +1,47 @@
 import { create } from "zustand";
 import { persist } from "zustand/middleware";
-import type { Client, Order, OrderStatus, VoiceNote } from "./types";
-import { ORDER_STEPS } from "./types";
+import type { Client, Order, OrderStatus, VoiceNote, FicheMesure, FicheChampKey, FicheChamp, TissuPhoto } from "./types";
+import { ORDER_STEPS, FICHE_MESURE_KEYS, FICHE_INFO_KEYS } from "./types";
 import { nextDays, isOverdue } from "./format";
 export { isOverdue };
+
+function uid(prefix: string): string {
+  return `${prefix}${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+}
+
+function emptyFicheChamps(): Record<FicheChampKey, FicheChamp> {
+  const champs = {} as Record<FicheChampKey, FicheChamp>;
+  for (const key of [...FICHE_MESURE_KEYS, ...FICHE_INFO_KEYS]) {
+    champs[key] = { valeur: "", historique: [] };
+  }
+  return champs;
+}
+
+function ficheChamps(values: Partial<Record<FicheChampKey, string>>): Record<FicheChampKey, FicheChamp> {
+  const champs = emptyFicheChamps();
+  for (const [key, valeur] of Object.entries(values)) {
+    champs[key as FicheChampKey] = { valeur: valeur ?? "", historique: [] };
+  }
+  return champs;
+}
+
+const seedFiches: FicheMesure[] = [
+  {
+    id: "f1",
+    numero: 1,
+    nom: "Diouf",
+    prenom: "Awa",
+    champs: {
+      ...ficheChamps({ E: "44", Cou: "38", P: "96", T: "78", M: "58", H: "104", nbrePagnes: "6", prix: "25000", avance: "10000" }),
+      T: { valeur: "78", historique: ["76"] },
+    },
+    tissuPhotos: [],
+    retraitLe: null,
+    soldeLe: null,
+    signature: null,
+    createdAt: nextDays(1, 0)[0],
+  },
+];
 
 const seedClients: Client[] = [
   { id: "c1", name: "Awa Diouf", phone: "77 512 44 08", photo: null, colorSeed: "indigo" },
@@ -47,6 +85,7 @@ interface NewClientInput {
 interface StoreState {
   clients: Client[];
   orders: Order[];
+  fiches: FicheMesure[];
   addOrder: (input: NewOrderInput) => string;
   addClient: (input: NewClientInput) => string;
   setOrderStatus: (id: string, status: OrderStatus) => void;
@@ -55,6 +94,13 @@ interface StoreState {
   setClientText: (id: string, text: string | null) => void;
   getClient: (id: string) => Client | undefined;
   ordersForClient: (id: string) => Order[];
+  addFiche: () => string;
+  setFicheInfo: (id: string, patch: Partial<Pick<FicheMesure, "nom" | "prenom" | "retraitLe" | "soldeLe" | "signature">>) => void;
+  setFicheChamp: (id: string, key: FicheChampKey, valeur: string) => void;
+  strikeFicheChamp: (id: string, key: FicheChampKey) => void;
+  addFicheTissuPhoto: (id: string, dataUrl: string) => void;
+  removeFicheTissuPhoto: (id: string, photoId: string) => void;
+  deleteFiche: (id: string) => void;
 }
 
 function colorSeedFor(seedString: string): string {
@@ -68,6 +114,7 @@ export const useStore = create<StoreState>()(
     (set, get) => ({
       clients: seedClients,
       orders: seedOrders,
+      fiches: seedFiches,
       addOrder: (input) => {
         const id = `o${Date.now()}`;
         let clients = get().clients;
@@ -140,10 +187,62 @@ export const useStore = create<StoreState>()(
         set({ clients: get().clients.map((c) => (c.id === id ? { ...c, measurementsText: text } : c)) }),
       getClient: (id) => get().clients.find((c) => c.id === id),
       ordersForClient: (id) => get().orders.filter((o) => o.clientId === id),
+      addFiche: () => {
+        const id = `f${Date.now()}`;
+        const numero = get().fiches.reduce((max, f) => Math.max(max, f.numero), 0) + 1;
+        const fiche: FicheMesure = {
+          id,
+          numero,
+          nom: "",
+          prenom: "",
+          champs: emptyFicheChamps(),
+          tissuPhotos: [],
+          retraitLe: null,
+          soldeLe: null,
+          signature: null,
+          createdAt: new Date().toISOString(),
+        };
+        set({ fiches: [fiche, ...get().fiches] });
+        return id;
+      },
+      setFicheInfo: (id, patch) =>
+        set({ fiches: get().fiches.map((f) => (f.id === id ? { ...f, ...patch } : f)) }),
+      setFicheChamp: (id, key, valeur) =>
+        set({
+          fiches: get().fiches.map((f) => {
+            if (f.id !== id) return f;
+            const current = f.champs[key];
+            if (current.valeur === valeur) return f;
+            const historique = current.valeur.trim() ? [...current.historique, current.valeur] : current.historique;
+            return { ...f, champs: { ...f.champs, [key]: { valeur, historique } } };
+          }),
+        }),
+      strikeFicheChamp: (id, key) =>
+        set({
+          fiches: get().fiches.map((f) => {
+            if (f.id !== id) return f;
+            const current = f.champs[key];
+            if (!current.valeur.trim()) return f;
+            return { ...f, champs: { ...f.champs, [key]: { valeur: "", historique: [...current.historique, current.valeur] } } };
+          }),
+        }),
+      addFicheTissuPhoto: (id, dataUrl) =>
+        set({
+          fiches: get().fiches.map((f) =>
+            f.id === id ? { ...f, tissuPhotos: [...(f.tissuPhotos ?? []), { id: uid("tp"), dataUrl }] } : f
+          ),
+        }),
+      removeFicheTissuPhoto: (id, photoId) =>
+        set({
+          fiches: get().fiches.map((f) =>
+            f.id === id ? { ...f, tissuPhotos: (f.tissuPhotos ?? []).filter((p) => p.id !== photoId) } : f
+          ),
+        }),
+      deleteFiche: (id) => set({ fiches: get().fiches.filter((f) => f.id !== id) }),
     }),
     {
       name: "sunu-couture",
-      version: 3,
+      version: 6,
       migrate: (persisted) => {
         const state = persisted as StoreState;
         const legacyToNew: Record<string, OrderStatus> = {
@@ -170,11 +269,18 @@ export const useStore = create<StoreState>()(
             measurementsNote: null,
             measurementsText: c.measurementsText ?? null,
           })),
+          fiches: (state.fiches ?? []).map((f) => ({
+            ...f,
+            tissuPhotos: ((f.tissuPhotos ?? []) as (string | TissuPhoto)[]).map((p) =>
+              typeof p === "string" ? { id: uid("tp"), dataUrl: p } : p
+            ),
+          })),
         };
       },
       partialize: (state) => ({
         clients: state.clients.map((c) => ({ ...c, photo: null, measurementsNote: null })),
         orders: state.orders.map((o) => ({ ...o, photo: null, voiceNote: null })),
+        fiches: state.fiches,
       }),
     }
   )

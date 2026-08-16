@@ -178,6 +178,12 @@ export const IconSearch = base(
     <path d="m19.5 19.5-4.3-4.3" />
   </>
 );
+export const IconNotebook = base(
+  <>
+    <path d="M6.5 3.5h11A1.5 1.5 0 0 1 19 5v14a1.5 1.5 0 0 1-1.5 1.5h-11A1.5 1.5 0 0 1 5 19V5a1.5 1.5 0 0 1 1.5-1.5Z" />
+    <path d="M9 3.5v17M5 7.5h1.2M5 11.5h1.2M5 15.5h1.2" />
+  </>
+);
 export const IconTrash = base(
   <>
     <path d="M4.5 7h15M9.5 7V5a1.5 1.5 0 0 1 1.5-1.5h2A1.5 1.5 0 0 1 14.5 5v2M18 7l-.7 12a2 2 0 0 1-2 1.9H8.7a2 2 0 0 1-2-1.9L6 7" />

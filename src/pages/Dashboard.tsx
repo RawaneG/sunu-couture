@@ -5,18 +5,17 @@ import Tile from "../components/ui/Tile";
 import OrderRow from "../components/ui/OrderRow";
 import Fab from "../components/ui/Fab";
 import MobileBrandBar from "../components/layout/MobileBrandBar";
-import { IconPlus, IconHanger, IconUsers, IconClock, IconCheck, IconAlert } from "../lib/icons";
-import { isDueToday } from "../lib/format";
+import { IconPlus, IconHanger, IconUsers, IconCheck, IconAlert, IconNotebook } from "../lib/icons";
 
 export default function Dashboard() {
   const orders = useStore((s) => s.orders);
   const clients = useStore((s) => s.clients);
+  const fiches = useStore((s) => s.fiches);
 
-  const { late, ready, dueToday } = useMemo(() => {
+  const { late, ready } = useMemo(() => {
     return {
       late: orders.filter((o) => o.late),
       ready: orders.filter((o) => o.status === "pret"),
-      dueToday: orders.filter((o) => isDueToday(o.dueDate, o.dueDateStart, o.status)),
     };
   }, [orders]);
 
@@ -32,7 +31,7 @@ export default function Dashboard() {
           <Tile index={0} to="/commandes/nouvelle" variant="amber" icon={<IconPlus size={24} />} label="Nouvelle commande" />
           <Tile index={1} to="/commandes" variant="indigo" icon={<IconHanger size={24} />} label="Commandes" badge={orders.length} />
           <Tile index={2} to="/clients" variant="teal" icon={<IconUsers size={24} />} label="Clients" badge={clients.length} />
-          <Tile index={3} to="/commandes?filter=today" variant="terracotta" icon={<IconClock size={24} />} label="À livrer aujourd'hui" badge={dueToday.length} />
+          <Tile index={3} to="/carnet" variant="plum" icon={<IconNotebook size={24} />} label="Carnet de mesures" badge={fiches.length} />
         </div>
 
         <div className="mt-8 grid gap-8 lg:grid-cols-2 lg:mt-10">

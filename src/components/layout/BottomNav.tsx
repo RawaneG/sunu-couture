@@ -1,12 +1,13 @@
 import { NavLink } from "react-router-dom";
 import { motion } from "framer-motion";
-import { IconHome, IconHanger, IconUsers } from "../../lib/icons";
+import { IconHome, IconHanger, IconUsers, IconNotebook } from "../../lib/icons";
 import { haptic } from "../../lib/haptics";
 
 const NAV = [
   { to: "/", label: "Accueil", icon: IconHome, end: true },
   { to: "/commandes", label: "Commandes", icon: IconHanger, end: false },
   { to: "/clients", label: "Clients", icon: IconUsers, end: false },
+  { to: "/carnet", label: "Carnet de mesures", icon: IconNotebook, end: false },
 ];
 
 export default function BottomNav() {

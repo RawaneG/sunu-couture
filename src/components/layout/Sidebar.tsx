@@ -1,13 +1,14 @@
 import { useRef } from "react";
 import { Link, NavLink } from "react-router-dom";
 import clsx from "clsx";
-import { IconHome, IconHanger, IconUsers, IconPlus, IconSun, IconMoon, IconScissors } from "../../lib/icons";
+import { IconHome, IconHanger, IconUsers, IconNotebook, IconPlus, IconSun, IconMoon, IconScissors } from "../../lib/icons";
 import { useTheme } from "../../lib/theme";
 
 const NAV = [
   { to: "/", label: "Accueil", icon: IconHome, end: true },
   { to: "/commandes", label: "Commandes", icon: IconHanger, end: false },
   { to: "/clients", label: "Clients", icon: IconUsers, end: false },
+  { to: "/carnet", label: "Carnet de mesures", icon: IconNotebook, end: false },
 ];
 
 export default function Sidebar() {
