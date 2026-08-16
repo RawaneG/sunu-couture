@@ -13,6 +13,10 @@ export function formatFullDate(iso: string): string {
   return new Intl.DateTimeFormat("fr-FR", { day: "2-digit", month: "long" }).format(new Date(iso));
 }
 
+export function formatFullDateWithYear(iso: string): string {
+  return new Intl.DateTimeFormat("fr-FR", { day: "2-digit", month: "long", year: "numeric" }).format(new Date(iso));
+}
+
 export function formatFullDateRange(startIso: string, endIso: string): string {
   const start = new Date(startIso);
   const end = new Date(endIso);
@@ -76,6 +80,18 @@ export function toDateInputValue(iso: string): string {
 export function fromDateInputValue(value: string): string {
   const [y, m, d] = value.split("-").map(Number);
   return new Date(y, m - 1, d, 0, 0, 0, 0).toISOString();
+}
+
+/** Digits with at most one decimal separator, normalized to a dot (e.g. body measurements in cm). */
+export function sanitizeMeasurement(value: string): string {
+  const cleaned = value.replace(/[^\d.,]/g, "").replace(",", ".");
+  const [head, ...rest] = cleaned.split(".");
+  return rest.length ? `${head}.${rest.join("")}` : head;
+}
+
+/** Digits and spaces only, for phone number entry. */
+export function sanitizePhone(value: string): string {
+  return value.replace(/[^\d\s]/g, "");
 }
 
 export function formatDuration(seconds: number): string {

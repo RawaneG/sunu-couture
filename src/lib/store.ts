@@ -103,6 +103,7 @@ interface StoreState {
   ) => void;
   setFicheChamp: (id: string, key: FicheChampKey, valeur: string) => void;
   strikeFicheChamp: (id: string, key: FicheChampKey) => void;
+  restoreFicheChamp: (id: string, key: FicheChampKey) => void;
   addFicheTissuPhoto: (id: string, dataUrl: string) => void;
   removeFicheTissuPhoto: (id: string, photoId: string) => void;
   deleteFiche: (id: string) => void;
@@ -231,6 +232,19 @@ export const useStore = create<StoreState>()(
             const current = f.champs[key];
             if (!current.valeur.trim()) return f;
             return { ...f, champs: { ...f.champs, [key]: { valeur: "", historique: [...current.historique, current.valeur] } } };
+          }),
+        }),
+      restoreFicheChamp: (id, key) =>
+        set({
+          fiches: get().fiches.map((f) => {
+            if (f.id !== id) return f;
+            const current = f.champs[key];
+            const last = current.historique[current.historique.length - 1];
+            if (last === undefined) return f;
+            return {
+              ...f,
+              champs: { ...f.champs, [key]: { valeur: last, historique: current.historique.slice(0, -1) } },
+            };
           }),
         }),
       addFicheTissuPhoto: (id, dataUrl) =>

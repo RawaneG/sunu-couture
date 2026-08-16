@@ -1,3 +1,4 @@
+import { useState } from "react";
 import { Navigate, useNavigate, useParams } from "react-router-dom";
 import { motion } from "framer-motion";
 import clsx from "clsx";
@@ -7,9 +8,10 @@ import VoiceRecorder from "../components/ui/VoiceRecorder";
 import FicheChampCell from "../components/ui/FicheChampCell";
 import FabricPhotos from "../components/ui/FabricPhotos";
 import SignaturePad from "../components/ui/SignaturePad";
+import ConfirmDialog from "../components/ui/ConfirmDialog";
 import { IconTrash, IconX, IconPhone } from "../lib/icons";
 import { haptic } from "../lib/haptics";
-import { formatFullDate, toDateInputValue, fromDateInputValue } from "../lib/format";
+import { formatFullDateWithYear, toDateInputValue, fromDateInputValue, sanitizePhone } from "../lib/format";
 import { FICHE_MESURE_KEYS, FICHE_MESURE_LABELS, FICHE_INFO_KEYS, FICHE_INFO_LABELS } from "../lib/types";
 
 export default function FicheDetail() {
@@ -18,10 +20,12 @@ export default function FicheDetail() {
   const setFicheInfo = useStore((s) => s.setFicheInfo);
   const setFicheChamp = useStore((s) => s.setFicheChamp);
   const strikeFicheChamp = useStore((s) => s.strikeFicheChamp);
+  const restoreFicheChamp = useStore((s) => s.restoreFicheChamp);
   const addFicheTissuPhoto = useStore((s) => s.addFicheTissuPhoto);
   const removeFicheTissuPhoto = useStore((s) => s.removeFicheTissuPhoto);
   const deleteFiche = useStore((s) => s.deleteFiche);
   const navigate = useNavigate();
+  const [confirmDeleteOpen, setConfirmDeleteOpen] = useState(false);
 
   const fiche = fiches.find((f) => f.id === id);
 
@@ -29,7 +33,6 @@ export default function FicheDetail() {
 
   function handleDelete() {
     if (!fiche) return;
-    if (!window.confirm(`Supprimer la fiche n° ${fiche.numero} ?`)) return;
     haptic(16);
     deleteFiche(fiche.id);
     navigate("/carnet");
@@ -38,7 +41,10 @@ export default function FicheDetail() {
   const deleteButton = (
     <button
       type="button"
-      onClick={handleDelete}
+      onClick={() => {
+        haptic();
+        setConfirmDeleteOpen(true);
+      }}
       aria-label="Supprimer la fiche"
       className="glass-chip flex h-8 w-8 flex-none items-center justify-center rounded-full text-terracotta lg:h-10 lg:w-10"
     >
@@ -49,6 +55,16 @@ export default function FicheDetail() {
   return (
     <div>
       <PageHeader title={`Fiche n° ${fiche.numero}`} backTo="/carnet" actions={deleteButton} />
+
+      <ConfirmDialog
+        open={confirmDeleteOpen}
+        title={`Supprimer la fiche n° ${fiche.numero} ?`}
+        description="Cette action est définitive et supprimera toutes les mesures, photos et notes de cette fiche."
+        confirmLabel="Supprimer"
+        destructive
+        onConfirm={handleDelete}
+        onClose={() => setConfirmDeleteOpen(false)}
+      />
 
       <motion.div
         key={fiche.id}
@@ -96,6 +112,7 @@ export default function FicheDetail() {
                   champ={fiche.champs[key]}
                   onChange={(v) => setFicheChamp(fiche.id, key, v)}
                   onStrike={() => strikeFicheChamp(fiche.id, key)}
+                  onRestore={() => restoreFicheChamp(fiche.id, key)}
                 />
               ))}
             </section>
@@ -108,6 +125,7 @@ export default function FicheDetail() {
                   champ={fiche.champs[key]}
                   onChange={(v) => setFicheChamp(fiche.id, key, v)}
                   onStrike={() => strikeFicheChamp(fiche.id, key)}
+                  onRestore={() => restoreFicheChamp(fiche.id, key)}
                   numeric={key !== "tissusDeposes"}
                 />
               ))}
@@ -149,13 +167,13 @@ export default function FicheDetail() {
 
 function NomField({ label, value, onChange }: { label: string; value: string; onChange: (v: string) => void }) {
   return (
-    <label className="flex items-baseline gap-2 border-b border-dotted border-line-strong py-2">
+    <label className="flex flex-wrap items-baseline gap-x-2 gap-y-1 border-b border-dotted border-line-strong py-2">
       <span className="flex-none text-[13px] font-bold text-ink-soft">{label}</span>
       <input
         value={value}
         onChange={(e) => onChange(e.target.value)}
         placeholder="—"
-        className="min-w-0 flex-1 bg-transparent text-right text-[15px] font-extrabold outline-none placeholder:font-normal placeholder:text-ink-faint/40"
+        className="min-w-22 flex-1 bg-transparent text-right text-[15px] font-extrabold outline-none placeholder:font-normal placeholder:text-ink-faint/40"
       />
     </label>
   );
@@ -164,14 +182,14 @@ function NomField({ label, value, onChange }: { label: string; value: string; on
 function TelephoneField({ value = "", onChange }: { value: string | undefined; onChange: (v: string) => void }) {
   const digits = value.replace(/\s/g, "");
   return (
-    <label className="flex items-baseline gap-2 border-b border-dotted border-line-strong py-2">
+    <label className="flex flex-wrap items-baseline gap-x-2 gap-y-1 border-b border-dotted border-line-strong py-2">
       <span className="flex-none text-[13px] font-bold text-ink-soft">Téléphone</span>
-      <span className="flex min-w-0 flex-1 items-center justify-end gap-2">
+      <span className="flex min-w-22 flex-1 items-center justify-end gap-2">
         <input
           value={value}
-          onChange={(e) => onChange(e.target.value)}
+          onChange={(e) => onChange(sanitizePhone(e.target.value))}
           type="tel"
-          inputMode="tel"
+          inputMode="numeric"
           placeholder="77 000 00 00"
           className="min-w-0 flex-1 bg-transparent text-right text-[15px] font-extrabold tabular-nums outline-none placeholder:font-normal placeholder:text-ink-faint/40"
         />
@@ -199,11 +217,11 @@ function FicheDateField({
   onChange: (iso: string | null) => void;
 }) {
   return (
-    <label className="relative flex items-baseline gap-2 border-b border-dotted border-line-strong py-2.5">
+    <label className="relative flex flex-wrap items-baseline gap-x-2 gap-y-1 border-b border-dotted border-line-strong py-2.5">
       <span className="flex-none text-[13px] font-bold text-ink-soft">{label}</span>
-      <span className="flex min-w-0 flex-1 items-center justify-end gap-1.5">
+      <span className="flex min-w-22 flex-1 items-center justify-end gap-1.5">
         <span className={clsx("text-[15px] font-extrabold tabular-nums", !value && "text-ink-faint/40 font-semibold")}>
-          {value ? formatFullDate(value) : "jj / mm / aaaa"}
+          {value ? formatFullDateWithYear(value) : "jj / mm / aaaa"}
         </span>
         {value && (
           <button

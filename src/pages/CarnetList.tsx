@@ -1,9 +1,11 @@
+import { useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { motion } from "framer-motion";
 import { useStore } from "../lib/store";
 import PageHeader from "../components/ui/PageHeader";
 import Avatar from "../components/ui/Avatar";
 import { IconNotebook, IconPlus, IconMic, IconPhone } from "../lib/icons";
+import { matchesQuery } from "../lib/search";
 import { haptic } from "../lib/haptics";
 
 function chunk<T>(items: T[], size: number): T[][] {
@@ -16,8 +18,10 @@ export default function CarnetList() {
   const fiches = useStore((s) => s.fiches);
   const addFiche = useStore((s) => s.addFiche);
   const navigate = useNavigate();
+  const [query, setQuery] = useState("");
 
-  const pages = chunk(fiches, 4);
+  const filtered = fiches.filter((f) => matchesQuery(query, `${f.prenom} ${f.nom}`, f.nom, f.prenom, f.telephone));
+  const pages = chunk(filtered, 4);
 
   function handleAdd() {
     haptic(16);
@@ -38,7 +42,13 @@ export default function CarnetList() {
 
   return (
     <div>
-      <PageHeader title="Carnet de mesures" backTo="/" actions={addButton} />
+      <PageHeader
+        title="Carnet de mesures"
+        backTo="/"
+        actions={addButton}
+        hideActionsOnMobile
+        search={{ query, onQueryChange: setQuery, placeholder: "Nom ou téléphone…" }}
+      />
 
       <div className="px-4 lg:px-10 py-4 lg:py-6 max-w-3xl lg:mx-auto">
         {fiches.length === 0 ? (
@@ -54,6 +64,13 @@ export default function CarnetList() {
             >
               Ouvrir une fiche
             </button>
+          </div>
+        ) : filtered.length === 0 ? (
+          <div className="mt-10 flex flex-col items-center gap-3 text-ink-faint">
+            <span className="glass-chip flex h-14 w-14 items-center justify-center rounded-full">
+              <IconNotebook size={24} />
+            </span>
+            <p className="text-sm font-semibold">Aucune fiche trouvée.</p>
           </div>
         ) : (
           <div className="flex flex-col gap-5">

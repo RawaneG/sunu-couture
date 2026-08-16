@@ -34,7 +34,12 @@ export default function ClientsList() {
 
   return (
     <div className="lg:h-full lg:flex lg:flex-col">
-      <PageHeader title="Clients" actions={addButton} search={{ query, onQueryChange: setQuery, placeholder: "Nom ou téléphone…" }} />
+      <PageHeader
+        title="Clients"
+        actions={addButton}
+        hideActionsOnMobile
+        search={{ query, onQueryChange: setQuery, placeholder: "Nom ou téléphone…" }}
+      />
       <div className="hidden lg:block px-6 -mt-2 pt-2">
         <p className="text-sm text-ink-soft">{clients.length} clients</p>
       </div>

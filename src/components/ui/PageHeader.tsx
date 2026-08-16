@@ -17,11 +17,13 @@ export default function PageHeader({
   backTo,
   actions,
   search,
+  hideActionsOnMobile = false,
 }: {
   title: string;
   backTo?: string;
   actions?: ReactNode;
   search?: SearchBundle;
+  hideActionsOnMobile?: boolean;
 }) {
   const [searchOpen, setSearchOpen] = useState(false);
   const [scrolled, setScrolled] = useState(false);
@@ -112,7 +114,7 @@ export default function PageHeader({
               <IconSearch size={15} />
             </motion.button>
           )}
-          {!searchOpen && actions}
+          {!searchOpen && !hideActionsOnMobile && actions}
         </div>
       </div>
 
