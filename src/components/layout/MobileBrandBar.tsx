@@ -1,8 +1,9 @@
 import { useRef } from "react";
 import { motion } from "framer-motion";
-import { IconMoon, IconScissors, IconSun } from "../../lib/icons";
+import { IconMoon, IconSun } from "../../lib/icons";
 import { useTheme } from "../../lib/theme";
 import { haptic } from "../../lib/haptics";
+import BrandMark from "../ui/BrandMark";
 
 export default function MobileBrandBar() {
   const { dark, toggle } = useTheme();
@@ -14,10 +15,10 @@ export default function MobileBrandBar() {
       transition={{ type: "spring", stiffness: 380, damping: 30 }}
       className="flex items-center gap-2.5 px-4 pt-5 pb-3 lg:hidden"
     >
-      <span className="flex h-8 w-8 flex-none items-center justify-center rounded-lg bg-gradient-to-br from-indigo-soft to-indigo text-amber-tile shadow-soft shadow-[inset_0_1px_0_0_rgba(255,255,255,0.25)]">
-        <IconScissors size={15} />
+      <span className="glass-brand flex h-8 w-8 flex-none items-center justify-center rounded-lg">
+        <BrandMark size={21} />
       </span>
-      <span className="flex-1 font-display italic font-bold text-lg leading-none">Sunu Couture</span>
+      <span className="flex-1 font-display italic font-bold text-lg leading-none">Tayo</span>
       <motion.button
         ref={btnRef}
         type="button"

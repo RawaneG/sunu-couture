@@ -23,7 +23,7 @@ export default function Dashboard() {
     <div>
       <MobileBrandBar />
       <div className="hidden lg:block px-10 pt-9 pb-2">
-        <h1 className="font-display italic font-bold text-3xl text-balance">Sunu Couture</h1>
+        <h1 className="font-display italic font-bold text-3xl text-balance">Tayo</h1>
       </div>
 
       <div className="px-4 lg:px-10 pt-2 lg:pt-6">

@@ -1,8 +1,9 @@
 import { useRef } from "react";
 import { Link, NavLink } from "react-router-dom";
 import clsx from "clsx";
-import { IconHome, IconHanger, IconUsers, IconNotebook, IconPlus, IconSun, IconMoon, IconScissors } from "../../lib/icons";
+import { IconHome, IconHanger, IconUsers, IconNotebook, IconPlus, IconSun, IconMoon } from "../../lib/icons";
 import { useTheme } from "../../lib/theme";
+import BrandMark from "../ui/BrandMark";
 
 const NAV = [
   { to: "/", label: "Accueil", icon: IconHome, end: true },
@@ -19,11 +20,11 @@ export default function Sidebar() {
     <aside className="hidden lg:flex lg:w-64 lg:flex-none lg:flex-col lg:border-r lg:border-line/70 lg:bg-surface/65 lg:backdrop-blur-2xl lg:backdrop-saturate-150">
       <div className="bg-weave px-6 pt-8 pb-7">
         <Link to="/" className="flex items-center gap-2.5">
-          <span className="flex h-9 w-9 flex-none items-center justify-center rounded-xl bg-indigo text-amber-tile">
-            <IconScissors size={17} />
+          <span className="glass-brand flex h-9 w-9 flex-none items-center justify-center rounded-xl">
+            <BrandMark size={24} />
           </span>
           <span className="font-display italic font-bold text-xl leading-none text-ink text-balance">
-            Sunu Couture
+            Tayo
           </span>
         </Link>
       </div>

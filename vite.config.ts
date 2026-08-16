@@ -16,9 +16,9 @@ export default defineConfig({
       },
       manifest: {
         id: '/',
-        name: 'Sunu Couture',
-        short_name: 'Sunu Couture',
-        description: "Suivi des commandes et des clients pour tailleurs, pensé pour un usage sans lecture ni écriture.",
+        name: 'Tayo',
+        short_name: 'Tayo',
+        description: "Tayo, l'outil du bon tailleur — suivi des commandes et des clients pour tailleurs, pensé pour un usage sans lecture ni écriture.",
         lang: 'fr',
         start_url: '/',
         scope: '/',

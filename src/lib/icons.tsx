@@ -76,13 +76,6 @@ export const IconPause = base(
   </>
 );
 export const IconStop = base(<rect x="7" y="7" width="10" height="10" rx="2" fill="currentColor" stroke="none" />);
-export const IconScissors = base(
-  <>
-    <circle cx="6.5" cy="6.5" r="2.2" />
-    <circle cx="6.5" cy="17.5" r="2.2" />
-    <path d="m8.3 8-.1-.1 11.8 11.6M8.2 16.1 20 4.5" />
-  </>
-);
 export const IconSpool = base(
   <>
     <path d="M6 4h12M6 20h12" />
