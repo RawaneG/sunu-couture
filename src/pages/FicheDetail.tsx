@@ -140,7 +140,6 @@ export default function FicheDetail() {
                   onChange={(v) => setFicheChamp(fiche.id, key, v)}
                   onStrike={() => strikeFicheChamp(fiche.id, key)}
                   onRestore={() => restoreFicheChamp(fiche.id, key)}
-                  numeric={key !== "tissusDeposes"}
                 />
               ))}
 
