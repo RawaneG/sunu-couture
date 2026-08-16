@@ -6,14 +6,26 @@ import type { VoiceNote } from "../../lib/types";
 
 const BAR_HEIGHTS = [5, 12, 8, 16, 6, 11, 4, 14, 7, 10, 5, 13];
 
+function blobToDataUrl(blob: Blob): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(reader.result as string);
+    reader.onerror = reject;
+    reader.readAsDataURL(blob);
+  });
+}
+
 export default function VoiceRecorder({
   value,
   onChange,
   label = "Mesures",
+  persist = false,
 }: {
   value: VoiceNote | null;
   onChange: (v: VoiceNote | null) => void;
   label?: string;
+  /** Store the recording as a persistent data URL instead of a session-only blob URL. */
+  persist?: boolean;
 }) {
   const [recording, setRecording] = useState(false);
   const [elapsed, setElapsed] = useState(0);
@@ -38,10 +50,10 @@ export default function VoiceRecorder({
       const recorder = new MediaRecorder(stream);
       chunksRef.current = [];
       recorder.ondataavailable = (e) => chunksRef.current.push(e.data);
-      recorder.onstop = () => {
+      recorder.onstop = async () => {
         stream.getTracks().forEach((t) => t.stop());
         const blob = new Blob(chunksRef.current, { type: "audio/webm" });
-        const url = URL.createObjectURL(blob);
+        const url = persist ? await blobToDataUrl(blob) : URL.createObjectURL(blob);
         onChange({ url, duration: elapsedRef.current, recordedAt: new Date().toISOString() });
       };
       recorderRef.current = recorder;
@@ -65,7 +77,7 @@ export default function VoiceRecorder({
   }
 
   function remove() {
-    if (value) URL.revokeObjectURL(value.url);
+    if (value?.url.startsWith("blob:")) URL.revokeObjectURL(value.url);
     onChange(null);
     setPlaying(false);
   }

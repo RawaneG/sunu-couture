@@ -31,6 +31,8 @@ const seedFiches: FicheMesure[] = [
     numero: 1,
     nom: "Diouf",
     prenom: "Awa",
+    telephone: "77 512 44 08",
+    voiceNote: null,
     champs: {
       ...ficheChamps({ E: "44", Cou: "38", P: "96", T: "78", M: "58", H: "104", nbrePagnes: "6", prix: "25000", avance: "10000" }),
       T: { valeur: "78", historique: ["76"] },
@@ -95,7 +97,10 @@ interface StoreState {
   getClient: (id: string) => Client | undefined;
   ordersForClient: (id: string) => Order[];
   addFiche: () => string;
-  setFicheInfo: (id: string, patch: Partial<Pick<FicheMesure, "nom" | "prenom" | "retraitLe" | "soldeLe" | "signature">>) => void;
+  setFicheInfo: (
+    id: string,
+    patch: Partial<Pick<FicheMesure, "nom" | "prenom" | "telephone" | "voiceNote" | "retraitLe" | "soldeLe" | "signature">>
+  ) => void;
   setFicheChamp: (id: string, key: FicheChampKey, valeur: string) => void;
   strikeFicheChamp: (id: string, key: FicheChampKey) => void;
   addFicheTissuPhoto: (id: string, dataUrl: string) => void;
@@ -195,6 +200,8 @@ export const useStore = create<StoreState>()(
           numero,
           nom: "",
           prenom: "",
+          telephone: "",
+          voiceNote: null,
           champs: emptyFicheChamps(),
           tissuPhotos: [],
           retraitLe: null,
@@ -242,7 +249,7 @@ export const useStore = create<StoreState>()(
     }),
     {
       name: "sunu-couture",
-      version: 6,
+      version: 8,
       migrate: (persisted) => {
         const state = persisted as StoreState;
         const legacyToNew: Record<string, OrderStatus> = {
@@ -271,6 +278,8 @@ export const useStore = create<StoreState>()(
           })),
           fiches: (state.fiches ?? []).map((f) => ({
             ...f,
+            telephone: f.telephone ?? "",
+            voiceNote: f.voiceNote ?? null,
             tissuPhotos: ((f.tissuPhotos ?? []) as (string | TissuPhoto)[]).map((p) =>
               typeof p === "string" ? { id: uid("tp"), dataUrl: p } : p
             ),

@@ -96,6 +96,8 @@ export interface FicheMesure {
   numero: number;
   nom: string;
   prenom: string;
+  telephone: string;
+  voiceNote: VoiceNote | null;
   champs: Record<FicheChampKey, FicheChamp>;
   tissuPhotos: TissuPhoto[];
   retraitLe: string | null;

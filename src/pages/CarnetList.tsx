@@ -2,7 +2,8 @@ import { useNavigate } from "react-router-dom";
 import { motion } from "framer-motion";
 import { useStore } from "../lib/store";
 import PageHeader from "../components/ui/PageHeader";
-import { IconNotebook, IconPlus } from "../lib/icons";
+import Avatar from "../components/ui/Avatar";
+import { IconNotebook, IconPlus, IconMic, IconPhone } from "../lib/icons";
 import { haptic } from "../lib/haptics";
 
 function chunk<T>(items: T[], size: number): T[][] {
@@ -67,24 +68,49 @@ export default function CarnetList() {
                 <p className="mb-2 px-1 text-[10.5px] font-bold uppercase tracking-wide text-ink-faint">
                   Page {pageIndex + 1}
                 </p>
-                <div className="grid grid-cols-2 gap-2">
+                <div className="flex flex-col gap-2">
                   {page.map((f) => {
                     const nomComplet = [f.prenom, f.nom].filter(Boolean).join(" ");
+                    const fallbackPhoto = f.tissuPhotos[0]?.dataUrl ?? null;
+                    const digits = (f.telephone ?? "").replace(/\s/g, "");
                     return (
-                      <button
+                      <div
                         key={f.id}
-                        type="button"
+                        role="button"
+                        tabIndex={0}
                         onClick={() => {
                           haptic();
                           navigate(`/carnet/${f.id}`);
                         }}
-                        className="glass-chip flex flex-col gap-1 rounded-xl px-3 py-3 text-left transition-colors hover:bg-surface-3 active:scale-[0.98]"
+                        onKeyDown={(e) => {
+                          if (e.key === "Enter" || e.key === " ") {
+                            e.preventDefault();
+                            haptic();
+                            navigate(`/carnet/${f.id}`);
+                          }
+                        }}
+                        className="glass-chip flex cursor-pointer items-center gap-2 rounded-xl px-2.5 py-2.5 text-left transition-colors hover:bg-surface-3 active:scale-[0.98]"
                       >
-                        <span className="text-[10px] font-bold uppercase tracking-wide text-ink-faint">
-                          Fiche n° {f.numero}
+                        <Avatar photo={fallbackPhoto} seed="grey" size={44} />
+                        <span className="min-w-0 flex-1">
+                          <span className="flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-wide text-ink-faint">
+                            Fiche n° {f.numero}
+                            {f.voiceNote && <IconMic size={10} className="flex-none text-indigo" />}
+                          </span>
+                          <span className="mt-0.5 block truncate text-[13.5px] font-bold">{nomComplet || "Sans nom"}</span>
                         </span>
-                        <span className="truncate text-[13.5px] font-bold">{nomComplet || "Sans nom"}</span>
-                      </button>
+                        {digits && (
+                          <a
+                            href={`tel:${digits}`}
+                            onClick={(e) => e.stopPropagation()}
+                            onPointerDown={(e) => e.stopPropagation()}
+                            aria-label={`Appeler ${nomComplet || "ce client"}`}
+                            className="flex h-8 w-8 flex-none items-center justify-center rounded-full bg-teal text-white active:scale-90 transition-transform"
+                          >
+                            <IconPhone size={13} />
+                          </a>
+                        )}
+                      </div>
                     );
                   })}
                 </div>

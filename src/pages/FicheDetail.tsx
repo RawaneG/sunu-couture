@@ -3,10 +3,11 @@ import { motion } from "framer-motion";
 import clsx from "clsx";
 import { useStore } from "../lib/store";
 import PageHeader from "../components/ui/PageHeader";
+import VoiceRecorder from "../components/ui/VoiceRecorder";
 import FicheChampCell from "../components/ui/FicheChampCell";
 import FabricPhotos from "../components/ui/FabricPhotos";
 import SignaturePad from "../components/ui/SignaturePad";
-import { IconTrash, IconX } from "../lib/icons";
+import { IconTrash, IconX, IconPhone } from "../lib/icons";
 import { haptic } from "../lib/haptics";
 import { formatFullDate, toDateInputValue, fromDateInputValue } from "../lib/format";
 import { FICHE_MESURE_KEYS, FICHE_MESURE_LABELS, FICHE_INFO_KEYS, FICHE_INFO_LABELS } from "../lib/types";
@@ -47,7 +48,7 @@ export default function FicheDetail() {
 
   return (
     <div>
-      <PageHeader title={`Fiche n° ${fiche.numero}`} backTo="/clients/carnet" actions={deleteButton} />
+      <PageHeader title={`Fiche n° ${fiche.numero}`} backTo="/carnet" actions={deleteButton} />
 
       <motion.div
         key={fiche.id}
@@ -69,6 +70,20 @@ export default function FicheDetail() {
               label="Prénom"
               value={fiche.prenom}
               onChange={(v) => setFicheInfo(fiche.id, { prenom: v })}
+            />
+            <TelephoneField
+              value={fiche.telephone ?? ""}
+              onChange={(v) => setFicheInfo(fiche.id, { telephone: v })}
+            />
+          </div>
+
+          <div className="mt-4">
+            <p className="mb-2 text-[13px] font-bold text-ink-soft">Note vocale</p>
+            <VoiceRecorder
+              value={fiche.voiceNote}
+              onChange={(v) => setFicheInfo(fiche.id, { voiceNote: v })}
+              label="cette fiche"
+              persist
             />
           </div>
 
@@ -142,6 +157,34 @@ function NomField({ label, value, onChange }: { label: string; value: string; on
         placeholder="—"
         className="min-w-0 flex-1 bg-transparent text-right text-[15px] font-extrabold outline-none placeholder:font-normal placeholder:text-ink-faint/40"
       />
+    </label>
+  );
+}
+
+function TelephoneField({ value = "", onChange }: { value: string | undefined; onChange: (v: string) => void }) {
+  const digits = value.replace(/\s/g, "");
+  return (
+    <label className="flex items-baseline gap-2 border-b border-dotted border-line-strong py-2">
+      <span className="flex-none text-[13px] font-bold text-ink-soft">Téléphone</span>
+      <span className="flex min-w-0 flex-1 items-center justify-end gap-2">
+        <input
+          value={value}
+          onChange={(e) => onChange(e.target.value)}
+          type="tel"
+          inputMode="tel"
+          placeholder="77 000 00 00"
+          className="min-w-0 flex-1 bg-transparent text-right text-[15px] font-extrabold tabular-nums outline-none placeholder:font-normal placeholder:text-ink-faint/40"
+        />
+        {digits && (
+          <a
+            href={`tel:${digits}`}
+            aria-label={`Appeler le ${value}`}
+            className="flex h-7 w-7 flex-none items-center justify-center rounded-full bg-teal text-white active:scale-90 transition-transform"
+          >
+            <IconPhone size={12} />
+          </a>
+        )}
+      </span>
     </label>
   );
 }
