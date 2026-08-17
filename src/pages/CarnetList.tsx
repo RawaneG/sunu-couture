@@ -168,7 +168,7 @@ export default function CarnetList() {
             <p className="text-sm font-semibold">Aucune fiche trouvée.</p>
           </div>
         ) : (
-          <div ref={cardRef} className="relative overflow-hidden p-3">
+          <div ref={cardRef} className="glass-edge relative overflow-hidden rounded-2xl p-3">
             {(paginated || (!searching && carnetCount > 1)) && (
               <div className="mb-2 flex items-center justify-between px-1">
                 <p className="text-[10.5px] font-bold uppercase tracking-wide text-ink-faint">
