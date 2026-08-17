@@ -34,29 +34,12 @@ export interface Client {
   phone: string;
   photo: string | null;
   colorSeed: string;
-  measurementsNote?: VoiceNote | null;
-  measurementsText?: string | null;
-}
-
-export interface Order {
-  id: string;
-  clientId: string;
-  garment: string;
-  fabricColor: string;
-  photo: string | null;
-  voiceNote: VoiceNote | null;
-  measurementsText: string | null;
-  dueDate: string;
-  dueDateStart: string | null;
-  price: number;
-  status: OrderStatus;
-  late: boolean;
-  createdAt: string;
 }
 
 // Carnet de mesures — a faithful digital replica of the paper "fiche de mesure"
 // booklet tailors already use, for tailors who can't read. Order and labels
-// match the physical sheet exactly; nothing here is linked to Client/Order.
+// match the physical sheet exactly. A fiche is the single record of one job:
+// client, measurements, garment, photos, voice note, pickup, and payment.
 export const FICHE_MESURE_KEYS = [
   "E", "Cou", "P", "T", "M", "C", "H", "F", "G", "TM", "LR", "LP", "LJ",
 ] as const;
@@ -67,15 +50,15 @@ export const FICHE_MESURE_LABELS: Record<FicheMesureKey, string> = {
   TM: "T.M", LR: "L.R", LP: "L.P", LJ: "L.J",
 };
 
-export const FICHE_INFO_KEYS = ["nbrePagnes", "tissusDeposes", "prix", "avance", "reste"] as const;
+// prix/avance/reste used to live here as free-text champs the tailor had to
+// recompute by hand — prix/avance are now plain numbers on Fiche and reste is
+// always derived via resteFor(), never typed in or recalculated by hand.
+export const FICHE_INFO_KEYS = ["nbrePagnes", "tissusDeposes"] as const;
 export type FicheInfoKey = (typeof FICHE_INFO_KEYS)[number];
 
 export const FICHE_INFO_LABELS: Record<FicheInfoKey, string> = {
   nbrePagnes: "Nbre de pagnes",
   tissusDeposes: "Tissus déposés",
-  prix: "Prix",
-  avance: "Avance",
-  reste: "Reste",
 };
 
 export type FicheChampKey = FicheMesureKey | FicheInfoKey;
@@ -91,17 +74,38 @@ export interface TissuPhoto {
   dataUrl: string;
 }
 
-export interface FicheMesure {
+export interface Fiche {
   id: string;
-  numero: number;
+  carnetNumero: number; // which physical carnet (1, 2, 3…) this fiche belongs to
+  numero: number; // 1..120 within its carnet — stable forever, never reassigned
+
+  // Written exactly as on paper — free text, always present, never blocked on
+  // picking a client. clientId is a separate, optional link layered on top (see
+  // below) so old customers can be found again without changing what this row is.
   nom: string;
   prenom: string;
   telephone: string;
-  voiceNote: VoiceNote | null;
+  clientId: string | null;
+
   champs: Record<FicheChampKey, FicheChamp>;
+  voiceNote: VoiceNote | null;
   tissuPhotos: TissuPhoto[];
-  retraitLe: string | null;
+
+  dueDate: string | null; // never pre-filled — blank until the tailor sets it, like on paper
   soldeLe: string | null;
   signature: string | null;
+
+  price: number;
+  avance: number; // one line, like on paper — reste is always price − avance, never edited directly
+
+  // Compléments — not on the paper sheet, kept visually and structurally separate
+  // from the fields above so the fiche still reads like the booklet the tailor knows.
+  garment: string;
+  description: string | null;
+  fabricColor: string;
+  status: OrderStatus;
+  late: boolean;
+
+  cancelledAt: string | null;
   createdAt: string;
 }

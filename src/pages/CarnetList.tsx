@@ -1,15 +1,16 @@
-import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { AnimatePresence, motion, type PanInfo } from "framer-motion";
 import clsx from "clsx";
 import { useStore } from "../lib/store";
 import Avatar from "../components/ui/Avatar";
 import PageHeader from "../components/ui/PageHeader";
+import MobileBrandBar from "../components/layout/MobileBrandBar";
 import { IconBack, IconChevronRight, IconMic, IconNotebook, IconPhone, IconPlus, IconSwipe } from "../lib/icons";
 import { matchesQuery } from "../lib/search";
 import { haptic } from "../lib/haptics";
 import { hasSeenCarnetPageHint, markCarnetPageHintSeen } from "../lib/onboarding";
-import type { FicheMesure } from "../lib/types";
+import type { Fiche } from "../lib/types";
 
 const ROW_HEIGHT = 64;
 const ROW_GAP = 8;
@@ -33,6 +34,7 @@ const slideVariants = {
 
 export default function CarnetList() {
   const fiches = useStore((s) => s.fiches);
+  const clients = useStore((s) => s.clients);
   const addFiche = useStore((s) => s.addFiche);
   const navigate = useNavigate();
   const [query, setQuery] = useState("");
@@ -42,7 +44,23 @@ export default function CarnetList() {
   const [showSwipeHint, setShowSwipeHint] = useState(false);
   const cardRef = useRef<HTMLDivElement>(null);
 
-  const filtered = fiches.filter((f) => matchesQuery(query, `${f.prenom} ${f.nom}`, f.nom, f.prenom, f.telephone));
+  const activeCarnet = useMemo(() => fiches.reduce((max, f) => Math.max(max, f.carnetNumero), 0) || 1, [fiches]);
+  const carnetCount = activeCarnet;
+  const searching = query.trim().length > 0;
+
+  const clientFieldsFor = (f: Fiche) => {
+    const client = f.clientId ? clients.find((c) => c.id === f.clientId) : undefined;
+    return {
+      name: [f.prenom, f.nom].filter(Boolean).join(" ") || client?.name || "",
+      phone: f.telephone || client?.phone || "",
+    };
+  };
+
+  const filtered = fiches.filter((f) => {
+    if (!searching && f.carnetNumero !== activeCarnet) return false;
+    const { name, phone } = clientFieldsFor(f);
+    return matchesQuery(query, name, phone, f.numero, f.garment);
+  });
   const pages = chunk(filtered, pageSize);
   const pageCount = pages.length;
   const paginated = pageCount > 1;
@@ -119,15 +137,15 @@ export default function CarnetList() {
 
   return (
     <div>
+      <MobileBrandBar />
       <PageHeader
-        title="Carnet de mesures"
-        backTo="/"
+        title={searching ? "Carnet de mesures" : `Carnet n° ${activeCarnet}`}
         actions={addButton}
         hideActionsOnMobile
-        search={{ query, onQueryChange: setQuery, placeholder: "Nom ou téléphone…" }}
+        search={{ query, onQueryChange: setQuery, placeholder: "Nom, téléphone ou n° de fiche…" }}
       />
 
-      <div className="px-4 lg:px-10 py-4 lg:py-6 max-w-3xl lg:mx-auto">
+      <div className="px-4 lg:px-10 py-2 lg:py-4 max-w-3xl lg:mx-auto">
         {fiches.length === 0 ? (
           <div className="mt-10 flex flex-col items-center gap-3 text-ink-faint">
             <span className="glass-chip flex h-14 w-14 items-center justify-center rounded-full">
@@ -150,32 +168,34 @@ export default function CarnetList() {
             <p className="text-sm font-semibold">Aucune fiche trouvée.</p>
           </div>
         ) : (
-          <div ref={cardRef} className="glass-card relative overflow-hidden rounded-2xl p-3">
-            {paginated && (
+          <div ref={cardRef} className="relative overflow-hidden p-3">
+            {(paginated || (!searching && carnetCount > 1)) && (
               <div className="mb-2 flex items-center justify-between px-1">
                 <p className="text-[10.5px] font-bold uppercase tracking-wide text-ink-faint">
-                  Page {currentPage + 1} / {pageCount}
+                  {searching ? `${filtered.length} résultat${filtered.length > 1 ? "s" : ""}` : `Page ${currentPage + 1} / ${pageCount}`}
                 </p>
-                <div className="flex items-center gap-1.5">
-                  <button
-                    type="button"
-                    onClick={() => goTo(currentPage - 1)}
-                    disabled={currentPage === 0}
-                    aria-label="Page précédente"
-                    className="glass-chip flex h-7 w-7 items-center justify-center rounded-full text-ink-soft shadow-soft ring-1 ring-line-strong/40 disabled:opacity-30 active:scale-90 transition-transform"
-                  >
-                    <IconBack size={13} />
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => goTo(currentPage + 1)}
-                    disabled={currentPage === pageCount - 1}
-                    aria-label="Page suivante"
-                    className="glass-chip flex h-7 w-7 items-center justify-center rounded-full text-ink-soft shadow-soft ring-1 ring-line-strong/40 disabled:opacity-30 active:scale-90 transition-transform"
-                  >
-                    <IconChevronRight size={13} />
-                  </button>
-                </div>
+                {paginated && (
+                  <div className="flex items-center gap-1.5">
+                    <button
+                      type="button"
+                      onClick={() => goTo(currentPage - 1)}
+                      disabled={currentPage === 0}
+                      aria-label="Page précédente"
+                      className="glass-chip flex h-7 w-7 items-center justify-center rounded-full text-ink-soft shadow-soft ring-1 ring-line-strong/40 disabled:opacity-30 active:scale-90 transition-transform"
+                    >
+                      <IconBack size={13} />
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => goTo(currentPage + 1)}
+                      disabled={currentPage === pageCount - 1}
+                      aria-label="Page suivante"
+                      className="glass-chip flex h-7 w-7 items-center justify-center rounded-full text-ink-soft shadow-soft ring-1 ring-line-strong/40 disabled:opacity-30 active:scale-90 transition-transform"
+                    >
+                      <IconChevronRight size={13} />
+                    </button>
+                  </div>
+                )}
               </div>
             )}
 
@@ -197,7 +217,9 @@ export default function CarnetList() {
                   onDragEnd={handleDragEnd}
                   className="flex flex-col gap-2"
                 >
-                  {pages[currentPage]?.map((f) => <FicheRow key={f.id} fiche={f} onOpen={() => navigate(`/carnet/${f.id}`)} />)}
+                  {pages[currentPage]?.map((f) => (
+                    <FicheRow key={f.id} fiche={f} clientName={clientFieldsFor(f).name} onOpen={() => navigate(`/carnet/${f.id}`)} />
+                  ))}
                 </motion.div>
               </AnimatePresence>
             </div>
@@ -265,10 +287,9 @@ export default function CarnetList() {
   );
 }
 
-function FicheRow({ fiche, onOpen }: { fiche: FicheMesure; onOpen: () => void }) {
-  const nomComplet = [fiche.prenom, fiche.nom].filter(Boolean).join(" ");
-  const fallbackPhoto = fiche.tissuPhotos[0]?.dataUrl ?? null;
-  const digits = (fiche.telephone ?? "").replace(/\s/g, "");
+function FicheRow({ fiche, clientName, onOpen }: { fiche: Fiche; clientName: string; onOpen: () => void }) {
+  const client = useStore((s) => (fiche.clientId ? s.getClient(fiche.clientId) : undefined));
+  const digits = (fiche.telephone || client?.phone || "").replace(/\s/g, "");
 
   return (
     <div
@@ -285,22 +306,26 @@ function FicheRow({ fiche, onOpen }: { fiche: FicheMesure; onOpen: () => void })
           onOpen();
         }
       }}
-      className="glass-chip flex cursor-pointer items-center gap-2 rounded-xl px-2.5 py-2.5 text-left transition-colors hover:bg-surface-3 active:scale-[0.98]"
+      className={clsx(
+        "glass-chip flex cursor-pointer items-center gap-2 rounded-xl px-2.5 py-2.5 text-left transition-colors hover:bg-surface-3 active:scale-[0.98]",
+        fiche.cancelledAt && "opacity-50"
+      )}
     >
-      <Avatar photo={fallbackPhoto} seed="grey" size={44} />
+      <Avatar photo={client?.photo ?? fiche.tissuPhotos[0]?.dataUrl ?? null} seed={client?.colorSeed ?? "grey"} size={44} />
       <span className="min-w-0 flex-1">
         <span className="flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-wide text-ink-faint">
           Fiche n° {fiche.numero}
           {fiche.voiceNote && <IconMic size={10} className="flex-none text-indigo" />}
+          {fiche.cancelledAt && "· Annulée"}
         </span>
-        <span className="mt-0.5 block truncate text-[13.5px] font-bold">{nomComplet || "Sans nom"}</span>
+        <span className="mt-0.5 block truncate text-[13.5px] font-bold">{clientName || "Sans nom"}</span>
       </span>
       {digits && (
         <a
           href={`tel:${digits}`}
           onClick={(e) => e.stopPropagation()}
           onPointerDown={(e) => e.stopPropagation()}
-          aria-label={`Appeler ${nomComplet || "ce client"}`}
+          aria-label={`Appeler ${clientName || "ce client"}`}
           className="flex h-8 w-8 flex-none items-center justify-center rounded-full bg-teal text-white active:scale-90 transition-transform"
         >
           <IconPhone size={13} />

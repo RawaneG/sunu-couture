@@ -2,7 +2,7 @@ import { useMemo, useState } from "react";
 import { useSearchParams, useMatch } from "react-router-dom";
 import { AnimatePresence, motion } from "framer-motion";
 import clsx from "clsx";
-import { useStore } from "../lib/store";
+import { useStore, resteFor } from "../lib/store";
 import OrderRow from "../components/ui/OrderRow";
 import Fab from "../components/ui/Fab";
 import PageHeader from "../components/ui/PageHeader";
@@ -12,14 +12,16 @@ import { isDueToday } from "../lib/format";
 import { matchesQuery } from "../lib/search";
 import { haptic } from "../lib/haptics";
 
-// Each order shows exactly one badge at a time (see StatusPill: "En retard" always
+// Each fiche shows exactly one badge at a time (see StatusPill: "En retard" always
 // wins over the step status when late). These filters mirror that — they're mutually
 // exclusive buckets matching what's actually printed on each card, not overlapping
-// views of the same order under two different labels.
+// views of the same fiche under two different labels. "reste" is the one exception:
+// it's a payment-based cut across statuses, not a step in the same badge.
 const FILTERS = [
   { key: "all", label: "Toutes", dot: "bg-ink-faint" },
   { key: "late", label: "En retard", dot: "bg-terracotta" },
   { key: "today", label: "Dû aujourd'hui", dot: "bg-indigo-soft" },
+  { key: "reste", label: "Reste à encaisser", dot: "bg-amber-tile" },
   { key: "recu", label: "Reçues", dot: STATUS_DOT_COLOR.recu },
   { key: "couture", label: "En couture", dot: STATUS_DOT_COLOR.couture },
   { key: "pret", label: "Prêtes", dot: STATUS_DOT_COLOR.pret },
@@ -27,43 +29,48 @@ const FILTERS = [
 ] as const;
 
 export default function OrdersList() {
-  const orders = useStore((s) => s.orders);
+  const fiches = useStore((s) => s.fiches);
   const clients = useStore((s) => s.clients);
   const [params, setParams] = useSearchParams();
   const filter = params.get("filter") ?? "all";
   const activeMatch = useMatch("/commandes/:id");
   const [query, setQuery] = useState("");
 
+  const active = useMemo(() => fiches.filter((f) => !f.cancelledAt), [fiches]);
+
   const filtered = useMemo(() => {
-    const sorted = [...orders].sort((a, b) => +new Date(a.dueDate) - +new Date(b.dueDate));
+    const sorted = [...active].sort(
+      (a, b) => (a.dueDate ? +new Date(a.dueDate) : Infinity) - (b.dueDate ? +new Date(b.dueDate) : Infinity)
+    );
     let result = sorted;
-    if (filter === "late") result = result.filter((o) => o.late);
+    if (filter === "late") result = result.filter((f) => f.late);
     else if (filter === "today")
-      result = result.filter((o) => !o.late && isDueToday(o.dueDate, o.dueDateStart, o.status));
-    else if (filter === "recu") result = result.filter((o) => !o.late && o.status === "recu");
-    else if (filter === "couture") result = result.filter((o) => !o.late && o.status === "couture");
-    else if (filter === "pret") result = result.filter((o) => !o.late && o.status === "pret");
-    else if (filter === "livre") result = result.filter((o) => o.status === "livre");
+      result = result.filter((f) => !f.late && isDueToday(f.dueDate, null, f.status));
+    else if (filter === "reste") result = result.filter((f) => resteFor(f) > 0);
+    else if (filter === "recu") result = result.filter((f) => !f.late && f.status === "recu");
+    else if (filter === "couture") result = result.filter((f) => !f.late && f.status === "couture");
+    else if (filter === "pret") result = result.filter((f) => !f.late && f.status === "pret");
+    else if (filter === "livre") result = result.filter((f) => f.status === "livre");
 
     if (query.trim()) {
-      result = result.filter((o) => {
-        const client = clients.find((c) => c.id === o.clientId);
-        return matchesQuery(query, o.garment, client?.name, client?.phone);
+      result = result.filter((f) => {
+        const client = clients.find((c) => c.id === f.clientId);
+        return matchesQuery(query, f.garment, f.numero, f.nom, f.prenom, f.telephone, client?.name, client?.phone);
       });
     }
     return result;
-  }, [orders, clients, filter, query]);
+  }, [active, clients, filter, query]);
 
   const firstCallableIndex = useMemo(
-    () => filtered.findIndex((o) => Boolean(clients.find((c) => c.id === o.clientId)?.phone)),
+    () => filtered.findIndex((f) => Boolean(f.telephone || clients.find((c) => c.id === f.clientId)?.phone)),
     [filtered, clients]
   );
 
   return (
     <div className="lg:h-full lg:flex lg:flex-col">
-      <PageHeader title="Commandes" search={{ query, onQueryChange: setQuery, placeholder: "Client ou vêtement…" }} />
+      <PageHeader title="Commandes" search={{ query, onQueryChange: setQuery, placeholder: "Client, vêtement ou n° de fiche…" }} />
       <div className="hidden lg:block px-6 -mt-2 py-3">
-        <p className="text-sm text-ink-soft">{orders.length} commandes au total</p>
+        <p className="text-sm text-ink-soft">{active.length} commandes au total</p>
       </div>
 
       <div className="flex gap-2 overflow-x-auto no-scrollbar px-4 lg:px-6 pt-3 lg:pt-0 pb-4">
@@ -97,11 +104,11 @@ export default function OrdersList() {
         ) : (
           <div className="flex flex-col gap-2">
             <AnimatePresence initial={false}>
-              {filtered.map((o, i) => (
+              {filtered.map((f, i) => (
                 <OrderRow
-                  key={o.id}
-                  order={o}
-                  active={activeMatch?.params.id === o.id}
+                  key={f.id}
+                  fiche={f}
+                  active={activeMatch?.params.id === f.id}
                   index={i}
                   swipeHint={i === firstCallableIndex}
                 />
@@ -111,7 +118,7 @@ export default function OrdersList() {
         )}
       </div>
 
-      <Fab to="/commandes/nouvelle" />
+      <Fab to="/commandes/nouvelle" label="Nouvelle fiche" />
     </div>
   );
 }

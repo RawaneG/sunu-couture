@@ -37,15 +37,15 @@ export function formatCompactRange(startIso: string, endIso: string): string {
   return `${startNum} → ${formatCompactDate(endIso)}`;
 }
 
-export function isOverdue(iso: string, status: string): boolean {
-  if (status === "livre") return false;
+export function isOverdue(iso: string | null, status: string): boolean {
+  if (!iso || status === "livre") return false;
   const due = new Date(iso);
   due.setHours(23, 59, 59, 999);
   return due.getTime() < Date.now();
 }
 
-export function isDueToday(dueDate: string, dueDateStart: string | null, status: string): boolean {
-  if (status === "livre") return false;
+export function isDueToday(dueDate: string | null, dueDateStart: string | null, status: string): boolean {
+  if (!dueDate || status === "livre") return false;
   const today = new Date().toDateString();
   if (dueDateStart) {
     const start = new Date(dueDateStart);

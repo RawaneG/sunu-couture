@@ -1,24 +1,45 @@
 import { useMemo } from "react";
-import { Navigate, useParams } from "react-router-dom";
+import { Navigate, useNavigate, useParams } from "react-router-dom";
 import { AnimatePresence, motion } from "framer-motion";
 import { useStore } from "../lib/store";
 import PageHeader from "../components/ui/PageHeader";
 import Avatar from "../components/ui/Avatar";
 import OrderRow from "../components/ui/OrderRow";
-import MeasurementsInput from "../components/ui/MeasurementsInput";
-import { IconPhone } from "../lib/icons";
+import { IconPhone, IconPlus } from "../lib/icons";
+import { haptic } from "../lib/haptics";
+import { FICHE_MESURE_KEYS } from "../lib/types";
 
 export default function ClientDetail() {
   const { id } = useParams();
+  const navigate = useNavigate();
   const clients = useStore((s) => s.clients);
-  const allOrders = useStore((s) => s.orders);
-  const setClientNote = useStore((s) => s.setClientNote);
-  const setClientText = useStore((s) => s.setClientText);
+  const allFiches = useStore((s) => s.fiches);
+  const addFiche = useStore((s) => s.addFiche);
 
   const client = clients.find((c) => c.id === id);
-  const orders = useMemo(() => allOrders.filter((o) => o.clientId === id), [allOrders, id]);
+  const fiches = useMemo(
+    () => allFiches.filter((f) => f.clientId === id).sort((a, b) => +new Date(b.createdAt) - +new Date(a.createdAt)),
+    [allFiches, id]
+  );
 
   if (!client) return <Navigate to="/clients" replace />;
+
+  function handleNewFiche() {
+    haptic(16);
+    const lastFiche = fiches.find((f) => !f.cancelledAt);
+    const prefillChamps = lastFiche
+      ? Object.fromEntries(FICHE_MESURE_KEYS.map((key) => [key, lastFiche.champs[key].valeur]))
+      : undefined;
+    const [prenom, ...rest] = client!.name.trim().split(/\s+/);
+    const newId = addFiche({
+      clientId: client!.id,
+      prenom: prenom ?? "",
+      nom: rest.join(" "),
+      telephone: client!.phone,
+      prefillChamps,
+    });
+    navigate(`/carnet/${newId}`);
+  }
 
   return (
     <div>
@@ -48,26 +69,25 @@ export default function ClientDetail() {
           )}
         </div>
 
-        <div className="mt-6">
-          <p className="mb-2 text-[11px] font-bold uppercase tracking-wide text-ink-faint">Mesures</p>
-          <MeasurementsInput
-            voiceValue={client.measurementsNote ?? null}
-            onVoiceChange={(note) => setClientNote(client.id, note)}
-            textValue={client.measurementsText ?? ""}
-            onTextChange={(text) => setClientText(client.id, text || null)}
-            label="mesures du client"
-          />
-        </div>
+        <motion.button
+          type="button"
+          whileTap={{ scale: 0.97 }}
+          onClick={handleNewFiche}
+          className="mt-5 flex w-full items-center justify-center gap-2 rounded-2xl bg-amber-tile px-4 py-3.5 font-bold text-[#2a1c04] shadow-soft"
+        >
+          <IconPlus size={17} strokeWidth={2} />
+          Nouvelle fiche pour {client.name.split(" ")[0]}
+        </motion.button>
 
         <div className="mt-7">
           <h2 className="mb-2 font-display italic font-bold text-base">
-            {orders.length > 0 ? `${orders.length} commande${orders.length > 1 ? "s" : ""}` : "Aucune commande"}
+            {fiches.length > 0 ? `${fiches.length} fiche${fiches.length > 1 ? "s" : ""}` : "Aucune fiche"}
           </h2>
-          {orders.length > 0 && (
+          {fiches.length > 0 && (
             <div className="flex flex-col gap-2">
               <AnimatePresence initial={false}>
-                {orders.map((o) => (
-                  <OrderRow key={o.id} order={o} />
+                {fiches.map((f) => (
+                  <OrderRow key={f.id} fiche={f} />
                 ))}
               </AnimatePresence>
             </div>

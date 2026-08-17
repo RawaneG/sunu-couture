@@ -1,15 +1,15 @@
 import { useRef } from "react";
 import { Link, NavLink } from "react-router-dom";
 import clsx from "clsx";
-import { IconHome, IconHanger, IconUsers, IconNotebook, IconPlus, IconSun, IconMoon } from "../../lib/icons";
+import { IconHome, IconHanger, IconUsers, IconPlus, IconSun, IconMoon } from "../../lib/icons";
 import { useTheme } from "../../lib/theme";
 import BrandMark from "../ui/BrandMark";
 
+// "Accueil" is the carnet itself — no separate nav item for it anymore.
 const NAV = [
   { to: "/", label: "Accueil", icon: IconHome, end: true },
   { to: "/commandes", label: "Commandes", icon: IconHanger, end: false },
   { to: "/clients", label: "Clients", icon: IconUsers, end: false },
-  { to: "/carnet", label: "Carnet de mesures", icon: IconNotebook, end: false },
 ];
 
 export default function Sidebar() {
@@ -31,11 +31,11 @@ export default function Sidebar() {
 
       <div className="px-4">
         <Link
-          to="/commandes/nouvelle"
+          to="/carnet/nouvelle"
           className="flex items-center justify-center gap-2 rounded-xl bg-amber-tile px-4 py-3 text-sm font-bold text-[#2a1c04] shadow-soft hover:brightness-105 transition"
         >
           <IconPlus size={16} strokeWidth={2} />
-          Nouvelle commande
+          Nouvelle fiche
         </Link>
       </div>
 

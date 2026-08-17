@@ -6,8 +6,8 @@ export function normalize(s: string): string {
     .trim();
 }
 
-export function matchesQuery(query: string, ...fields: (string | null | undefined)[]): boolean {
+export function matchesQuery(query: string, ...fields: (string | null | undefined | number)[]): boolean {
   const q = normalize(query);
   if (!q) return true;
-  return fields.some((f) => f && normalize(f).includes(q));
+  return fields.some((f) => f != null && normalize(String(f)).includes(q));
 }

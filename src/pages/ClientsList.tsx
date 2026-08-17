@@ -13,7 +13,7 @@ import { haptic } from "../lib/haptics";
 
 export default function ClientsList() {
   const clients = useStore((s) => s.clients);
-  const orders = useStore((s) => s.orders);
+  const fiches = useStore((s) => s.fiches);
   const navigate = useNavigate();
   const activeMatch = useMatch("/clients/:id");
   const [query, setQuery] = useState("");
@@ -55,7 +55,7 @@ export default function ClientsList() {
         ) : (
           <div className="flex flex-col gap-2">
             {filtered.map((c, i) => {
-              const clientOrders = orders.filter((o) => o.clientId === c.id);
+              const clientFiches = fiches.filter((f) => f.clientId === c.id && !f.cancelledAt);
               const active = activeMatch?.params.id === c.id;
               return (
                 <motion.div
@@ -78,12 +78,12 @@ export default function ClientsList() {
                         {c.phone || "Numéro non renseigné"}
                       </span>
                     </span>
-                    {clientOrders.length > 0 && (
+                    {clientFiches.length > 0 && (
                       <span className="flex flex-none items-center gap-1">
-                        {clientOrders.slice(0, 4).map((o) => (
+                        {clientFiches.slice(0, 4).map((f) => (
                           <span
-                            key={o.id}
-                            className={`h-2 w-2 rounded-full ${o.late ? "bg-terracotta" : STATUS_DOT_COLOR[o.status]}`}
+                            key={f.id}
+                            className={`h-2 w-2 rounded-full ${f.late ? "bg-terracotta" : STATUS_DOT_COLOR[f.status]}`}
                           />
                         ))}
                       </span>

@@ -1,8 +1,7 @@
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { Link } from "react-router-dom";
 import type { ReactNode } from "react";
 import { motion } from "framer-motion";
-import clsx from "clsx";
 import { IconBack, IconSearch, IconX } from "../../lib/icons";
 import { haptic } from "../../lib/haptics";
 
@@ -26,16 +25,6 @@ export default function PageHeader({
   hideActionsOnMobile?: boolean;
 }) {
   const [searchOpen, setSearchOpen] = useState(false);
-  const [scrolled, setScrolled] = useState(false);
-
-  useEffect(() => {
-    function onScroll() {
-      setScrolled(window.scrollY > 8);
-    }
-    onScroll();
-    window.addEventListener("scroll", onScroll, { passive: true });
-    return () => window.removeEventListener("scroll", onScroll);
-  }, []);
 
   const closeSearch = () => {
     haptic();
@@ -45,19 +34,8 @@ export default function PageHeader({
 
   return (
     <>
-      {/* mobile: compact sticky glass bar */}
-      <div
-        className={clsx(
-          "sticky top-0 z-20 backdrop-saturate-150 transition-[backdrop-filter,background-color] duration-300 lg:hidden",
-          scrolled ? "bg-surface/92 backdrop-blur-xl" : "bg-surface/70 backdrop-blur-md"
-        )}
-      >
-        <div
-          className={clsx(
-            "pointer-events-none absolute inset-x-0 bottom-0 h-px bg-line-strong transition-opacity duration-300",
-            scrolled ? "opacity-100" : "opacity-0"
-          )}
-        />
+      {/* mobile: compact sticky glass bar — blur + hairline edge only, no background tint */}
+      <div className="glass-edge sticky top-0 z-20 lg:hidden">
         <div className="flex items-center gap-2.5 px-4 py-3">
           {searchOpen && search ? (
             <motion.div

@@ -1,5 +1,5 @@
 import clsx from "clsx";
-import type { Order } from "../../lib/types";
+import type { Fiche } from "../../lib/types";
 import { STATUS_LABEL } from "../../lib/types";
 
 export const STATUS_DOT_COLOR: Record<string, string> = {
@@ -9,10 +9,10 @@ export const STATUS_DOT_COLOR: Record<string, string> = {
   livre: "bg-indigo",
 };
 
-export default function StatusPill({ order, className }: { order: Order; className?: string }) {
-  const late = order.late;
-  const dotClass = late ? "bg-terracotta" : STATUS_DOT_COLOR[order.status];
-  const label = late ? "En retard" : STATUS_LABEL[order.status];
+export default function StatusPill({ fiche, className }: { fiche: Pick<Fiche, "status" | "late">; className?: string }) {
+  const late = fiche.late;
+  const dotClass = late ? "bg-terracotta" : STATUS_DOT_COLOR[fiche.status];
+  const label = late ? "En retard" : STATUS_LABEL[fiche.status];
   return (
     <span
       className={clsx(
