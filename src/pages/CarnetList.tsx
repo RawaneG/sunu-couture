@@ -139,7 +139,7 @@ export default function CarnetList() {
     <div>
       <MobileBrandBar />
       <PageHeader
-        title={searching ? "Carnet de mesures" : `Carnet n° ${activeCarnet}`}
+        title={searching ? "Carnet de mesures" : "Mon carnet"}
         actions={addButton}
         hideActionsOnMobile
         search={{ query, onQueryChange: setQuery, placeholder: "Nom, téléphone ou n° de fiche…" }}
@@ -307,7 +307,7 @@ function FicheRow({ fiche, clientName, onOpen }: { fiche: Fiche; clientName: str
         }
       }}
       className={clsx(
-        "glass-chip flex cursor-pointer items-center gap-2 rounded-xl px-2.5 py-2.5 text-left transition-colors hover:bg-surface-3 active:scale-[0.98]",
+        "glass-card flex cursor-pointer items-center gap-2 rounded-xl px-2.5 py-2.5 text-left transition-colors hover:bg-surface-3 active:scale-[0.98]",
         fiche.cancelledAt && "opacity-50"
       )}
     >

@@ -75,7 +75,7 @@ export default function VoiceRecorder({
       if (err instanceof DOMException && err.name === "NotFoundError") {
         setError("Aucun micro trouvé — branchez-en un puis réessayez.");
       } else if (err instanceof DOMException && err.name === "NotAllowedError") {
-        setError("Micro refusé — autorisez l'accès puis réessayez.");
+        setError("Micro bloqué pour ce site — autorisez-le depuis l'icône près de l'adresse du site, puis appuyez ici.");
       } else if (err instanceof DOMException && err.name === "NotReadableError") {
         setError("Micro déjà utilisé par une autre application — réessayez.");
       } else {
