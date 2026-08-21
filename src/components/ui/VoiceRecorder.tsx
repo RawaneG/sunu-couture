@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import clsx from "clsx";
-import { IconMic, IconPlay, IconPause, IconStop, IconTrash } from "../../lib/icons";
+import { IconMic, IconPlay, IconPause, IconStop, IconTrash, IconRotateCcw } from "../../lib/icons";
 import { formatDuration } from "../../lib/format";
 import type { VoiceNote } from "../../lib/types";
 
@@ -56,6 +56,12 @@ export default function VoiceRecorder({
         const url = persist ? await blobToDataUrl(blob) : URL.createObjectURL(blob);
         onChange({ url, duration: elapsedRef.current, recordedAt: new Date().toISOString() });
       };
+      recorder.onerror = () => {
+        stream.getTracks().forEach((t) => t.stop());
+        if (timerRef.current) window.clearInterval(timerRef.current);
+        setRecording(false);
+        setError("L'enregistrement a été interrompu — réessayez.");
+      };
       recorderRef.current = recorder;
       recorder.start();
       setRecording(true);
@@ -65,8 +71,16 @@ export default function VoiceRecorder({
         elapsedRef.current += 1;
         setElapsed((e) => e + 1);
       }, 1000);
-    } catch {
-      setError("Micro indisponible — vérifiez l'autorisation.");
+    } catch (err) {
+      if (err instanceof DOMException && err.name === "NotFoundError") {
+        setError("Aucun micro trouvé — branchez-en un puis réessayez.");
+      } else if (err instanceof DOMException && err.name === "NotAllowedError") {
+        setError("Micro refusé — autorisez l'accès puis réessayez.");
+      } else if (err instanceof DOMException && err.name === "NotReadableError") {
+        setError("Micro déjà utilisé par une autre application — réessayez.");
+      } else {
+        setError("Micro indisponible — réessayez.");
+      }
     }
   }
 
@@ -161,12 +175,17 @@ export default function VoiceRecorder({
       <button
         type="button"
         onClick={startRecording}
-        className="glass-card flex w-full items-center gap-3 rounded-2xl px-4 py-3 text-left hover:bg-surface-3 transition-colors"
+        className={clsx(
+          "flex w-full items-center gap-3 rounded-2xl px-4 py-3 text-left transition-colors",
+          error ? "glass-card bg-terracotta-tint" : "glass-card hover:bg-surface-3"
+        )}
       >
         <span className="flex h-10 w-10 flex-none items-center justify-center rounded-full bg-terracotta text-white">
-          <IconMic size={16} />
+          {error ? <IconRotateCcw size={16} /> : <IconMic size={16} />}
         </span>
-        <span className="flex-1 text-sm font-bold text-ink-soft">Enregistrer — {label}</span>
+        <span className="flex-1 text-sm font-bold text-ink-soft">
+          {error ? `Réessayer — ${label}` : `Enregistrer — ${label}`}
+        </span>
       </button>
       {error && <p className="mt-1.5 text-xs font-semibold text-terracotta">{error}</p>}
     </div>
