@@ -18,7 +18,7 @@ export default function MobileBrandBar() {
       <span className="glass-brand flex h-8 w-8 flex-none items-center justify-center rounded-lg">
         <BrandMark size={21} />
       </span>
-      <span className="flex-1 font-display italic font-bold text-lg leading-none">Tayo</span>
+      <span className="flex-1 font-display italic font-bold text-lg leading-none">Tayoo</span>
       <motion.button
         ref={btnRef}
         type="button"

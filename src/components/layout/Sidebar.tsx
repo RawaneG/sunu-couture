@@ -24,7 +24,7 @@ export default function Sidebar() {
             <BrandMark size={24} />
           </span>
           <span className="font-display italic font-bold text-xl leading-none text-ink text-balance">
-            Tayo
+            Tayoo
           </span>
         </Link>
       </div>
