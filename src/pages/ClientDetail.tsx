@@ -1,11 +1,12 @@
-import { useMemo } from "react";
+import { useMemo, useState } from "react";
 import { Navigate, useNavigate, useParams } from "react-router-dom";
 import { AnimatePresence, motion } from "framer-motion";
 import { useStore } from "../lib/store";
 import PageHeader from "../components/ui/PageHeader";
 import Avatar from "../components/ui/Avatar";
 import OrderRow from "../components/ui/OrderRow";
-import { IconPhone, IconPlus } from "../lib/icons";
+import ConfirmDialog from "../components/ui/ConfirmDialog";
+import { IconPhone, IconPlus, IconTrash } from "../lib/icons";
 import { haptic } from "../lib/haptics";
 import { FICHE_MESURE_KEYS } from "../lib/types";
 
@@ -15,6 +16,8 @@ export default function ClientDetail() {
   const clients = useStore((s) => s.clients);
   const allFiches = useStore((s) => s.fiches);
   const addFiche = useStore((s) => s.addFiche);
+  const deleteClient = useStore((s) => s.deleteClient);
+  const [confirmDeleteOpen, setConfirmDeleteOpen] = useState(false);
 
   const client = clients.find((c) => c.id === id);
   const fiches = useMemo(
@@ -23,6 +26,13 @@ export default function ClientDetail() {
   );
 
   if (!client) return <Navigate to="/clients" replace />;
+
+  function handleDelete() {
+    if (!client) return;
+    haptic(16);
+    deleteClient(client.id);
+    navigate("/clients", { replace: true });
+  }
 
   function handleNewFiche() {
     haptic(16);
@@ -41,9 +51,33 @@ export default function ClientDetail() {
     navigate(`/carnet/${newId}`);
   }
 
+  const headerActions = (
+    <button
+      type="button"
+      onClick={() => {
+        haptic();
+        setConfirmDeleteOpen(true);
+      }}
+      aria-label="Supprimer le client"
+      className="glass-chip flex h-8 w-8 flex-none items-center justify-center rounded-full text-terracotta shadow-soft ring-1 ring-line-strong/40 lg:h-10 lg:w-10"
+    >
+      <IconTrash size={15} />
+    </button>
+  );
+
   return (
     <div>
-      <PageHeader title={client.name} backTo="/clients" />
+      <PageHeader title={client.name} backTo="/clients" actions={headerActions} />
+
+      <ConfirmDialog
+        open={confirmDeleteOpen}
+        title={`Supprimer ${client.name} ?`}
+        description="Ses fiches ne seront pas supprimées."
+        confirmLabel="Supprimer"
+        destructive
+        onConfirm={handleDelete}
+        onClose={() => setConfirmDeleteOpen(false)}
+      />
 
       <motion.div
         key={client.id}

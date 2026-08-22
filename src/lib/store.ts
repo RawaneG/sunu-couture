@@ -223,6 +223,8 @@ interface StoreState {
   addClient: (input: NewClientInput) => string;
   getClient: (id: string) => Client | undefined;
   fichesForClient: (id: string) => Fiche[];
+  deleteClient: (id: string) => void;
+  deleteClients: (ids: string[]) => void;
   addFiche: (input?: NewFicheInput) => string;
   setFicheInfo: (id: string, patch: FicheInfoPatch) => void;
   setFicheChamp: (id: string, key: FicheChampKey, valeur: string) => void;
@@ -456,6 +458,20 @@ export const useStore = create<StoreState>()(
 
       getClient: (id) => get().clients.find((c) => c.id === id),
       fichesForClient: (id) => get().fiches.filter((f) => f.clientId === id),
+      // Deleting a client never touches their fiches — each fiche carries its own
+      // nom/prenom/telephone written like on paper, clientId is just a bonus link.
+      deleteClient: (id) =>
+        set({
+          clients: get().clients.filter((c) => c.id !== id),
+          fiches: get().fiches.map((f) => (f.clientId === id ? { ...f, clientId: null } : f)),
+        }),
+      deleteClients: (ids) => {
+        const idSet = new Set(ids);
+        set({
+          clients: get().clients.filter((c) => !idSet.has(c.id)),
+          fiches: get().fiches.map((f) => (f.clientId && idSet.has(f.clientId) ? { ...f, clientId: null } : f)),
+        });
+      },
 
       addFiche: (input) => {
         const id = uid("f");

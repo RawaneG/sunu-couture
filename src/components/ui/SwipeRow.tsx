@@ -15,6 +15,7 @@ export default function SwipeRow({
   active,
   onTap,
   hint,
+  disableSwipe = false,
   children,
 }: {
   phone: string | null | undefined;
@@ -22,6 +23,8 @@ export default function SwipeRow({
   active?: boolean;
   onTap: () => void;
   hint?: boolean;
+  /** Bulk-select mode — the row still taps, but no longer swipes to reveal the call button. */
+  disableSwipe?: boolean;
   children: React.ReactNode;
 }) {
   const x = useMotionValue(0);
@@ -29,7 +32,7 @@ export default function SwipeRow({
   const [revealed, setRevealed] = useState(false);
   const [showTip, setShowTip] = useState(false);
   const draggedRef = useRef(false);
-  const canCall = Boolean(phone);
+  const canCall = Boolean(phone) && !disableSwipe;
 
   useEffect(() => {
     if (!hint || !canCall || hasSeenSwipeHint()) return;

@@ -6,20 +6,55 @@ import PageHeader from "../components/ui/PageHeader";
 import Avatar from "../components/ui/Avatar";
 import Fab from "../components/ui/Fab";
 import SwipeRow from "../components/ui/SwipeRow";
+import ConfirmDialog from "../components/ui/ConfirmDialog";
 import { STATUS_DOT_COLOR } from "../components/ui/StatusPill";
-import { IconPlus, IconUsers } from "../lib/icons";
+import { IconCheckSquare, IconPlus, IconSquare, IconTrash, IconUsers, IconX } from "../lib/icons";
 import { matchesQuery } from "../lib/search";
 import { haptic } from "../lib/haptics";
 
 export default function ClientsList() {
   const clients = useStore((s) => s.clients);
   const fiches = useStore((s) => s.fiches);
+  const deleteClients = useStore((s) => s.deleteClients);
   const navigate = useNavigate();
   const activeMatch = useMatch("/clients/:id");
   const [query, setQuery] = useState("");
+  const [selectMode, setSelectMode] = useState(false);
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const [confirmDeleteOpen, setConfirmDeleteOpen] = useState(false);
 
   const filtered = clients.filter((c) => matchesQuery(query, c.name, c.phone));
   const firstCallableIndex = filtered.findIndex((c) => Boolean(c.phone));
+  const allSelected = filtered.length > 0 && filtered.every((c) => selectedIds.has(c.id));
+
+  function toggleSelectMode() {
+    haptic();
+    setSelectMode((on) => !on);
+    setSelectedIds(new Set());
+  }
+
+  function toggleOne(id: string) {
+    haptic();
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }
+
+  function toggleSelectAll() {
+    haptic();
+    setSelectedIds(allSelected ? new Set() : new Set(filtered.map((c) => c.id)));
+  }
+
+  function handleBulkDelete() {
+    haptic(16);
+    deleteClients([...selectedIds]);
+    setSelectedIds(new Set());
+    setSelectMode(false);
+    setConfirmDeleteOpen(false);
+  }
 
   const addButton = (
     <Link
@@ -40,8 +75,64 @@ export default function ClientsList() {
         hideActionsOnMobile
         search={{ query, onQueryChange: setQuery, placeholder: "Nom ou téléphone…" }}
       />
-      <div className="hidden lg:block px-6 -mt-2 pt-2">
-        <p className="text-sm text-ink-soft">{clients.length} clients</p>
+
+      <ConfirmDialog
+        open={confirmDeleteOpen}
+        title={`Supprimer ${selectedIds.size} client${selectedIds.size > 1 ? "s" : ""} ?`}
+        description="Leurs fiches ne seront pas supprimées."
+        confirmLabel="Supprimer"
+        destructive
+        onConfirm={handleBulkDelete}
+        onClose={() => setConfirmDeleteOpen(false)}
+      />
+
+      <div className="flex items-center justify-between gap-2 px-4 lg:px-6 pt-2 lg:-mt-2">
+        {selectMode ? (
+          <>
+            <button
+              type="button"
+              onClick={toggleSelectAll}
+              className="glass-chip flex items-center gap-1.5 rounded-full px-2.5 py-1.5 text-[11px] font-bold text-ink-soft shadow-soft ring-1 ring-line-strong/40 active:scale-95 transition-transform"
+            >
+              {allSelected ? <IconCheckSquare size={14} className="text-indigo" /> : <IconSquare size={14} />}
+              Tout
+            </button>
+            <p className="flex-1 truncate text-center text-[10.5px] font-bold uppercase tracking-wide text-ink-faint">
+              {selectedIds.size} sélectionné{selectedIds.size > 1 ? "s" : ""}
+            </p>
+            <div className="flex items-center gap-1.5">
+              <button
+                type="button"
+                onClick={() => setConfirmDeleteOpen(true)}
+                disabled={selectedIds.size === 0}
+                aria-label="Supprimer la sélection"
+                className="glass-chip flex h-7 w-7 items-center justify-center rounded-full text-terracotta shadow-soft ring-1 ring-line-strong/40 disabled:opacity-30 active:scale-90 transition-transform"
+              >
+                <IconTrash size={13} />
+              </button>
+              <button
+                type="button"
+                onClick={toggleSelectMode}
+                aria-label="Fermer la sélection"
+                className="glass-chip flex h-7 w-7 items-center justify-center rounded-full text-ink-soft shadow-soft ring-1 ring-line-strong/40 active:scale-90 transition-transform"
+              >
+                <IconX size={13} />
+              </button>
+            </div>
+          </>
+        ) : (
+          <>
+            <p className="text-[13px] text-ink-soft">{clients.length} clients</p>
+            <button
+              type="button"
+              onClick={toggleSelectMode}
+              aria-label="Sélectionner plusieurs clients"
+              className="glass-chip flex h-7 w-7 items-center justify-center rounded-full text-ink-soft shadow-soft ring-1 ring-line-strong/40 active:scale-90 transition-transform"
+            >
+              <IconSquare size={13} />
+            </button>
+          </>
+        )}
       </div>
 
       <div className="flex-1 lg:overflow-y-auto px-2.5 lg:px-6 py-2 pb-4 pt-3">
@@ -57,6 +148,7 @@ export default function ClientsList() {
             {filtered.map((c, i) => {
               const clientFiches = fiches.filter((f) => f.clientId === c.id);
               const active = activeMatch?.params.id === c.id;
+              const selected = selectedIds.has(c.id);
               return (
                 <motion.div
                   key={c.id}
@@ -69,8 +161,14 @@ export default function ClientsList() {
                     callLabel={`Appeler ${c.name}`}
                     active={active}
                     hint={i === firstCallableIndex}
-                    onTap={() => navigate(`/clients/${c.id}`)}
+                    disableSwipe={selectMode}
+                    onTap={() => (selectMode ? toggleOne(c.id) : navigate(`/clients/${c.id}`))}
                   >
+                    {selectMode && (
+                      <span className={selected ? "flex-none text-indigo" : "flex-none text-ink-faint"}>
+                        {selected ? <IconCheckSquare size={20} /> : <IconSquare size={20} />}
+                      </span>
+                    )}
                     <Avatar photo={c.photo} seed={c.colorSeed} size={44} />
                     <span className="min-w-0 flex-1">
                       <span className="block truncate text-[13.5px] font-bold">{c.name}</span>
@@ -78,7 +176,7 @@ export default function ClientsList() {
                         {c.phone || "Numéro non renseigné"}
                       </span>
                     </span>
-                    {clientFiches.length > 0 && (
+                    {!selectMode && clientFiches.length > 0 && (
                       <span className="flex flex-none items-center gap-1">
                         {clientFiches.slice(0, 4).map((f) => (
                           <span
@@ -96,7 +194,7 @@ export default function ClientsList() {
         )}
       </div>
 
-      <Fab to="/clients/nouveau" label="Nouveau client" color="teal" />
+      {!selectMode && <Fab to="/clients/nouveau" label="Nouveau client" color="teal" />}
     </div>
   );
 }
