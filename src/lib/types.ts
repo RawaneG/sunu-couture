@@ -74,6 +74,18 @@ export interface TissuPhoto {
   dataUrl: string;
 }
 
+// Catalogue de modèles — a browsable, photo-only lookbook (no reading required)
+// a tailor builds up over time. Each modèle pairs the finished look with its
+// patron de coupe (cutting-pattern photos), and either can be pulled into a
+// fiche's photos in one tap so the reference travels with the job.
+export interface Modele {
+  id: string;
+  nom: string;
+  photos: TissuPhoto[];
+  patronPhotos: TissuPhoto[];
+  createdAt: string;
+}
+
 export interface Fiche {
   id: string;
   carnetNumero: number; // which physical carnet (1, 2, 3…) this fiche belongs to
@@ -106,6 +118,5 @@ export interface Fiche {
   status: OrderStatus;
   late: boolean;
 
-  cancelledAt: string | null;
   createdAt: string;
 }

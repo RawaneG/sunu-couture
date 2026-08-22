@@ -55,7 +55,7 @@ export default function ClientsList() {
         ) : (
           <div className="flex flex-col gap-2">
             {filtered.map((c, i) => {
-              const clientFiches = fiches.filter((f) => f.clientId === c.id && !f.cancelledAt);
+              const clientFiches = fiches.filter((f) => f.clientId === c.id);
               const active = activeMatch?.params.id === c.id;
               return (
                 <motion.div

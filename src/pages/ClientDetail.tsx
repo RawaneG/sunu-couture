@@ -26,7 +26,7 @@ export default function ClientDetail() {
 
   function handleNewFiche() {
     haptic(16);
-    const lastFiche = fiches.find((f) => !f.cancelledAt);
+    const lastFiche = fiches[0];
     const prefillChamps = lastFiche
       ? Object.fromEntries(FICHE_MESURE_KEYS.map((key) => [key, lastFiche.champs[key].valeur]))
       : undefined;

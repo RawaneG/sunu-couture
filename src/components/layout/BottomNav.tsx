@@ -1,12 +1,13 @@
 import { NavLink } from "react-router-dom";
 import { motion } from "framer-motion";
-import { IconHome, IconHanger, IconUsers } from "../../lib/icons";
+import { IconHome, IconHanger, IconUsers, IconScissors } from "../../lib/icons";
 import { haptic } from "../../lib/haptics";
 
 // "Accueil" is the carnet itself — no separate nav item for it anymore.
 const NAV = [
   { to: "/", label: "Accueil", icon: IconHome, end: true },
   { to: "/commandes", label: "Commandes", icon: IconHanger, end: false },
+  { to: "/catalogue", label: "Catalogue", icon: IconScissors, end: false },
   { to: "/clients", label: "Clients", icon: IconUsers, end: false },
 ];
 

@@ -17,7 +17,7 @@ function makeFiche(overrides: Partial<Fiche>): Fiche {
     champs: emptyChamps(), voiceNote: null, tissuPhotos: [], dueDate: new Date().toISOString(),
     soldeLe: null, signature: null, price: 0, avance: 0,
     garment: "", description: null, fabricColor: "#000",
-    status: "recu", late: false, cancelledAt: null, createdAt: new Date().toISOString(),
+    status: "recu", late: false, createdAt: new Date().toISOString(),
     ...overrides,
   };
 }
@@ -54,16 +54,7 @@ describe("nextFicheSlot — carnet lifecycle", () => {
     expect(nextFicheSlot(fiches)).toEqual({ carnetNumero: 2, numero: 1 });
   });
 
-  it("counts a cancelled fiche toward the 120 cap — its number is never freed up", () => {
-    const fiches = Array.from({ length: FICHES_PAR_CARNET }, (_, i) =>
-      makeFiche({ carnetNumero: 1, numero: i + 1, cancelledAt: i === 40 ? new Date().toISOString() : null })
-    );
-    // Even though fiche n°41 was cancelled, the carnet is still considered full —
-    // its slot stays permanently reserved rather than being handed to a new fiche.
-    expect(nextFicheSlot(fiches)).toEqual({ carnetNumero: 2, numero: 1 });
-  });
-
-  it("never reuses a number, even for a carnet with gaps from legacy hard-deletes", () => {
+  it("never reuses a number, even for a carnet with gaps from deleted fiches", () => {
     const fiches = [makeFiche({ carnetNumero: 1, numero: 1 }), makeFiche({ carnetNumero: 1, numero: 5 })];
     expect(nextFicheSlot(fiches)).toEqual({ carnetNumero: 1, numero: 6 });
   });
@@ -161,7 +152,7 @@ describe("migrateLegacyState — v8 → v9", () => {
           champs: {}, voiceNote: null, tissuPhotos: [], dueDate: "2026-08-20T00:00:00.000Z", soldeLe: null, signature: null,
           price: 45000, payments: [{ id: "p1", montant: 15000, date: "2026-08-01T00:00:00.000Z" }],
           garment: "Costume", description: null, fabricColor: "#123", status: "recu", late: false,
-          cancelledAt: null, createdAt: "2026-08-01T00:00:00.000Z",
+          createdAt: "2026-08-01T00:00:00.000Z",
         },
       ],
     };

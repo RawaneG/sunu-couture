@@ -190,6 +190,20 @@ export const IconRotateCcw = base(
     <path d="M4.6 14.8a8 8 0 1 0 1.5-8.9L4 10" />
   </>
 );
+export const IconScissors = base(
+  <>
+    <circle cx="6.3" cy="6.3" r="2.3" />
+    <circle cx="6.3" cy="17.7" r="2.3" />
+    <path d="M8 7.8 20 17.5M8 16.2 20 6.5" />
+  </>
+);
+export const IconSquare = base(<rect x="4.5" y="4.5" width="15" height="15" rx="4" />);
+export const IconCheckSquare = base(
+  <>
+    <rect x="4.5" y="4.5" width="15" height="15" rx="4" />
+    <path d="M8 12.3 10.6 15 16.2 9" />
+  </>
+);
 export const IconTrash = base(
   <>
     <path d="M4.5 7h15M9.5 7V5a1.5 1.5 0 0 1 1.5-1.5h2A1.5 1.5 0 0 1 14.5 5v2M18 7l-.7 12a2 2 0 0 1-2 1.9H8.7a2 2 0 0 1-2-1.9L6 7" />

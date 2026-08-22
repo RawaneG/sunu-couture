@@ -10,6 +10,9 @@ import ClientNew from "./pages/ClientNew";
 import CarnetList from "./pages/CarnetList";
 import FicheDetail from "./pages/FicheDetail";
 import FicheNew from "./pages/FicheNew";
+import Catalogue from "./pages/Catalogue";
+import ModeleNew from "./pages/ModeleNew";
+import ModeleDetail from "./pages/ModeleDetail";
 
 function ScrollToTop() {
   const { pathname } = useLocation();
@@ -35,6 +38,9 @@ export default function App() {
         <Route path="/carnet/nouvelle" element={<FicheNew />} />
         <Route path="/carnet/:id" element={<FicheDetail />} />
         <Route path="/commandes/nouvelle" element={<FicheNew />} />
+        <Route path="/catalogue/nouveau" element={<ModeleNew />} />
+        <Route path="/catalogue/:id" element={<ModeleDetail />} />
+        <Route path="/catalogue" element={<Catalogue />} />
         <Route path="/commandes" element={<OrdersLayout />}>
           <Route index element={<OrdersEmptyState />} />
           <Route path=":id" element={<OrderToFicheRedirect />} />

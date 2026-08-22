@@ -6,7 +6,20 @@ import { useStore } from "../lib/store";
 import Avatar from "../components/ui/Avatar";
 import PageHeader from "../components/ui/PageHeader";
 import MobileBrandBar from "../components/layout/MobileBrandBar";
-import { IconBack, IconChevronRight, IconMic, IconNotebook, IconPhone, IconPlus, IconSwipe } from "../lib/icons";
+import ConfirmDialog from "../components/ui/ConfirmDialog";
+import {
+  IconBack,
+  IconCheckSquare,
+  IconChevronRight,
+  IconMic,
+  IconNotebook,
+  IconPhone,
+  IconPlus,
+  IconSquare,
+  IconSwipe,
+  IconTrash,
+  IconX,
+} from "../lib/icons";
 import { matchesQuery } from "../lib/search";
 import { haptic } from "../lib/haptics";
 import { hasSeenCarnetPageHint, markCarnetPageHintSeen } from "../lib/onboarding";
@@ -36,16 +49,19 @@ export default function CarnetList() {
   const fiches = useStore((s) => s.fiches);
   const clients = useStore((s) => s.clients);
   const addFiche = useStore((s) => s.addFiche);
+  const deleteFiches = useStore((s) => s.deleteFiches);
   const navigate = useNavigate();
   const [query, setQuery] = useState("");
   const [pageIndex, setPageIndex] = useState(0);
   const [direction, setDirection] = useState(0);
   const [pageSize, setPageSize] = useState(8);
   const [showSwipeHint, setShowSwipeHint] = useState(false);
+  const [selectMode, setSelectMode] = useState(false);
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const [confirmDeleteOpen, setConfirmDeleteOpen] = useState(false);
   const cardRef = useRef<HTMLDivElement>(null);
 
   const activeCarnet = useMemo(() => fiches.reduce((max, f) => Math.max(max, f.carnetNumero), 0) || 1, [fiches]);
-  const carnetCount = activeCarnet;
   const searching = query.trim().length > 0;
 
   const clientFieldsFor = (f: Fiche) => {
@@ -124,6 +140,37 @@ export default function CarnetList() {
     else if (info.offset.x > SWIPE_THRESHOLD) goTo(currentPage - 1);
   }
 
+  const allSelected = filtered.length > 0 && filtered.every((f) => selectedIds.has(f.id));
+
+  function toggleSelectMode() {
+    haptic();
+    setSelectMode((on) => !on);
+    setSelectedIds(new Set());
+  }
+
+  function toggleOne(id: string) {
+    haptic();
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }
+
+  function toggleSelectAll() {
+    haptic();
+    setSelectedIds(allSelected ? new Set() : new Set(filtered.map((f) => f.id)));
+  }
+
+  function handleBulkDelete() {
+    haptic(16);
+    deleteFiches([...selectedIds]);
+    setSelectedIds(new Set());
+    setSelectMode(false);
+    setConfirmDeleteOpen(false);
+  }
+
   const addButton = (
     <button
       type="button"
@@ -143,6 +190,16 @@ export default function CarnetList() {
         actions={addButton}
         hideActionsOnMobile
         search={{ query, onQueryChange: setQuery, placeholder: "Nom, téléphone ou n° de fiche…" }}
+      />
+
+      <ConfirmDialog
+        open={confirmDeleteOpen}
+        title={`Supprimer ${selectedIds.size} fiche${selectedIds.size > 1 ? "s" : ""} ?`}
+        description="Cette action est irréversible."
+        confirmLabel="Supprimer"
+        destructive
+        onConfirm={handleBulkDelete}
+        onClose={() => setConfirmDeleteOpen(false)}
       />
 
       <div className="px-4 lg:px-10 py-2 lg:py-4 max-w-3xl lg:mx-auto">
@@ -169,35 +226,84 @@ export default function CarnetList() {
           </div>
         ) : (
           <div ref={cardRef} className="glass-edge relative overflow-hidden rounded-2xl p-3">
-            {(paginated || (!searching && carnetCount > 1)) && (
-              <div className="mb-2 flex items-center justify-between px-1">
-                <p className="text-[10.5px] font-bold uppercase tracking-wide text-ink-faint">
-                  {searching ? `${filtered.length} résultat${filtered.length > 1 ? "s" : ""}` : `Page ${currentPage + 1} / ${pageCount}`}
-                </p>
-                {paginated && (
+            <div className="mb-2 flex items-center justify-between gap-2 px-1">
+              {selectMode ? (
+                <>
+                  <button
+                    type="button"
+                    onClick={toggleSelectAll}
+                    className="glass-chip flex items-center gap-1.5 rounded-full px-2.5 py-1.5 text-[11px] font-bold text-ink-soft shadow-soft ring-1 ring-line-strong/40 active:scale-95 transition-transform"
+                  >
+                    {allSelected ? <IconCheckSquare size={14} className="text-indigo" /> : <IconSquare size={14} />}
+                    Tout
+                  </button>
+                  <p className="flex-1 truncate text-center text-[10.5px] font-bold uppercase tracking-wide text-ink-faint">
+                    {selectedIds.size} sélectionnée{selectedIds.size > 1 ? "s" : ""}
+                  </p>
                   <div className="flex items-center gap-1.5">
                     <button
                       type="button"
-                      onClick={() => goTo(currentPage - 1)}
-                      disabled={currentPage === 0}
-                      aria-label="Page précédente"
-                      className="glass-chip flex h-7 w-7 items-center justify-center rounded-full text-ink-soft shadow-soft ring-1 ring-line-strong/40 disabled:opacity-30 active:scale-90 transition-transform"
+                      onClick={() => setConfirmDeleteOpen(true)}
+                      disabled={selectedIds.size === 0}
+                      aria-label="Supprimer la sélection"
+                      className="glass-chip flex h-7 w-7 items-center justify-center rounded-full text-terracotta shadow-soft ring-1 ring-line-strong/40 disabled:opacity-30 active:scale-90 transition-transform"
                     >
-                      <IconBack size={13} />
+                      <IconTrash size={13} />
                     </button>
                     <button
                       type="button"
-                      onClick={() => goTo(currentPage + 1)}
-                      disabled={currentPage === pageCount - 1}
-                      aria-label="Page suivante"
-                      className="glass-chip flex h-7 w-7 items-center justify-center rounded-full text-ink-soft shadow-soft ring-1 ring-line-strong/40 disabled:opacity-30 active:scale-90 transition-transform"
+                      onClick={toggleSelectMode}
+                      aria-label="Fermer la sélection"
+                      className="glass-chip flex h-7 w-7 items-center justify-center rounded-full text-ink-soft shadow-soft ring-1 ring-line-strong/40 active:scale-90 transition-transform"
                     >
-                      <IconChevronRight size={13} />
+                      <IconX size={13} />
                     </button>
                   </div>
-                )}
-              </div>
-            )}
+                </>
+              ) : (
+                <>
+                  <p className="text-[10.5px] font-bold uppercase tracking-wide text-ink-faint">
+                    {searching
+                      ? `${filtered.length} résultat${filtered.length > 1 ? "s" : ""}`
+                      : paginated
+                        ? `Page ${currentPage + 1} / ${pageCount}`
+                        : ""}
+                  </p>
+                  <div className="flex items-center gap-1.5">
+                    {paginated && (
+                      <>
+                        <button
+                          type="button"
+                          onClick={() => goTo(currentPage - 1)}
+                          disabled={currentPage === 0}
+                          aria-label="Page précédente"
+                          className="glass-chip flex h-7 w-7 items-center justify-center rounded-full text-ink-soft shadow-soft ring-1 ring-line-strong/40 disabled:opacity-30 active:scale-90 transition-transform"
+                        >
+                          <IconBack size={13} />
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => goTo(currentPage + 1)}
+                          disabled={currentPage === pageCount - 1}
+                          aria-label="Page suivante"
+                          className="glass-chip flex h-7 w-7 items-center justify-center rounded-full text-ink-soft shadow-soft ring-1 ring-line-strong/40 disabled:opacity-30 active:scale-90 transition-transform"
+                        >
+                          <IconChevronRight size={13} />
+                        </button>
+                      </>
+                    )}
+                    <button
+                      type="button"
+                      onClick={toggleSelectMode}
+                      aria-label="Sélectionner plusieurs fiches"
+                      className="glass-chip flex h-7 w-7 items-center justify-center rounded-full text-ink-soft shadow-soft ring-1 ring-line-strong/40 active:scale-90 transition-transform"
+                    >
+                      <IconSquare size={13} />
+                    </button>
+                  </div>
+                </>
+              )}
+            </div>
 
             <div className="relative overflow-hidden">
               <AnimatePresence mode="wait" custom={direction} initial={false}>
@@ -218,7 +324,15 @@ export default function CarnetList() {
                   className="flex flex-col gap-2"
                 >
                   {pages[currentPage]?.map((f) => (
-                    <FicheRow key={f.id} fiche={f} clientName={clientFieldsFor(f).name} onOpen={() => navigate(`/carnet/${f.id}`)} />
+                    <FicheRow
+                      key={f.id}
+                      fiche={f}
+                      clientName={clientFieldsFor(f).name}
+                      onOpen={() => navigate(`/carnet/${f.id}`)}
+                      selectMode={selectMode}
+                      selected={selectedIds.has(f.id)}
+                      onToggleSelect={() => toggleOne(f.id)}
+                    />
                   ))}
                 </motion.div>
               </AnimatePresence>
@@ -270,24 +384,40 @@ export default function CarnetList() {
         )}
       </div>
 
-      <motion.button
-        type="button"
-        onClick={handleAdd}
-        aria-label="Nouvelle fiche"
-        className="fixed right-4 z-40 flex h-14 w-14 items-center justify-center rounded-full bg-gradient-to-br from-indigo-soft to-indigo text-white shadow-lift shadow-[inset_0_1px_0_0_rgba(255,255,255,0.35)] ring-1 ring-black/5 lg:hidden"
-        style={{ bottom: "calc(112px + env(safe-area-inset-bottom))" }}
-        initial={{ opacity: 0, scale: 0.7, y: 12 }}
-        animate={{ opacity: 1, scale: 1, y: 0 }}
-        transition={{ type: "spring", stiffness: 380, damping: 24, delay: 0.1 }}
-        whileTap={{ scale: 0.9 }}
-      >
-        <IconPlus size={24} strokeWidth={2.2} />
-      </motion.button>
+      {!selectMode && (
+        <motion.button
+          type="button"
+          onClick={handleAdd}
+          aria-label="Nouvelle fiche"
+          className="fixed right-4 z-40 flex h-14 w-14 items-center justify-center rounded-full bg-gradient-to-br from-indigo-soft to-indigo text-white shadow-lift shadow-[inset_0_1px_0_0_rgba(255,255,255,0.35)] ring-1 ring-black/5 lg:hidden"
+          style={{ bottom: "calc(112px + env(safe-area-inset-bottom))" }}
+          initial={{ opacity: 0, scale: 0.7, y: 12 }}
+          animate={{ opacity: 1, scale: 1, y: 0 }}
+          transition={{ type: "spring", stiffness: 380, damping: 24, delay: 0.1 }}
+          whileTap={{ scale: 0.9 }}
+        >
+          <IconPlus size={24} strokeWidth={2.2} />
+        </motion.button>
+      )}
     </div>
   );
 }
 
-function FicheRow({ fiche, clientName, onOpen }: { fiche: Fiche; clientName: string; onOpen: () => void }) {
+function FicheRow({
+  fiche,
+  clientName,
+  onOpen,
+  selectMode,
+  selected,
+  onToggleSelect,
+}: {
+  fiche: Fiche;
+  clientName: string;
+  onOpen: () => void;
+  selectMode: boolean;
+  selected: boolean;
+  onToggleSelect: () => void;
+}) {
   const client = useStore((s) => (fiche.clientId ? s.getClient(fiche.clientId) : undefined));
   const digits = (fiche.telephone || client?.phone || "").replace(/\s/g, "");
 
@@ -297,30 +427,33 @@ function FicheRow({ fiche, clientName, onOpen }: { fiche: Fiche; clientName: str
       tabIndex={0}
       onClick={() => {
         haptic();
-        onOpen();
+        if (selectMode) onToggleSelect();
+        else onOpen();
       }}
       onKeyDown={(e) => {
         if (e.key === "Enter" || e.key === " ") {
           e.preventDefault();
           haptic();
-          onOpen();
+          if (selectMode) onToggleSelect();
+          else onOpen();
         }
       }}
-      className={clsx(
-        "glass-card flex cursor-pointer items-center gap-2 rounded-xl px-2.5 py-2.5 text-left transition-colors hover:bg-surface-3 active:scale-[0.98]",
-        fiche.cancelledAt && "opacity-50"
-      )}
+      className="glass-card flex cursor-pointer items-center gap-2 rounded-xl px-2.5 py-2.5 text-left transition-colors hover:bg-surface-3 active:scale-[0.98]"
     >
+      {selectMode && (
+        <span className={clsx("flex-none", selected ? "text-indigo" : "text-ink-faint")}>
+          {selected ? <IconCheckSquare size={20} /> : <IconSquare size={20} />}
+        </span>
+      )}
       <Avatar photo={client?.photo ?? fiche.tissuPhotos[0]?.dataUrl ?? null} seed={client?.colorSeed ?? "grey"} size={44} />
       <span className="min-w-0 flex-1">
         <span className="flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-wide text-ink-faint">
           Fiche n° {fiche.numero}
           {fiche.voiceNote && <IconMic size={10} className="flex-none text-indigo" />}
-          {fiche.cancelledAt && "· Annulée"}
         </span>
         <span className="mt-0.5 block truncate text-[13.5px] font-bold">{clientName || "Sans nom"}</span>
       </span>
-      {digits && (
+      {!selectMode && digits && (
         <a
           href={`tel:${digits}`}
           onClick={(e) => e.stopPropagation()}

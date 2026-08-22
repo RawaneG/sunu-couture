@@ -1,6 +1,6 @@
 import { create } from "zustand";
 import { persist } from "zustand/middleware";
-import type { Client, Fiche, OrderStatus, VoiceNote, FicheChampKey, FicheChamp, TissuPhoto } from "./types";
+import type { Client, Fiche, OrderStatus, VoiceNote, FicheChampKey, FicheChamp, TissuPhoto, Modele } from "./types";
 import { ORDER_STEPS, FICHE_MESURE_KEYS, FICHE_INFO_KEYS } from "./types";
 import { nextDays, isOverdue } from "./format";
 import { normalize } from "./search";
@@ -79,7 +79,6 @@ const seedFiches: Fiche[] = [
     fabricColor: "#2d3a6b",
     status: "couture",
     late: false,
-    cancelledAt: null,
     createdAt: days[0],
   },
   {
@@ -103,7 +102,6 @@ const seedFiches: Fiche[] = [
     fabricColor: "#8c8398",
     status: "couture",
     late: isOverdue(days[2], "couture"),
-    cancelledAt: null,
     createdAt: days[0],
   },
   {
@@ -127,7 +125,6 @@ const seedFiches: Fiche[] = [
     fabricColor: "#faf3e6",
     status: "pret",
     late: false,
-    cancelledAt: null,
     createdAt: days[1],
   },
   {
@@ -151,7 +148,6 @@ const seedFiches: Fiche[] = [
     fabricColor: "#5b5468",
     status: "recu",
     late: isOverdue(days[1], "recu"),
-    cancelledAt: null,
     createdAt: days[0],
   },
   {
@@ -175,7 +171,6 @@ const seedFiches: Fiche[] = [
     fabricColor: "#c98a2b",
     status: "couture",
     late: false,
-    cancelledAt: null,
     createdAt: days[2],
   },
   {
@@ -199,7 +194,6 @@ const seedFiches: Fiche[] = [
     fabricColor: "#b8502e",
     status: "recu",
     late: false,
-    cancelledAt: null,
     createdAt: days[3],
   },
 ];
@@ -225,6 +219,7 @@ type FicheInfoPatch = Partial<
 interface StoreState {
   clients: Client[];
   fiches: Fiche[];
+  modeles: Modele[];
   addClient: (input: NewClientInput) => string;
   getClient: (id: string) => Client | undefined;
   fichesForClient: (id: string) => Fiche[];
@@ -237,8 +232,17 @@ interface StoreState {
   removeFicheTissuPhoto: (id: string, photoId: string) => void;
   setFicheStatus: (id: string, status: OrderStatus) => void;
   advanceFiche: (id: string) => void;
-  cancelFiche: (id: string) => void;
-  restoreFiche: (id: string) => void;
+  deleteFiche: (id: string) => void;
+  deleteFiches: (ids: string[]) => void;
+  addModele: () => string;
+  getModele: (id: string) => Modele | undefined;
+  setModeleNom: (id: string, nom: string) => void;
+  addModelePhoto: (id: string, dataUrl: string) => void;
+  removeModelePhoto: (id: string, photoId: string) => void;
+  addModelePatronPhoto: (id: string, dataUrl: string) => void;
+  removeModelePatronPhoto: (id: string, photoId: string) => void;
+  removeModele: (id: string) => void;
+  removeModeles: (ids: string[]) => void;
 }
 
 function colorSeedFor(seedString: string): string {
@@ -344,7 +348,6 @@ export function migrateLegacyState(persisted: unknown): { clients: Client[]; fic
         fabricColor: maybeUnified.fabricColor ?? "#2d3a6b",
         status,
         late: isOverdue(dueDate, status),
-        cancelledAt: maybeUnified.cancelledAt ?? null,
         createdAt: maybeUnified.createdAt!,
       });
       continue;
@@ -382,7 +385,6 @@ export function migrateLegacyState(persisted: unknown): { clients: Client[]; fic
       fabricColor: "#2d3a6b",
       status: "recu",
       late: isOverdue(dueDate, "recu"),
-      cancelledAt: null,
       createdAt: f.createdAt,
     });
   }
@@ -415,7 +417,6 @@ export function migrateLegacyState(persisted: unknown): { clients: Client[]; fic
       fabricColor: o.fabricColor || "#2d3a6b",
       status,
       late: isOverdue(o.dueDate, status),
-      cancelledAt: null,
       createdAt: o.createdAt,
     });
   }
@@ -438,6 +439,7 @@ export const useStore = create<StoreState>()(
     (set, get) => ({
       clients: seedClients,
       fiches: seedFiches,
+      modeles: [],
 
       addClient: (input) => {
         const id = uid("c");
@@ -486,7 +488,6 @@ export const useStore = create<StoreState>()(
           fabricColor: "#2d3a6b",
           status: "recu",
           late: false,
-          cancelledAt: null,
           createdAt: new Date().toISOString(),
         };
         set({ fiches: [fiche, ...fiches] });
@@ -554,21 +555,62 @@ export const useStore = create<StoreState>()(
         get().setFicheStatus(id, next);
       },
 
-      cancelFiche: (id) =>
-        set({ fiches: get().fiches.map((f) => (f.id === id ? { ...f, cancelledAt: new Date().toISOString() } : f)) }),
-      restoreFiche: (id) =>
-        set({ fiches: get().fiches.map((f) => (f.id === id ? { ...f, cancelledAt: null } : f)) }),
+      deleteFiche: (id) => set({ fiches: get().fiches.filter((f) => f.id !== id) }),
+      deleteFiches: (ids) => {
+        const idSet = new Set(ids);
+        set({ fiches: get().fiches.filter((f) => !idSet.has(f.id)) });
+      },
+
+      addModele: () => {
+        const id = uid("m");
+        const modele: Modele = { id, nom: "", photos: [], patronPhotos: [], createdAt: new Date().toISOString() };
+        set({ modeles: [modele, ...get().modeles] });
+        return id;
+      },
+      getModele: (id) => get().modeles.find((m) => m.id === id),
+      setModeleNom: (id, nom) =>
+        set({ modeles: get().modeles.map((m) => (m.id === id ? { ...m, nom } : m)) }),
+      addModelePhoto: (id, dataUrl) =>
+        set({
+          modeles: get().modeles.map((m) =>
+            m.id === id ? { ...m, photos: [...m.photos, { id: uid("mp"), dataUrl }] } : m
+          ),
+        }),
+      removeModelePhoto: (id, photoId) =>
+        set({
+          modeles: get().modeles.map((m) =>
+            m.id === id ? { ...m, photos: m.photos.filter((p) => p.id !== photoId) } : m
+          ),
+        }),
+      addModelePatronPhoto: (id, dataUrl) =>
+        set({
+          modeles: get().modeles.map((m) =>
+            m.id === id ? { ...m, patronPhotos: [...m.patronPhotos, { id: uid("pp"), dataUrl }] } : m
+          ),
+        }),
+      removeModelePatronPhoto: (id, photoId) =>
+        set({
+          modeles: get().modeles.map((m) =>
+            m.id === id ? { ...m, patronPhotos: m.patronPhotos.filter((p) => p.id !== photoId) } : m
+          ),
+        }),
+      removeModele: (id) => set({ modeles: get().modeles.filter((m) => m.id !== id) }),
+      removeModeles: (ids) => {
+        const idSet = new Set(ids);
+        set({ modeles: get().modeles.filter((m) => !idSet.has(m.id)) });
+      },
     }),
     {
       name: "sunu-couture",
       // Bump whenever the persisted Fiche shape changes, even mid-development —
       // otherwise browsers with an already-matching version number skip migrate
       // entirely and keep loading stale fields (e.g. avance undefined → NaN reste).
-      version: 10,
+      version: 12,
       migrate: migrateLegacyState,
       partialize: (state) => ({
         clients: state.clients.map((c) => ({ ...c, photo: null })),
         fiches: state.fiches,
+        modeles: state.modeles,
       }),
     }
   )

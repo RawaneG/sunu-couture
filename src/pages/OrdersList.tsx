@@ -36,10 +36,8 @@ export default function OrdersList() {
   const activeMatch = useMatch("/commandes/:id");
   const [query, setQuery] = useState("");
 
-  const active = useMemo(() => fiches.filter((f) => !f.cancelledAt), [fiches]);
-
   const filtered = useMemo(() => {
-    const sorted = [...active].sort(
+    const sorted = [...fiches].sort(
       (a, b) => (a.dueDate ? +new Date(a.dueDate) : Infinity) - (b.dueDate ? +new Date(b.dueDate) : Infinity)
     );
     let result = sorted;
@@ -59,7 +57,7 @@ export default function OrdersList() {
       });
     }
     return result;
-  }, [active, clients, filter, query]);
+  }, [fiches, clients, filter, query]);
 
   const firstCallableIndex = useMemo(
     () => filtered.findIndex((f) => Boolean(f.telephone || clients.find((c) => c.id === f.clientId)?.phone)),
@@ -70,7 +68,7 @@ export default function OrdersList() {
     <div className="lg:h-full lg:flex lg:flex-col">
       <PageHeader title="Commandes" search={{ query, onQueryChange: setQuery, placeholder: "Client, vêtement ou n° de fiche…" }} />
       <div className="hidden lg:block px-6 -mt-2 py-3">
-        <p className="text-sm text-ink-soft">{active.length} commandes au total</p>
+        <p className="text-sm text-ink-soft">{fiches.length} commandes au total</p>
       </div>
 
       <div className="flex gap-2 overflow-x-auto no-scrollbar px-4 lg:px-6 pt-3 lg:pt-0 pb-4">

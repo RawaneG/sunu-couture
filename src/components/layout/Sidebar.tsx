@@ -1,7 +1,7 @@
 import { useRef } from "react";
 import { Link, NavLink } from "react-router-dom";
 import clsx from "clsx";
-import { IconHome, IconHanger, IconUsers, IconPlus, IconSun, IconMoon } from "../../lib/icons";
+import { IconHome, IconHanger, IconUsers, IconScissors, IconPlus, IconSun, IconMoon } from "../../lib/icons";
 import { useTheme } from "../../lib/theme";
 import BrandMark from "../ui/BrandMark";
 
@@ -9,6 +9,7 @@ import BrandMark from "../ui/BrandMark";
 const NAV = [
   { to: "/", label: "Accueil", icon: IconHome, end: true },
   { to: "/commandes", label: "Commandes", icon: IconHanger, end: false },
+  { to: "/catalogue", label: "Catalogue", icon: IconScissors, end: false },
   { to: "/clients", label: "Clients", icon: IconUsers, end: false },
 ];
 

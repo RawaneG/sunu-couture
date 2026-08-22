@@ -1,7 +1,7 @@
 import { useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { AnimatePresence, motion } from "framer-motion";
-import { IconCamera, IconX } from "../../lib/icons";
+import { IconCamera, IconScissors, IconX } from "../../lib/icons";
 import { PhotoSourceSheet } from "./PhotoCapture";
 import { fileToDownscaledDataUrl } from "../../lib/image";
 import { haptic } from "../../lib/haptics";
@@ -11,10 +11,12 @@ export default function FabricPhotos({
   photos = [],
   onAdd,
   onRemove,
+  onPickCatalogue,
 }: {
   photos: TissuPhoto[] | undefined;
   onAdd: (dataUrl: string) => void;
   onRemove: (photoId: string) => void;
+  onPickCatalogue?: () => void;
 }) {
   const cameraInputRef = useRef<HTMLInputElement>(null);
   const galleryInputRef = useRef<HTMLInputElement>(null);
@@ -89,6 +91,21 @@ export default function FabricPhotos({
           <IconCamera size={18} />
           <span className="text-[10px] font-bold">{busy ? "…" : "Ajouter"}</span>
         </motion.button>
+
+        {onPickCatalogue && (
+          <motion.button
+            type="button"
+            whileTap={{ scale: 0.94 }}
+            onClick={() => {
+              haptic();
+              onPickCatalogue();
+            }}
+            className="glass-chip flex h-20 w-20 flex-none flex-col items-center justify-center gap-1 rounded-xl border-2 border-dashed border-line-strong text-ink-faint"
+          >
+            <IconScissors size={18} />
+            <span className="text-[10px] font-bold">Catalogue</span>
+          </motion.button>
+        )}
       </div>
 
       {sheetOpen && (
