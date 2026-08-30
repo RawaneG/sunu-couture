@@ -1016,6 +1016,78 @@ begin
 end;
 $$;
 
-do $$ begin raise notice '════════  SCHÉMA PHASE 2 + WRAPPER PHASE 3A : 39 groupes de tests OK  ════════'; end; $$;
+-- ── T40 — GRANT ciblé (moindre privilège) : service_role + non-régression ──
+-- Vérifie le correctif `20260830212932_grant_provision_workshop_service_role_
+-- select.sql`.
+--
+-- LIMITE ASSUMÉE (locale), CONSTATÉE ET NON SUPPOSÉE : une vérification directe
+-- (`information_schema.role_table_grants`) montre que l'image Docker Supabase
+-- locale accorde par défaut, à `anon`/`authenticated`/`service_role` À LA
+-- FOIS, le jeu complet DELETE/INSERT/REFERENCES/SELECT/TRIGGER/TRUNCATE/UPDATE
+-- sur `public.workshops` — INDÉPENDAMMENT de toute migration (c'est déjà le
+-- cas avant même que ce correctif n'existe). C'est précisément la raison pour
+-- laquelle `security_hardening.sql` (Phase 2) doit explicitement RÉVOQUER des
+-- privilèges sur `subscription_plans`/`subscriptions`/etc. pour anon/authenticated
+-- — sans quoi ils les auraient aussi par défaut en local. Sur le projet
+-- distant, ce bootstrap large n'existe pas : seuls TRUNCATE/REFERENCES/TRIGGER
+-- sont accordés par défaut à ces trois rôles (vérifié en Phase 3B.1).
+--
+-- CONSÉQUENCE : ce test ne peut PAS vérifier ici l'absence de SELECT pour
+-- anon/authenticated sur public.workshops (elle serait localement fausse pour
+-- une raison sans rapport avec ce correctif), ni que service_role n'a QUE
+-- SELECT et rien de plus (INSERT/UPDATE/DELETE y sont déjà localement, par le
+-- bootstrap, avant même cette migration). Ces deux points sont vérifiés
+-- séparément, en lecture seule, sur le projet distant (voir rapport Phase 3B)
+-- — jamais affirmés comme démontrés localement. Ce que ce test vérifie
+-- localement, et qui reste discriminant dans les deux environnements, ce sont
+-- les privilèges au niveau FONCTION (jamais élargis par le bootstrap local,
+-- contrairement aux tables) : l'EXECUTE du wrapper reste réservé à service_role.
+do $$
+declare
+  v_sig constant text := 'public.provision_workshop_api(uuid, text)';
+begin
+  if not has_table_privilege('service_role', 'public.workshops', 'select') then
+    raise exception 'T40 FAIL: service_role sans SELECT sur public.workshops (correctif manquant ou régressé)';
+  end if;
+  -- Non-régression : le correctif ne doit pas avoir élargi qui peut EXECUTE
+  -- le wrapper (déjà couvert par T36, revérifié ici après la nouvelle migration).
+  if has_function_privilege('anon', v_sig, 'execute') then
+    raise exception 'T40 FAIL: anon a EXECUTE sur % après le correctif (régression)', v_sig;
+  end if;
+  if has_function_privilege('authenticated', v_sig, 'execute') then
+    raise exception 'T40 FAIL: authenticated a EXECUTE sur % après le correctif (régression)', v_sig;
+  end if;
+  if not has_function_privilege('service_role', v_sig, 'execute') then
+    raise exception 'T40 FAIL: service_role a perdu EXECUTE sur % (régression)', v_sig;
+  end if;
+  raise notice 'T40 OK — service_role a SELECT sur public.workshops, EXECUTE du wrapper inchangé (anon/authenticated toujours refusés)';
+end;
+$$;
+
+-- ── T40b — le correctif ne casse pas l'idempotence du wrapper (T37 rejoué) ──
+do $$
+declare
+  v_owner constant uuid := '88888888-8888-8888-8888-888888888888';
+  v_ws1 public.workshops; v_ws2 public.workshops;
+  v_n int;
+begin
+  insert into auth.users (id, phone) values (v_owner, '+221770000008');
+  set local role service_role;
+  select * into v_ws1 from public.provision_workshop_api(v_owner, 'Atelier T40b');
+  select * into v_ws2 from public.provision_workshop_api(v_owner, null);
+  reset role;
+
+  if v_ws1.id <> v_ws2.id then
+    raise exception 'T40b FAIL: le correctif de privilège a cassé l''idempotence (% <> %)', v_ws1.id, v_ws2.id;
+  end if;
+  select count(*) into v_n from public.workshops where owner_id = v_owner;
+  if v_n <> 1 then
+    raise exception 'T40b FAIL: % atelier(s) pour cet owner après le correctif (attendu 1)', v_n;
+  end if;
+  raise notice 'T40b OK — wrapper toujours idempotent après le correctif de privilège (T37 rejoué)';
+end;
+$$;
+
+do $$ begin raise notice '════════  SCHÉMA PHASE 2 + WRAPPER PHASE 3A + CORRECTIF GRANT : 40 groupes de tests OK  ════════'; end; $$;
 
 rollback;
