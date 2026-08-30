@@ -76,15 +76,21 @@ const adminClient = createClient(SUPABASE_URL, SECRET_KEY, {
 // `Access-Control-Allow-Origin` reste une logique maison (liste blanche
 // locale/dev) : le SDK ne fournit qu'un `*` générique, insuffisant ici.
 //
-// LIMITE CONNUE (testée, voir supabase/README.md « Phase 3A ») : sur la stack
-// Docker locale, la passerelle Kong répond ELLE-MÊME au préflight `OPTIONS`
-// (avec `Access-Control-Allow-Origin: *`) et RÉÉCRIT l'en-tête de réponse même
-// pour une origine hors liste blanche — le code ci-dessous n'est donc PAS
+// LIMITE CONNUE (testée par curl direct, pas seulement supposée — voir
+// supabase/README.md « Phase 3A ») : sur la stack Docker locale, la
+// passerelle Kong RÉÉCRIT/AJOUTE `Access-Control-Allow-Origin: *` sur TOUTES
+// les réponses de cette fonction — préflight `OPTIONS` ET requêtes réelles
+// (`POST`) — quelle que soit la valeur (ou l'absence) que ce code renvoie
+// lui-même. Seul le CODE DE STATUT (403/204/401/…) reste fiable en local
+// (confirmé : Kong ne le modifie pas). La valeur exacte de
+// `Access-Control-Allow-Origin` (origine reflétée, jamais de wildcard,
+// absence totale du header pour une origine interdite) n'est donc PAS
 // vérifiable de bout en bout en local. La logique de restriction d'origine
-// reste implémentée et testée unitairement, mais sa validation réelle
-// (origine effectivement bloquée par le navigateur) est REPORTÉE à la Phase 3B
-// (déploiement distant, où le comportement de la passerelle diffère). Ne pas
-// considérer le CORS local comme un test de sécurité réussi.
+// reste implémentée et testée (voir `scripts/test-provision-workshop.mjs`,
+// assertions sur les codes de statut uniquement), mais la validation réelle
+// des VALEURS d'en-tête est REPORTÉE à la Phase 3B (déploiement distant, où
+// le comportement de la passerelle diffère). Ne pas considérer le CORS local
+// comme une preuve des valeurs d'en-tête.
 const DEFAULT_DEV_ORIGINS = [
   "http://localhost:5173",
   "http://127.0.0.1:5173",
@@ -96,20 +102,50 @@ const ALLOWED_ORIGINS = new Set([
   ...(Deno.env.get("EXTRA_DEV_ORIGINS")?.split(",").map((o) => o.trim()).filter(Boolean) ?? []),
 ]);
 
-function corsHeaders(origin: string | null): HeadersInit {
-  const allowOrigin = origin && ALLOWED_ORIGINS.has(origin) ? origin : "null";
+// Résultat de la classification de l'en-tête `Origin` d'une requête entrante.
+// Trois cas, jamais réduits à un simple booléen — chacun a un traitement
+// distinct :
+//   - "allowed"   : origine présente ET dans la liste blanche -> reflétée
+//                   telle quelle dans Access-Control-Allow-Origin.
+//   - "forbidden" : origine présente mais hors liste blanche, OU valeur
+//                   littérale "null" (contexte sandboxé/file://, jamais une
+//                   absence d'origine) -> rejet immédiat, AUCUN en-tête
+//                   Access-Control-Allow-Origin (jamais la chaîne "null").
+//   - "absent"    : aucun en-tête Origin du tout (appel serveur/curl,
+//                   jamais un navigateur en contexte cross-origin réel) -> la
+//                   requête peut continuer jusqu'à la vérification JWT, mais
+//                   aucune réponse ne reçoit d'en-tête CORS.
+type OriginDecision = { kind: "allowed"; origin: string } | { kind: "forbidden" } | { kind: "absent" };
+
+function classifyOrigin(rawOrigin: string | null): OriginDecision {
+  if (rawOrigin === null) return { kind: "absent" };
+  // La valeur littérale "null" est ce qu'envoient certains contextes
+  // navigateur non fiables (iframe sandboxée sans allow-same-origin,
+  // document file://, redirection cross-origin opaque) — jamais une origine
+  // web légitime. Elle doit être traitée comme interdite, jamais reflétée.
+  if (rawOrigin === "null") return { kind: "forbidden" };
+  if (ALLOWED_ORIGINS.has(rawOrigin)) return { kind: "allowed", origin: rawOrigin };
+  return { kind: "forbidden" };
+}
+
+/** En-têtes CORS à ajouter à une réponse — UNIQUEMENT pour une origine
+ * explicitement autorisée. Ne renvoie JAMAIS la chaîne littérale "null" ni un
+ * wildcard "*" ; n'ajoute aucun `Access-Control-Allow-Origin` pour une
+ * origine absente ou interdite (comportement volontaire, pas un oubli). */
+function corsHeadersFor(decision: OriginDecision): HeadersInit {
+  if (decision.kind !== "allowed") return {};
   return {
     ...sdkCorsHeaders,
-    "Access-Control-Allow-Origin": allowOrigin,
+    "Access-Control-Allow-Origin": decision.origin,
     "Access-Control-Allow-Methods": "POST, OPTIONS",
     Vary: "Origin",
   };
 }
 
-function jsonResponse(status: number, body: unknown, origin: string | null): Response {
+function jsonResponse(status: number, body: unknown, decision: OriginDecision): Response {
   return new Response(JSON.stringify(body), {
     status,
-    headers: { "Content-Type": "application/json", ...corsHeaders(origin) },
+    headers: { "Content-Type": "application/json", ...corsHeadersFor(decision) },
   });
 }
 
@@ -121,25 +157,43 @@ function logSafe(event: string, fields: Record<string, string | number | boolean
 const MAX_NAME_LENGTH = 120;
 
 Deno.serve(async (req: Request) => {
-  const origin = req.headers.get("Origin");
+  const decision = classifyOrigin(req.headers.get("Origin"));
 
   if (req.method === "OPTIONS") {
-    return new Response(null, { status: 204, headers: corsHeaders(origin) });
+    if (decision.kind === "forbidden") {
+      logSafe("provision_workshop.cors_forbidden", { reason: "preflight_origin_not_allowed" });
+      return new Response(null, { status: 403 });
+    }
+    return new Response(null, { status: 204, headers: corsHeadersFor(decision) });
   }
+
+  // Origine PRÉSENTE mais hors liste blanche (ou valeur littérale "null") :
+  // rejet IMMÉDIAT, avant tout appel Auth/DB, sans aucun en-tête
+  // Access-Control-Allow-Origin. Une requête SANS en-tête Origin du tout
+  // (appel serveur/curl) n'entre jamais dans cette branche — elle continue
+  // normalement jusqu'à la vérification JWT ci-dessous.
+  if (decision.kind === "forbidden") {
+    logSafe("provision_workshop.cors_forbidden", { reason: "origin_not_allowed" });
+    return new Response(JSON.stringify({ error: "forbidden_origin", message: "Origine non autorisée." }), {
+      status: 403,
+      headers: { "Content-Type": "application/json" },
+    });
+  }
+
   if (req.method !== "POST") {
-    return jsonResponse(400, { error: "invalid_request", message: "Méthode non supportée." }, origin);
+    return jsonResponse(400, { error: "invalid_request", message: "Méthode non supportée." }, decision);
   }
 
   // 1) Authorization présent et bien formé.
   const authHeader = req.headers.get("Authorization");
   if (!authHeader?.startsWith("Bearer ")) {
     logSafe("provision_workshop.unauthorized", { reason: "missing_authorization_header" });
-    return jsonResponse(401, { error: "unauthorized", message: "Session invalide. Reconnecte-toi." }, origin);
+    return jsonResponse(401, { error: "unauthorized", message: "Session invalide. Reconnecte-toi." }, decision);
   }
   const jwt = authHeader.slice("Bearer ".length).trim();
   if (!jwt) {
     logSafe("provision_workshop.unauthorized", { reason: "empty_bearer_token" });
-    return jsonResponse(401, { error: "unauthorized", message: "Session invalide. Reconnecte-toi." }, origin);
+    return jsonResponse(401, { error: "unauthorized", message: "Session invalide. Reconnecte-toi." }, decision);
   }
 
   // 2) Vérification CRYPTOGRAPHIQUE du JWT — jamais un décodage non vérifié.
@@ -149,20 +203,20 @@ Deno.serve(async (req: Request) => {
     const { data, error } = await verifierClient.auth.getClaims(jwt);
     if (error || !data?.claims?.sub) {
       logSafe("provision_workshop.unauthorized", { reason: "invalid_or_expired_jwt" });
-      return jsonResponse(401, { error: "unauthorized", message: "Session invalide. Reconnecte-toi." }, origin);
+      return jsonResponse(401, { error: "unauthorized", message: "Session invalide. Reconnecte-toi." }, decision);
     }
     ownerId = data.claims.sub as string;
     role = (data.claims as { role?: string }).role;
   } catch {
     logSafe("provision_workshop.unauthorized", { reason: "getClaims_threw" });
-    return jsonResponse(401, { error: "unauthorized", message: "Session invalide. Reconnecte-toi." }, origin);
+    return jsonResponse(401, { error: "unauthorized", message: "Session invalide. Reconnecte-toi." }, decision);
   }
 
   // 3) Défense en profondeur : le rôle du JWT doit être `authenticated`
   // (jamais `anon`/`service_role` en provenance du navigateur).
   if (role && role !== "authenticated") {
     logSafe("provision_workshop.forbidden", { reason: "unexpected_role" });
-    return jsonResponse(403, { error: "forbidden", message: "Accès refusé." }, origin);
+    return jsonResponse(403, { error: "forbidden", message: "Accès refusé." }, decision);
   }
 
   // 4) Corps de requête : SEUL `name` est lu. `owner_id` / `user_id` envoyés
@@ -180,7 +234,7 @@ Deno.serve(async (req: Request) => {
   try {
     body = await req.json();
   } catch {
-    return jsonResponse(400, { error: "invalid_request", message: "Corps de requête JSON invalide." }, origin);
+    return jsonResponse(400, { error: "invalid_request", message: "Corps de requête JSON invalide." }, decision);
   }
   const rawName = typeof body === "object" && body !== null && "name" in body ? (body as { name: unknown }).name : undefined;
 
@@ -192,12 +246,12 @@ Deno.serve(async (req: Request) => {
       return jsonResponse(
         400,
         { error: "invalid_request", message: `Le nom de l'atelier est trop long (${MAX_NAME_LENGTH} caractères maximum).` },
-        origin,
+        decision,
       );
     }
     name = rawName;
   } else {
-    return jsonResponse(400, { error: "invalid_request", message: "Le nom de l'atelier doit être du texte." }, origin);
+    return jsonResponse(400, { error: "invalid_request", message: "Le nom de l'atelier doit être du texte." }, decision);
   }
 
   // 5) Appel privilégié — SEUL point d'écriture, via la SEULE porte RPC.
@@ -213,7 +267,7 @@ Deno.serve(async (req: Request) => {
       return jsonResponse(
         400,
         { error: "WORKSHOP_NAME_REQUIRED", message: "Entre le nom de ton atelier pour continuer." },
-        origin,
+        decision,
       );
     }
     // Défensif : une violation d'unicité inattendue (course extrême au-delà
@@ -221,12 +275,12 @@ Deno.serve(async (req: Request) => {
     // 409 explicite plutôt qu'un 500 générique.
     if (error.code === "23505") {
       logSafe("provision_workshop.conflict", { code: error.code });
-      return jsonResponse(409, { error: "conflict", message: "Un atelier existe déjà pour ce compte." }, origin);
+      return jsonResponse(409, { error: "conflict", message: "Un atelier existe déjà pour ce compte." }, decision);
     }
     logSafe("provision_workshop.error", { code: error.code ?? "unknown" });
-    return jsonResponse(500, { error: "internal_error", message: "Une erreur est survenue. Réessaie plus tard." }, origin);
+    return jsonResponse(500, { error: "internal_error", message: "Une erreur est survenue. Réessaie plus tard." }, decision);
   }
 
   logSafe("provision_workshop.success");
-  return jsonResponse(200, { workshop: data }, origin);
+  return jsonResponse(200, { workshop: data }, decision);
 });

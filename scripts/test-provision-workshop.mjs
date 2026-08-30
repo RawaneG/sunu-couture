@@ -89,6 +89,32 @@ async function main() {
     return { status: res.status, json };
   }
 
+  // Variante bas niveau pour les tests CORS : contrôle explicite de l'en-tête
+  // `Origin` (présent, absent, ou littéral "null") et lecture des en-têtes de
+  // réponse — jamais exposée via `callFn` qui ne s'intéresse qu'au corps JSON.
+  // Node (undici) autorise de fixer `Origin` manuellement (contrairement à un
+  // vrai navigateur) : suffisant pour vérifier le comportement SERVEUR, pas un
+  // test de ce que ferait réellement un navigateur (voir limite documentée
+  // dans supabase/functions/provision-workshop/index.ts).
+  async function callFnRaw({ method = "POST", token, body, origin } = {}) {
+    const headers = {};
+    if (body !== undefined) headers["Content-Type"] = "application/json";
+    if (token !== undefined) headers.Authorization = `Bearer ${token}`;
+    if (origin !== undefined) headers.Origin = origin;
+    const res = await fetch(FUNCTIONS_URL, {
+      method,
+      headers,
+      body: body !== undefined ? JSON.stringify(body) : undefined,
+    });
+    let json = null;
+    try {
+      json = await res.json();
+    } catch {
+      /* réponse non-JSON (ex. 204/403 sans corps) — ignoré */
+    }
+    return { status: res.status, json, headers: res.headers };
+  }
+
   async function login() {
     await fetch(`${API_URL}/auth/v1/otp`, {
       method: "POST",
@@ -186,6 +212,65 @@ async function main() {
   {
     const r = await callFn(accessToken, { name: null, owner_id: "99999999-9999-9999-9999-999999999999" });
     check("owner_id du body jamais utilisé comme propriétaire réel", r.json?.workshop?.owner_id === userId, r.json);
+  }
+
+  console.log("\n8) CORS — origine autorisée / interdite / null / absente, préflight");
+  // LIMITE LOCALE CONFIRMÉE (curl direct, pas supposée) : sur la stack Docker
+  // locale, Kong réécrit/ajoute `Access-Control-Allow-Origin: *` sur TOUTES
+  // les réponses de cette fonction (OPTIONS ET POST, pas seulement le
+  // préflight comme documenté jusqu'ici) — quelle que soit la décision réelle
+  // du code. Les assertions ci-dessous ne portent donc QUE sur le CODE DE
+  // STATUT (confirmé fiable : Kong ne le modifie pas) et sur l'absence
+  // d'effet de bord (aucune donnée créée). La valeur exacte de
+  // Access-Control-Allow-Origin (origine reflétée, jamais de wildcard,
+  // absence totale du header pour une origine interdite) N'EST PAS
+  // vérifiable ici — elle est vérifiée séparément, en lecture seule, sur le
+  // déploiement distant (Phase 3B, POINT B), où le comportement de la
+  // passerelle diffère. Ne jamais présenter ce local comme une preuve des
+  // valeurs d'en-tête.
+  const ALLOWED_ORIGIN = "http://localhost:5173"; // dans DEFAULT_DEV_ORIGINS, toujours présent
+  const FORBIDDEN_ORIGIN = "https://evil.example.com";
+  {
+    const r = await callFnRaw({ token: accessToken, body: { name: null }, origin: ALLOWED_ORIGIN });
+    check("A. origine autorisée -> traitement poursuivi normalement (200/400 métier, pas 403)", r.status !== 403, { status: r.status, json: r.json });
+  }
+  {
+    const r = await callFnRaw({ method: "OPTIONS", origin: ALLOWED_ORIGIN });
+    check("B. OPTIONS + origine autorisée -> 204", r.status === 204, { status: r.status });
+  }
+  {
+    // Référence AVANT l'appel interdit : l'utilisateur de test possède déjà
+    // "Atelier Concurrent" depuis la section 6 — on capture son état exact
+    // pour prouver ensuite qu'il n'a ni changé de nom ni été dupliqué.
+    const before = await callFn(accessToken, { name: null });
+    const r = await callFnRaw({ token: accessToken, body: { name: "Ne devrait jamais être créé" }, origin: FORBIDDEN_ORIGIN });
+    check("C. origine présente mais interdite -> 403 (rejet avant tout traitement métier)", r.status === 403, { status: r.status, json: r.json });
+
+    // Même avec un JWT valide, une origine interdite ne doit jamais atteindre
+    // la base : si l'appel précédent avait été traité, l'atelier existant
+    // aurait été renommé "Ne devrait jamais être créé" (ou un doublon créé).
+    const after = await callFn(accessToken, { name: null });
+    check(
+      "C. aucun appel Auth/DB effectué pour l'origine interdite (atelier existant inchangé, aucun renommage/doublon)",
+      after.status === 200 && after.json?.workshop?.id === before.json?.workshop?.id && after.json?.workshop?.name === before.json?.workshop?.name,
+      { before: before.json, after: after.json },
+    );
+  }
+  {
+    const r = await callFnRaw({ method: "OPTIONS", origin: FORBIDDEN_ORIGIN });
+    check("OPTIONS + origine interdite -> 403 (pas 204 — le préflight échoue, un vrai navigateur bloque la requête réelle)", r.status === 403, { status: r.status });
+  }
+  {
+    const r = await callFnRaw({ token: accessToken, body: { name: null }, origin: "null" });
+    check("D. Origin: null (littéral) -> traité comme interdit, 403", r.status === 403, { status: r.status, json: r.json });
+  }
+  {
+    const r = await callFnRaw({ body: { name: null } }); // pas de token, pas d'Origin
+    check("E. absence d'Origin -> poursuit jusqu'à la vérification JWT (401 sans JWT, jamais 403)", r.status === 401, { status: r.status });
+  }
+  {
+    const r = await callFnRaw({ body: { name: null }, origin: ALLOWED_ORIGIN }); // pas de token, origine autorisée
+    check("F. 401 (sans JWT) depuis une origine autorisée -> toujours 401, pas bloqué en amont par la vérification d'origine", r.status === 401, { status: r.status });
   }
 
   console.log("\nNettoyage des données de test…");
