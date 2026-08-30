@@ -1,0 +1,43 @@
+# Configuration Supabase CLI — Tayoo / projet « sunu-couture-dev »
+#
+# Projet distant (ref nffcdygtqzlivsresuuk, région eu-west-1 / West EU Ireland,
+# PostgreSQL 17) : environnement DEV/STAGING, schéma DÉPLOYÉ (Phase 2 clôturée,
+# 2026-08-30, après dry-run revu + confirmation explicite du porteur). Aucune
+# donnée réelle de tailleur avant la Phase 4 (GRANT + politiques RLS). Le futur
+# projet de PRODUCTION est distinct et n'est créé/modifié qu'après la Phase 4 +
+# tests d'isolation + pilote technique.
+# La référence projet n'est PAS renseignée ici volontairement (`supabase link`
+# la stocke en local dans `supabase/.temp/`, gitignoré — jamais dans ce fichier).
+#
+# Ne JAMAIS toucher au projet Supabase « E-commerce » du même compte.
+#
+# Ce fichier est volontairement minimal ; la CLI complète les valeurs par défaut.
+# Si `supabase start` se plaint d'une clé manquante, exécuter `supabase init` dans
+# un dossier temporaire et recopier son config.toml, puis remettre les 3 réglages
+# marqués ci-dessous.
+
+project_id = "sunu-couture-dev"          # identifiant LOCAL (pas la ref distante)
+
+[db]
+major_version = 17                       # ← doit correspondre au projet distant (PG 17)
+
+[db.seed]
+enabled = false                          # ← `supabase db reset` NE joue AUCUN seed
+                                         #   (subscription_plans reste vide, cf. instruction 8)
+
+[api]
+schemas = ["public", "graphql_public"]   # app_hidden N'EST PAS exposé par l'API
+
+[auth]
+enable_signup = true
+
+# Cible pilote : téléphone + OTP (décision D5). Activé côté Dashboard en Phase 3.
+[auth.sms]
+enable_signup = true
+enable_confirmations = true
+
+[storage]
+enabled = true                           # buckets privés créés en Phase 8
+
+[edge_runtime]
+enabled = true
