@@ -855,6 +855,167 @@ begin
 end;
 $$;
 
-do $$ begin raise notice '════════  SCHÉMA PHASE 2 (candidate) : 35 groupes de tests OK  ════════'; end; $$;
+-- ══════════════════════════════════════════════════════════════════════════
+-- Phase 3A — wrapper PostgREST `public.provision_workshop_api` (migration
+-- 20260830…_provision_workshop_api.sql). `app_hidden` n'étant pas dans
+-- [api].schemas, ce wrapper SECURITY INVOKER est la SEULE porte PostgREST
+-- vers app_hidden.provision_workshop(). p_owner doit provenir exclusivement
+-- de l'Edge Function (JWT vérifié), jamais du JSON client.
+-- ══════════════════════════════════════════════════════════════════════════
+
+-- ── T36 — privilèges : PUBLIC/anon/authenticated refusés, service_role seul ─
+do $$
+declare
+  v_sig constant text := 'public.provision_workshop_api(uuid, text)';
+  v_bad text;
+begin
+  -- PUBLIC : aucune entrée `=X/` (grant PUBLIC) dans proacl
+  select p.proacl::text into v_bad
+  from pg_proc p join pg_namespace n on n.oid = p.pronamespace
+  where n.nspname = 'public' and p.proname = 'provision_workshop_api';
+  if v_bad is not null and v_bad ~ '(^|,)=[^/]*/' then
+    raise exception 'T36 FAIL: PUBLIC a EXECUTE sur %  (proacl=%)', v_sig, v_bad;
+  end if;
+  if has_function_privilege('anon', v_sig, 'execute') then
+    raise exception 'T36 FAIL: anon a EXECUTE sur %', v_sig;
+  end if;
+  if has_function_privilege('authenticated', v_sig, 'execute') then
+    raise exception 'T36 FAIL: authenticated a EXECUTE sur %', v_sig;
+  end if;
+  if not has_function_privilege('service_role', v_sig, 'execute') then
+    raise exception 'T36 FAIL: service_role SANS EXECUTE sur %', v_sig;
+  end if;
+  -- app_hidden reste non accessible à anon (déjà couvert T17/T30, re-vérifié ici
+  -- au cas où cette migration l'aurait régressé)
+  if has_schema_privilege('anon', 'app_hidden', 'usage') then
+    raise exception 'T36 FAIL: anon a USAGE sur app_hidden (régression)';
+  end if;
+  if has_function_privilege('anon', 'app_hidden.provision_workshop(uuid, text)', 'execute') then
+    raise exception 'T36 FAIL: anon a EXECUTE sur app_hidden.provision_workshop (régression)';
+  end if;
+  -- security invoker, jamais definer, search_path verrouillé
+  if exists (
+    select 1 from pg_proc p join pg_namespace n on n.oid = p.pronamespace
+    where n.nspname = 'public' and p.proname = 'provision_workshop_api' and p.prosecdef
+  ) then
+    raise exception 'T36 FAIL: provision_workshop_api est SECURITY DEFINER (attendu INVOKER)';
+  end if;
+  if not exists (
+    select 1 from pg_proc p join pg_namespace n on n.oid = p.pronamespace
+    where n.nspname = 'public' and p.proname = 'provision_workshop_api'
+      and p.proconfig is not null and array_to_string(p.proconfig, ',') like '%search_path=%'
+  ) then
+    raise exception 'T36 FAIL: provision_workshop_api sans search_path verrouillé';
+  end if;
+  raise notice 'T36 OK — provision_workshop_api : PUBLIC/anon/authenticated refusés, service_role seul, INVOKER, search_path verrouillé';
+end;
+$$;
+
+-- ── T37 — provision_workshop_api : idempotent, aucun doublon, 0 divergence ─
+do $$
+declare
+  v_owner constant uuid := '55555555-5555-5555-5555-555555555555';
+  v_ws1 public.workshops; v_ws2 public.workshops;
+  v_n_workshops int; v_n_owner_rows int;
+begin
+  insert into auth.users (id, phone) values (v_owner, '+221770000005');
+
+  set local role service_role;
+  select * into v_ws1 from public.provision_workshop_api(v_owner, 'Atelier Idempotent');
+  select * into v_ws2 from public.provision_workshop_api(v_owner, 'Atelier Idempotent (rejoué)');
+  reset role;
+
+  if v_ws1.id <> v_ws2.id then
+    raise exception 'T37 FAIL: deux appels identiques ont produit deux ateliers (% <> %)', v_ws1.id, v_ws2.id;
+  end if;
+
+  select count(*) into v_n_workshops from public.workshops where owner_id = v_owner;
+  if v_n_workshops <> 1 then
+    raise exception 'T37 FAIL: % atelier(s) pour un seul owner (attendu 1, aucun doublon)', v_n_workshops;
+  end if;
+
+  select count(*) into v_n_owner_rows
+  from public.workshop_members
+  where workshop_id = v_ws1.id and role = 'owner';
+  if v_n_owner_rows <> 1 then
+    raise exception 'T37 FAIL: % ligne(s) workshop_members(owner) pour l''atelier (attendu 1 — divergence owner_id/membre)', v_n_owner_rows;
+  end if;
+  if v_ws1.owner_id <> v_owner then
+    raise exception 'T37 FAIL: workshops.owner_id (%) <> owner attendu (%)', v_ws1.owner_id, v_owner;
+  end if;
+
+  raise notice 'T37 OK — provision_workshop_api idempotent (même atelier, 0 doublon, 0 divergence owner_id/workshop_members)';
+end;
+$$;
+
+-- ── T38 — p_name NULL/vide + AUCUN atelier existant → erreur WSN01 ──────────
+-- (passe corrective : jamais de nom inventé automatiquement)
+do $$
+declare
+  v_owner constant uuid := '66666666-6666-6666-6666-666666666666';
+  v_n int;
+begin
+  insert into auth.users (id, phone) values (v_owner, '+221770000006');
+  set local role service_role;
+
+  begin
+    perform public.provision_workshop_api(v_owner, null);
+    raise exception 'T38 FAIL: p_name NULL sans atelier existant accepté (aurait dû échouer)';
+  exception
+    when sqlstate 'WSN01' then null;
+    when others then raise exception 'T38 FAIL: p_name NULL → % (attendu SQLSTATE WSN01)', sqlstate;
+  end;
+
+  begin
+    perform public.provision_workshop_api(v_owner, '   ');
+    raise exception 'T38 FAIL: p_name blanc sans atelier existant accepté (aurait dû échouer)';
+  exception
+    when sqlstate 'WSN01' then null;
+    when others then raise exception 'T38 FAIL: p_name blanc → % (attendu SQLSTATE WSN01)', sqlstate;
+  end;
+
+  reset role;
+  select count(*) into v_n from public.workshops where owner_id = v_owner;
+  if v_n <> 0 then
+    raise exception 'T38 FAIL: % atelier(s) créé(s) malgré le refus (attendu 0)', v_n;
+  end if;
+  raise notice 'T38 OK — p_name NULL/vide sans atelier existant → WSN01, aucun atelier créé (jamais de nom inventé)';
+end;
+$$;
+
+-- ── T39 — atelier déjà existant : p_name est IGNORÉ (NULL ou différent) ─────
+do $$
+declare
+  v_owner constant uuid := '77777777-7777-7777-7777-777777777777';
+  v_ws1 public.workshops; v_ws2 public.workshops; v_ws3 public.workshops;
+  v_n int;
+begin
+  insert into auth.users (id, phone) values (v_owner, '+221770000007');
+  set local role service_role;
+
+  select * into v_ws1 from public.provision_workshop_api(v_owner, 'Atelier Réel');
+  -- Sonde post-connexion : p_name NULL doit retrouver l'atelier existant, PAS échouer.
+  select * into v_ws2 from public.provision_workshop_api(v_owner, null);
+  -- Un nom différent envoyé par erreur ne doit jamais créer un second atelier
+  -- ni renommer le premier.
+  select * into v_ws3 from public.provision_workshop_api(v_owner, 'Nom Différent Ignoré');
+
+  reset role;
+
+  if v_ws2.id <> v_ws1.id or v_ws3.id <> v_ws1.id then
+    raise exception 'T39 FAIL: sonde p_name NULL ou nom différent a produit un atelier distinct';
+  end if;
+  if v_ws2.name <> 'Atelier Réel' or v_ws3.name <> 'Atelier Réel' then
+    raise exception 'T39 FAIL: le nom de l''atelier existant a été modifié ("%"/"%")', v_ws2.name, v_ws3.name;
+  end if;
+  select count(*) into v_n from public.workshops where owner_id = v_owner;
+  if v_n <> 1 then
+    raise exception 'T39 FAIL: % atelier(s) pour cet owner (attendu 1)', v_n;
+  end if;
+  raise notice 'T39 OK — atelier existant retourné tel quel, p_name (NULL ou différent) toujours ignoré, 0 doublon';
+end;
+$$;
+
+do $$ begin raise notice '════════  SCHÉMA PHASE 2 + WRAPPER PHASE 3A : 39 groupes de tests OK  ════════'; end; $$;
 
 rollback;
