@@ -1,7 +1,8 @@
 import { useState } from "react";
 import { Navigate, useNavigate, useParams } from "react-router-dom";
 import { motion } from "framer-motion";
-import { useStore } from "../lib/store";
+import { useModele } from "../repositories/hooks";
+import { useRepositories } from "../repositories/RepositoryProvider";
 import PageHeader from "../components/ui/PageHeader";
 import FabricPhotos from "../components/ui/FabricPhotos";
 import ConfirmDialog from "../components/ui/ConfirmDialog";
@@ -10,21 +11,16 @@ import { haptic } from "../lib/haptics";
 
 export default function ModeleDetail() {
   const { id } = useParams();
-  const modeles = useStore((s) => s.modeles);
-  const addModelePhoto = useStore((s) => s.addModelePhoto);
-  const removeModelePhoto = useStore((s) => s.removeModelePhoto);
-  const addModelePatronPhoto = useStore((s) => s.addModelePatronPhoto);
-  const removeModelePatronPhoto = useStore((s) => s.removeModelePatronPhoto);
-  const removeModele = useStore((s) => s.removeModele);
+  const { media: mediaRepository, modeles: modeleRepository } = useRepositories();
   const navigate = useNavigate();
   const [confirmDeleteOpen, setConfirmDeleteOpen] = useState(false);
 
-  const modele = modeles.find((m) => m.id === id);
+  const modele = useModele(id ?? "");
   if (!modele) return <Navigate to="/catalogue" replace />;
 
   function handleDelete() {
     haptic(16);
-    removeModele(modele!.id);
+    modeleRepository.remove(modele!.id);
     navigate("/catalogue", { replace: true });
   }
 
@@ -68,8 +64,8 @@ export default function ModeleDetail() {
             <p className="mb-2 text-[13px] font-bold text-ink-soft">Photos du modèle</p>
             <FabricPhotos
               photos={modele.photos}
-              onAdd={(dataUrl) => addModelePhoto(modele.id, dataUrl)}
-              onRemove={(photoId) => removeModelePhoto(modele.id, photoId)}
+              onAdd={(dataUrl) => mediaRepository.addModelePhoto(modele.id, dataUrl)}
+              onRemove={(photoId) => mediaRepository.removeModelePhoto(modele.id, photoId)}
             />
           </div>
 
@@ -77,8 +73,8 @@ export default function ModeleDetail() {
             <p className="mb-2 text-[13px] font-bold text-ink-soft">Patron de coupe</p>
             <FabricPhotos
               photos={modele.patronPhotos}
-              onAdd={(dataUrl) => addModelePatronPhoto(modele.id, dataUrl)}
-              onRemove={(photoId) => removeModelePatronPhoto(modele.id, photoId)}
+              onAdd={(dataUrl) => mediaRepository.addModelePatronPhoto(modele.id, dataUrl)}
+              onRemove={(photoId) => mediaRepository.removeModelePatronPhoto(modele.id, photoId)}
             />
           </div>
         </div>

@@ -1,7 +1,7 @@
 import { useNavigate } from "react-router-dom";
 import { motion } from "framer-motion";
 import type { Fiche } from "../../lib/types";
-import { useStore } from "../../lib/store";
+import { useClient } from "../../repositories/hooks";
 import Avatar from "./Avatar";
 import StatusPill from "./StatusPill";
 import SwipeRow from "./SwipeRow";
@@ -19,7 +19,9 @@ export default function OrderRow({
   swipeHint?: boolean;
 }) {
   const navigate = useNavigate();
-  const client = useStore((s) => (fiche.clientId ? s.getClient(fiche.clientId) : undefined));
+  // `useClient` ne peut pas être appelé conditionnellement (règle des Hooks) —
+  // une chaîne vide ne correspond à aucun id, comportement identique à avant.
+  const client = useClient(fiche.clientId ?? "");
   const name = [fiche.prenom, fiche.nom].filter(Boolean).join(" ") || client?.name || "Sans nom";
   const phone = fiche.telephone || client?.phone || "";
 

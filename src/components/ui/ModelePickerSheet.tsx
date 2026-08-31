@@ -1,7 +1,7 @@
 import { createPortal } from "react-dom";
 import { Link } from "react-router-dom";
 import { motion } from "framer-motion";
-import { useStore } from "../../lib/store";
+import { useModeles } from "../../repositories/hooks";
 import ModeleGrid from "./ModeleGrid";
 import { IconScissors } from "../../lib/icons";
 import { haptic } from "../../lib/haptics";
@@ -13,7 +13,7 @@ import type { Modele } from "../../lib/types";
  * one tap, and closes. No typing, no intermediate confirmation screen.
  */
 export default function ModelePickerSheet({ onSelect, onClose }: { onSelect: (modele: Modele) => void; onClose: () => void }) {
-  const modeles = useStore((s) => s.modeles).filter((m) => m.photos.length > 0 || m.patronPhotos.length > 0);
+  const modeles = useModeles().filter((m) => m.photos.length > 0 || m.patronPhotos.length > 0);
 
   return createPortal(
     <div className="fixed inset-0 z-[70] flex items-end justify-center lg:items-center">

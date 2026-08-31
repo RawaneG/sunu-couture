@@ -56,8 +56,12 @@
 > 5/9). `sync_conflicts` et les 4 tables d'abonnement restent **entièrement
 > fermées** (Phase 12 / Phase 14). `fiches.version` : aucun mécanisme
 > d'incrémentation n'existe encore (vérifié — seul `trg_fiches_updated_at`
-> touche `fiches`, et uniquement `updated_at`) — **prérequis bloquant avant
-> le branchement Repository**, non traité par cette migration.
+> touche `fiches`, et uniquement `updated_at`) — **la Phase 5 locale n'est pas
+> bloquée par ce point** (le Repository local ne touche pas `fiches.version`,
+> ce champ n'existe même pas dans le modèle frontend actuel) ; seuls le
+> Repository Supabase (écritures cloud, Phase 7+) et le moteur de
+> synchronisation (Phase 12, `UPDATE … WHERE version = $base`) restent
+> bloqués tant que ce mécanisme n'existe pas — non traité par cette migration.
 
 ## Contenu
 
@@ -321,9 +325,13 @@ déploiement distant.
     **non implémenté ici**.
   - **`fiches.version` (verrou optimiste)** : aucun trigger ni fonction ne
     l'incrémente aujourd'hui (vérifié — seul `trg_fiches_updated_at` touche
-    `fiches`, uniquement `updated_at`). **Prérequis à traiter avant** que la
-    Phase 5/12 implémente un `UPDATE … WHERE version = $base` — volontairement
-    hors périmètre de la migration Phase 4.
+    `fiches`, uniquement `updated_at`). **La Phase 5 (Repository local
+    uniquement) n'est pas bloquée** — `version` n'existe pas dans le modèle
+    frontend actuel et le Repository local ne touche pas cette colonne.
+    **Prérequis à traiter avant** que le Repository Supabase (écritures
+    cloud) et la Phase 12 (synchronisation) implémentent un
+    `UPDATE … WHERE version = $base` — volontairement hors périmètre de la
+    migration Phase 4.
   - **`client_payments`** : `SELECT`/`INSERT` uniquement — un versement est
     immuable après insertion (aucun `UPDATE`/`DELETE`). Une correction future
     nécessitera un mécanisme explicite de contre-écriture, hors périmètre ici.

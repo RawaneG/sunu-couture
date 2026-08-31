@@ -1,7 +1,8 @@
 import { useState } from "react";
 import { Link, useNavigate, useMatch } from "react-router-dom";
 import { motion } from "framer-motion";
-import { useStore } from "../lib/store";
+import { useClients, useFiches } from "../repositories/hooks";
+import { useRepositories } from "../repositories/RepositoryProvider";
 import PageHeader from "../components/ui/PageHeader";
 import Avatar from "../components/ui/Avatar";
 import Fab from "../components/ui/Fab";
@@ -13,9 +14,9 @@ import { matchesQuery } from "../lib/search";
 import { haptic } from "../lib/haptics";
 
 export default function ClientsList() {
-  const clients = useStore((s) => s.clients);
-  const fiches = useStore((s) => s.fiches);
-  const deleteClients = useStore((s) => s.deleteClients);
+  const clients = useClients();
+  const fiches = useFiches();
+  const { clients: clientRepository } = useRepositories();
   const navigate = useNavigate();
   const activeMatch = useMatch("/clients/:id");
   const [query, setQuery] = useState("");
@@ -50,7 +51,7 @@ export default function ClientsList() {
 
   function handleBulkDelete() {
     haptic(16);
-    deleteClients([...selectedIds]);
+    clientRepository.removeMany([...selectedIds]);
     setSelectedIds(new Set());
     setSelectMode(false);
     setConfirmDeleteOpen(false);

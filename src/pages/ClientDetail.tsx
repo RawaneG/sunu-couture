@@ -1,7 +1,8 @@
 import { useMemo, useState } from "react";
 import { Navigate, useNavigate, useParams } from "react-router-dom";
 import { AnimatePresence, motion } from "framer-motion";
-import { useStore } from "../lib/store";
+import { useClients, useFiches } from "../repositories/hooks";
+import { useRepositories } from "../repositories/RepositoryProvider";
 import PageHeader from "../components/ui/PageHeader";
 import Avatar from "../components/ui/Avatar";
 import OrderRow from "../components/ui/OrderRow";
@@ -13,10 +14,9 @@ import { FICHE_MESURE_KEYS } from "../lib/types";
 export default function ClientDetail() {
   const { id } = useParams();
   const navigate = useNavigate();
-  const clients = useStore((s) => s.clients);
-  const allFiches = useStore((s) => s.fiches);
-  const addFiche = useStore((s) => s.addFiche);
-  const deleteClient = useStore((s) => s.deleteClient);
+  const clients = useClients();
+  const allFiches = useFiches();
+  const { fiches: ficheRepository, clients: clientRepository } = useRepositories();
   const [confirmDeleteOpen, setConfirmDeleteOpen] = useState(false);
 
   const client = clients.find((c) => c.id === id);
@@ -30,7 +30,7 @@ export default function ClientDetail() {
   function handleDelete() {
     if (!client) return;
     haptic(16);
-    deleteClient(client.id);
+    clientRepository.remove(client.id);
     navigate("/clients", { replace: true });
   }
 
@@ -41,7 +41,7 @@ export default function ClientDetail() {
       ? Object.fromEntries(FICHE_MESURE_KEYS.map((key) => [key, lastFiche.champs[key].valeur]))
       : undefined;
     const [prenom, ...rest] = client!.name.trim().split(/\s+/);
-    const newId = addFiche({
+    const newId = ficheRepository.add({
       clientId: client!.id,
       prenom: prenom ?? "",
       nom: rest.join(" "),

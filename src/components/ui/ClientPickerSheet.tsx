@@ -1,7 +1,8 @@
 import { useState } from "react";
 import { createPortal } from "react-dom";
 import { motion, useDragControls } from "framer-motion";
-import { useStore } from "../../lib/store";
+import { useClients } from "../../repositories/hooks";
+import { useRepositories } from "../../repositories/RepositoryProvider";
 import { matchesQuery } from "../../lib/search";
 import Avatar from "./Avatar";
 import ClientFields from "./ClientFields";
@@ -17,8 +18,8 @@ export default function ClientPickerSheet({
   onClose: () => void;
   onSelect: (clientId: string) => void;
 }) {
-  const clients = useStore((s) => s.clients);
-  const addClient = useStore((s) => s.addClient);
+  const clients = useClients();
+  const { clients: clientRepository } = useRepositories();
   const dragControls = useDragControls();
 
   const [query, setQuery] = useState("");
@@ -49,7 +50,7 @@ export default function ClientPickerSheet({
 
   function handleCreate() {
     if (!newName.trim()) return;
-    const id = addClient({ name: newName, phone: newPhone, photo: newPhoto });
+    const id = clientRepository.add({ name: newName, phone: newPhone, photo: newPhoto });
     handleSelect(id);
   }
 
