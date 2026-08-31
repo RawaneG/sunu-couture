@@ -1,0 +1,28 @@
+-- grant_provision_workshop_service_role_select (Phase 3B — correctif ciblé)
+--
+-- CONSTAT (validé en lecture seule sur sunu-couture-dev, Phase 3B.1) :
+-- `public.provision_workshop_api(uuid,text)` est SECURITY INVOKER — elle
+-- s'exécute avec les privilèges de l'APPELANT (`service_role`, via l'Edge
+-- Function), jamais avec ceux d'un propriétaire de fonction. Son corps lit
+-- directement `public.workshops` (`select * from public.workshops where
+-- owner_id = p_owner ...`) pour l'idempotence — c'est la SEULE opération sur
+-- une table exécutée directement sous cette identité. Elle n'écrit jamais
+-- directement dans une table : la création délègue à
+-- `app_hidden.provision_workshop()`, qui est SECURITY DEFINER (s'exécute
+-- avec les privilèges de SON propriétaire, pas de service_role) et possède
+-- déjà `EXECUTE` accordé à `service_role` depuis la Phase 2.
+--
+-- Sur le projet distant `sunu-couture-dev`, `service_role` n'a jamais reçu
+-- de privilège `SELECT/INSERT/UPDATE/DELETE` sur les tables `public.*` (seuls
+-- `REFERENCES/TRIGGER/TRUNCATE` proviennent du modèle par défaut de la
+-- plateforme) — un manque resté invisible tant qu'aucune fonction
+-- SECURITY INVOKER n'avait besoin d'un accès direct à une table (toutes les
+-- fonctions métier de la Phase 2 sont SECURITY DEFINER). `provision_workshop_api`
+-- est la première à l'exposer.
+--
+-- PRINCIPE DU MOINDRE PRIVILÈGE : cette migration accorde UNIQUEMENT
+-- `SELECT` sur `public.workshops` à `service_role` — rien de plus. Aucun
+-- GRANT global (`ALL TABLES`), aucun `ALTER DEFAULT PRIVILEGES`, aucun
+-- INSERT/UPDATE/DELETE, aucune autre table, aucun changement pour
+-- `anon`/`authenticated`.
+grant select on table public.workshops to service_role;

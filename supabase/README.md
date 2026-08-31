@@ -38,6 +38,27 @@
 > distant) — elles ne seront **ni recréées ni renommées**. Toute **future**
 > migration devra être créée avec `npx supabase migration new <nom>`.
 
+> **Statut Phase 4 (`20260830231638_grants_and_rls_policies.sql`) : validée
+> localement uniquement — PAS ENCORE déployée sur `sunu-couture-dev`.**
+> Livre, dans une seule migration : (1) normalisation déterministe — `REVOKE
+> ALL PRIVILEGES` explicite table par table (jamais `ALL TABLES IN SCHEMA`,
+> jamais `ALTER DEFAULT PRIVILEGES`) pour `anon`/`authenticated` sur les 15
+> tables + 2 vues, faisant converger local et distant vers le même point de
+> départ ; (2) `GRANT` explicites minimaux pour `authenticated` uniquement,
+> table par table et colonne par colonne où l'immutabilité du tenant/des
+> identifiants l'exige ; (3) 27 politiques RLS séparées par opération,
+> `to authenticated`, isolation via `app_hidden.current_workshop_ids()` (sauf
+> `workshop_members`, non récursive — corr. E). Aucun privilège `anon`, aucun
+> changement de privilège `service_role`, aucune nouvelle fonction/trigger.
+> `fiches` et `carnets` : aucun `INSERT` direct (seule porte :
+> `create_fiche_from_draft`) — un wrapper `public` `SECURITY INVOKER` ou une
+> Edge Function reste à construire avant le branchement Repository (Phase
+> 5/9). `sync_conflicts` et les 4 tables d'abonnement restent **entièrement
+> fermées** (Phase 12 / Phase 14). `fiches.version` : aucun mécanisme
+> d'incrémentation n'existe encore (vérifié — seul `trg_fiches_updated_at`
+> touche `fiches`, et uniquement `updated_at`) — **prérequis bloquant avant
+> le branchement Repository**, non traité par cette migration.
+
 ## Contenu
 
 ```
@@ -46,7 +67,7 @@ supabase/
                                       #   [db.seed].enabled = false ; [api].schemas = public, graphql_public
   seeds/
     draft_subscription_plans.sql       # BROUILLON is_active=false — NON câblé dans config.toml
-  migrations/                          # format horodaté, 9 fichiers
+  migrations/                          # format horodaté, 11 fichiers (Phase 2 : 9 ; Phase 3B : 2 ; Phase 4 : 1)
     20260829120000_enable_extensions_and_enums.sql     pgcrypto, schéma privé app_hidden, 10 enums
     20260829120100_create_core_schema.sql              15 tables ; UNIQUE(workshop_id,id) + FK composites
     20260829120200_create_subscription_schema.sql      tables abonnement, AUCUN seed
@@ -56,10 +77,13 @@ supabase/
     20260829120600_enable_row_level_security.sql        ENABLE RLS sur les 15 tables (sans politique)
     20260829120700_security_hardening.sql               revoke écritures billing + blanket app_hidden
     20260829120800_secure_rls_auto_enable.sql           REVOKE EXECUTE public.rls_auto_enable() FROM PUBLIC/anon/authenticated ; event trigger ensure_rls NON touché
+    20260830160310_provision_workshop_api.sql           wrapper public SECURITY INVOKER → app_hidden.provision_workshop (Phase 3A)
+    20260830212932_grant_provision_workshop_service_role_select.sql   GRANT SELECT ciblé service_role sur workshops (Phase 3B)
+    20260830231638_grants_and_rls_policies.sql          REVOKE normalisé + GRANT colonne par colonne + 27 politiques RLS (Phase 4)
   migrations_down/                     # <ts>_<nom>.down.sql — rollback manuel (le CLI est forward-only)
   tests/
     00_local_auth_shim.sql             # auth.users + auth.uid() + rôles + default privileges — POSTGRES NU SEULEMENT
-    10_schema_tests.sql                # 35 groupes d'assertions, tx + ROLLBACK
+    10_schema_tests.sql                # 55 groupes d'assertions, tx + ROLLBACK (35 Phase 2 + 5 Phase 3A/3B + 15 Phase 4)
     run.sh / run.ps1                   # orchestrateurs base jetable (voie COMPLÉMENTAIRE)
 ```
 
@@ -272,32 +296,39 @@ test a été corrigé pour accepter les deux issues (`0 ligne` **ou**
 rien sans Phase 4 ») ni la règle métier. Revalidé 35/35 en local avant et après le
 déploiement distant.
 
-## Limites restantes (Phase 2 close ; Phase 3/4 à venir)
+## Limites restantes (Phase 2 close ; Phase 4 validée localement, déploiement distant à venir)
 
 - **Advisor `unused_index` × 22 (INFO)** : artefact d'une base fraîchement migrée sans
   trafic (`idx_scan = 0` partout), confirmé identique en local et en distant. Les
   index sont tous soit couvre-FK (T20), soit servent une requête
   métier (recherche client, retraits du jour…). **Aucune suppression d'index.**
-- **Advisor `rls_enabled_no_policy` × 15 (INFO)** : voulu — GRANT + politiques
-  arrivent en Phase 4 ; sans eux = deny-by-default (T16, confirmé en distant avec
-  un refus au niveau `GRANT`, encore plus strict que prévu).
+- **Advisor `rls_enabled_no_policy` × 15 (INFO)** — **résolu par la Phase 4** :
+  chaque table métier porte désormais au moins une politique (ou reste
+  délibérément fermée sans policy pour `sync_conflicts`/abonnement).
 - **Frontière `service_role`** (corr. Q) : contrôle JWT + appartenance/rôle **à
   implémenter dans les Edge Functions** (Phase 3) — exigence bloquante, non vérifiable
-  au niveau schéma.
-- **Phase 4 — non incluse ici, à livrer dans une seule et même migration** : RLS et
-  GRANT sont **deux couches distinctes** — sans `GRANT`, une politique RLS ne suffit
-  **pas** à rendre une table accessible par la Data API (PostgREST vérifie le
-  privilège SQL *avant* d'évaluer les politiques). Cette migration ajoutera :
-  - les **`GRANT` explicites minimaux** pour `authenticated` (par table, par
-    opération) ;
-  - **aucun accès métier pour `anon`** (pas de `GRANT` sur les tables applicatives) ;
-  - les **politiques RLS** correspondant à ces GRANT (`workshop_members` non
-    récursive, `UPDATE` avec `USING` **et** `WITH CHECK`, Storage) ;
-  - des **droits différenciés `owner` / `assistant`** (ex. suppression d'atelier,
-    gestion des membres réservées à `owner`) ;
-  - les **droits sur les séquences** nécessaires aux colonnes qui en utilisent
-    (`GRANT USAGE, SELECT` — les tables actuelles utilisent `uuid`/`gen_random_uuid()`,
-    aucune séquence connue à ce jour, à confirmer au moment de la Phase 4).
+  au niveau schéma. Toujours valable, inchangé par la Phase 4.
+- **Phase 4 — livrée localement (`20260830231638_grants_and_rls_policies.sql`),
+  pas encore poussée sur `sunu-couture-dev`** : voir le bandeau de statut en tête
+  de fichier pour le détail exact (GRANT, colonnes, 27 politiques).
+  - **Manque fonctionnel identifié, non comblé par cette migration** : ni
+    `fiches` ni `carnets` n'ont de voie d'écriture directe pour `authenticated`
+    (par conception — seule porte : `create_fiche_from_draft`, `SECURITY
+    DEFINER`, `service_role`). Le futur branchement Repository (Phase 5/9)
+    nécessitera un wrapper `public` `SECURITY INVOKER` (patron
+    `provision_workshop_api`) ou une Edge Function dédiée, vérifiant
+    l'appartenance/le rôle avant de déléguer à `create_fiche_from_draft` —
+    **non implémenté ici**.
+  - **`fiches.version` (verrou optimiste)** : aucun trigger ni fonction ne
+    l'incrémente aujourd'hui (vérifié — seul `trg_fiches_updated_at` touche
+    `fiches`, uniquement `updated_at`). **Prérequis à traiter avant** que la
+    Phase 5/12 implémente un `UPDATE … WHERE version = $base` — volontairement
+    hors périmètre de la migration Phase 4.
+  - **`client_payments`** : `SELECT`/`INSERT` uniquement — un versement est
+    immuable après insertion (aucun `UPDATE`/`DELETE`). Une correction future
+    nécessitera un mécanisme explicite de contre-écriture, hors périmètre ici.
+  - **Séquences** : aucune (confirmé, PK = `uuid`/`gen_random_uuid()`) — rien à
+    accorder.
 - `config.toml` minimal : si `supabase start` réclame une clé, faire `supabase init`
   dans un dossier temporaire et recopier son `config.toml` (puis remettre
   `project_id`, `major_version = 17`, `[db.seed].enabled = false`, `[api].schemas`).

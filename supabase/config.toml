@@ -31,13 +31,50 @@ schemas = ["public", "graphql_public"]   # app_hidden N'EST PAS exposé par l'AP
 [auth]
 enable_signup = true
 
-# Cible pilote : téléphone + OTP (décision D5). Activé côté Dashboard en Phase 3.
+# Cible pilote : téléphone + OTP (décision D5). Fournisseur SMS réel = Phase 3B+
+# (Dashboard, hors périmètre local). Aucun fournisseur SMS configuré/acheté ici.
 [auth.sms]
 enable_signup = true
 enable_confirmations = true
+
+# Numéro de TEST fixe (jamais un vrai numéro de tailleur) pour valider le
+# parcours OTP complet en local SANS fournisseur SMS réel — fonctionnalité
+# native Supabase Auth pour le développement, PAS un contournement de sécurité
+# (à retirer avant tout déploiement distant — cf. supabase/README.md « Phase 3A »).
+[auth.sms.test_otp]
+"221770000099" = "123456"
+
+# Stub INERTE requis par GoTrue pour activer le code path "phone auth" du tout
+# (sinon `phone_provider_disabled`, testé) — AUCUN compte Twilio, AUCUNE
+# credential réelle, AUCUN SMS n'est jamais envoyé : seul le numéro de test
+# ci-dessus fonctionne (`test_otp` court-circuite l'envoi réel). Ce n'est PAS
+# le fournisseur SMS réel de la Phase 3B — celui-ci restera à configurer côté
+# Dashboard, hors dépôt, avec de vraies credentials jamais commitées.
+[auth.sms.twilio]
+enabled = true
+account_sid = "AC00000000000000000000000000000000"
+message_service_sid = "MG00000000000000000000000000000000"
+auth_token = "dummy-inert-value-never-used-test_otp-bypasses-sending"
 
 [storage]
 enabled = true                           # buckets privés créés en Phase 8
 
 [edge_runtime]
 enabled = true
+
+[functions.provision-workshop]
+enabled = true
+# Intentionnel (pas un affaiblissement) : la vérification du JWT appelant est
+# faite explicitement DANS le code de la fonction via `auth.getClaims()`
+# (vérification cryptographique réelle), pas déléguée à la passerelle Kong —
+# cela évite une double couche de vérification aux réponses d'erreur
+# incohérentes (testé : la porte Kong renvoie un corps non personnalisable).
+# Voir supabase/functions/provision-workshop/index.ts et supabase/README.md.
+verify_jwt = false
+import_map = "./functions/provision-workshop/deno.json"
+# Uncomment to specify a custom file path to the entrypoint.
+# Supported file extensions are: .ts, .js, .mjs, .jsx, .tsx
+entrypoint = "./functions/provision-workshop/index.ts"
+# Specifies static files to be bundled with the function. Supports glob patterns.
+# For example, if you want to serve static HTML pages in your function:
+# static_files = [ "./functions/provision-workshop/*.html" ]

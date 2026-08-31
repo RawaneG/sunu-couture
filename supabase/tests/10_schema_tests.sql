@@ -855,6 +855,745 @@ begin
 end;
 $$;
 
-do $$ begin raise notice '════════  SCHÉMA PHASE 2 (candidate) : 35 groupes de tests OK  ════════'; end; $$;
+-- ══════════════════════════════════════════════════════════════════════════
+-- Phase 3A — wrapper PostgREST `public.provision_workshop_api` (migration
+-- 20260830…_provision_workshop_api.sql). `app_hidden` n'étant pas dans
+-- [api].schemas, ce wrapper SECURITY INVOKER est la SEULE porte PostgREST
+-- vers app_hidden.provision_workshop(). p_owner doit provenir exclusivement
+-- de l'Edge Function (JWT vérifié), jamais du JSON client.
+-- ══════════════════════════════════════════════════════════════════════════
+
+-- ── T36 — privilèges : PUBLIC/anon/authenticated refusés, service_role seul ─
+do $$
+declare
+  v_sig constant text := 'public.provision_workshop_api(uuid, text)';
+  v_bad text;
+begin
+  -- PUBLIC : aucune entrée `=X/` (grant PUBLIC) dans proacl
+  select p.proacl::text into v_bad
+  from pg_proc p join pg_namespace n on n.oid = p.pronamespace
+  where n.nspname = 'public' and p.proname = 'provision_workshop_api';
+  if v_bad is not null and v_bad ~ '(^|,)=[^/]*/' then
+    raise exception 'T36 FAIL: PUBLIC a EXECUTE sur %  (proacl=%)', v_sig, v_bad;
+  end if;
+  if has_function_privilege('anon', v_sig, 'execute') then
+    raise exception 'T36 FAIL: anon a EXECUTE sur %', v_sig;
+  end if;
+  if has_function_privilege('authenticated', v_sig, 'execute') then
+    raise exception 'T36 FAIL: authenticated a EXECUTE sur %', v_sig;
+  end if;
+  if not has_function_privilege('service_role', v_sig, 'execute') then
+    raise exception 'T36 FAIL: service_role SANS EXECUTE sur %', v_sig;
+  end if;
+  -- app_hidden reste non accessible à anon (déjà couvert T17/T30, re-vérifié ici
+  -- au cas où cette migration l'aurait régressé)
+  if has_schema_privilege('anon', 'app_hidden', 'usage') then
+    raise exception 'T36 FAIL: anon a USAGE sur app_hidden (régression)';
+  end if;
+  if has_function_privilege('anon', 'app_hidden.provision_workshop(uuid, text)', 'execute') then
+    raise exception 'T36 FAIL: anon a EXECUTE sur app_hidden.provision_workshop (régression)';
+  end if;
+  -- security invoker, jamais definer, search_path verrouillé
+  if exists (
+    select 1 from pg_proc p join pg_namespace n on n.oid = p.pronamespace
+    where n.nspname = 'public' and p.proname = 'provision_workshop_api' and p.prosecdef
+  ) then
+    raise exception 'T36 FAIL: provision_workshop_api est SECURITY DEFINER (attendu INVOKER)';
+  end if;
+  if not exists (
+    select 1 from pg_proc p join pg_namespace n on n.oid = p.pronamespace
+    where n.nspname = 'public' and p.proname = 'provision_workshop_api'
+      and p.proconfig is not null and array_to_string(p.proconfig, ',') like '%search_path=%'
+  ) then
+    raise exception 'T36 FAIL: provision_workshop_api sans search_path verrouillé';
+  end if;
+  raise notice 'T36 OK — provision_workshop_api : PUBLIC/anon/authenticated refusés, service_role seul, INVOKER, search_path verrouillé';
+end;
+$$;
+
+-- ── T37 — provision_workshop_api : idempotent, aucun doublon, 0 divergence ─
+do $$
+declare
+  v_owner constant uuid := '55555555-5555-5555-5555-555555555555';
+  v_ws1 public.workshops; v_ws2 public.workshops;
+  v_n_workshops int; v_n_owner_rows int;
+begin
+  insert into auth.users (id, phone) values (v_owner, '+221770000005');
+
+  set local role service_role;
+  select * into v_ws1 from public.provision_workshop_api(v_owner, 'Atelier Idempotent');
+  select * into v_ws2 from public.provision_workshop_api(v_owner, 'Atelier Idempotent (rejoué)');
+  reset role;
+
+  if v_ws1.id <> v_ws2.id then
+    raise exception 'T37 FAIL: deux appels identiques ont produit deux ateliers (% <> %)', v_ws1.id, v_ws2.id;
+  end if;
+
+  select count(*) into v_n_workshops from public.workshops where owner_id = v_owner;
+  if v_n_workshops <> 1 then
+    raise exception 'T37 FAIL: % atelier(s) pour un seul owner (attendu 1, aucun doublon)', v_n_workshops;
+  end if;
+
+  select count(*) into v_n_owner_rows
+  from public.workshop_members
+  where workshop_id = v_ws1.id and role = 'owner';
+  if v_n_owner_rows <> 1 then
+    raise exception 'T37 FAIL: % ligne(s) workshop_members(owner) pour l''atelier (attendu 1 — divergence owner_id/membre)', v_n_owner_rows;
+  end if;
+  if v_ws1.owner_id <> v_owner then
+    raise exception 'T37 FAIL: workshops.owner_id (%) <> owner attendu (%)', v_ws1.owner_id, v_owner;
+  end if;
+
+  raise notice 'T37 OK — provision_workshop_api idempotent (même atelier, 0 doublon, 0 divergence owner_id/workshop_members)';
+end;
+$$;
+
+-- ── T38 — p_name NULL/vide + AUCUN atelier existant → erreur WSN01 ──────────
+-- (passe corrective : jamais de nom inventé automatiquement)
+do $$
+declare
+  v_owner constant uuid := '66666666-6666-6666-6666-666666666666';
+  v_n int;
+begin
+  insert into auth.users (id, phone) values (v_owner, '+221770000006');
+  set local role service_role;
+
+  begin
+    perform public.provision_workshop_api(v_owner, null);
+    raise exception 'T38 FAIL: p_name NULL sans atelier existant accepté (aurait dû échouer)';
+  exception
+    when sqlstate 'WSN01' then null;
+    when others then raise exception 'T38 FAIL: p_name NULL → % (attendu SQLSTATE WSN01)', sqlstate;
+  end;
+
+  begin
+    perform public.provision_workshop_api(v_owner, '   ');
+    raise exception 'T38 FAIL: p_name blanc sans atelier existant accepté (aurait dû échouer)';
+  exception
+    when sqlstate 'WSN01' then null;
+    when others then raise exception 'T38 FAIL: p_name blanc → % (attendu SQLSTATE WSN01)', sqlstate;
+  end;
+
+  reset role;
+  select count(*) into v_n from public.workshops where owner_id = v_owner;
+  if v_n <> 0 then
+    raise exception 'T38 FAIL: % atelier(s) créé(s) malgré le refus (attendu 0)', v_n;
+  end if;
+  raise notice 'T38 OK — p_name NULL/vide sans atelier existant → WSN01, aucun atelier créé (jamais de nom inventé)';
+end;
+$$;
+
+-- ── T39 — atelier déjà existant : p_name est IGNORÉ (NULL ou différent) ─────
+do $$
+declare
+  v_owner constant uuid := '77777777-7777-7777-7777-777777777777';
+  v_ws1 public.workshops; v_ws2 public.workshops; v_ws3 public.workshops;
+  v_n int;
+begin
+  insert into auth.users (id, phone) values (v_owner, '+221770000007');
+  set local role service_role;
+
+  select * into v_ws1 from public.provision_workshop_api(v_owner, 'Atelier Réel');
+  -- Sonde post-connexion : p_name NULL doit retrouver l'atelier existant, PAS échouer.
+  select * into v_ws2 from public.provision_workshop_api(v_owner, null);
+  -- Un nom différent envoyé par erreur ne doit jamais créer un second atelier
+  -- ni renommer le premier.
+  select * into v_ws3 from public.provision_workshop_api(v_owner, 'Nom Différent Ignoré');
+
+  reset role;
+
+  if v_ws2.id <> v_ws1.id or v_ws3.id <> v_ws1.id then
+    raise exception 'T39 FAIL: sonde p_name NULL ou nom différent a produit un atelier distinct';
+  end if;
+  if v_ws2.name <> 'Atelier Réel' or v_ws3.name <> 'Atelier Réel' then
+    raise exception 'T39 FAIL: le nom de l''atelier existant a été modifié ("%"/"%")', v_ws2.name, v_ws3.name;
+  end if;
+  select count(*) into v_n from public.workshops where owner_id = v_owner;
+  if v_n <> 1 then
+    raise exception 'T39 FAIL: % atelier(s) pour cet owner (attendu 1)', v_n;
+  end if;
+  raise notice 'T39 OK — atelier existant retourné tel quel, p_name (NULL ou différent) toujours ignoré, 0 doublon';
+end;
+$$;
+
+-- ── T40 — GRANT ciblé (moindre privilège) : service_role + non-régression ──
+-- Vérifie le correctif `20260830212932_grant_provision_workshop_service_role_
+-- select.sql`.
+--
+-- LIMITE ASSUMÉE (locale), CONSTATÉE ET NON SUPPOSÉE : une vérification directe
+-- (`information_schema.role_table_grants`) montre que l'image Docker Supabase
+-- locale accorde par défaut, à `anon`/`authenticated`/`service_role` À LA
+-- FOIS, le jeu complet DELETE/INSERT/REFERENCES/SELECT/TRIGGER/TRUNCATE/UPDATE
+-- sur `public.workshops` — INDÉPENDAMMENT de toute migration (c'est déjà le
+-- cas avant même que ce correctif n'existe). C'est précisément la raison pour
+-- laquelle `security_hardening.sql` (Phase 2) doit explicitement RÉVOQUER des
+-- privilèges sur `subscription_plans`/`subscriptions`/etc. pour anon/authenticated
+-- — sans quoi ils les auraient aussi par défaut en local. Sur le projet
+-- distant, ce bootstrap large n'existe pas : seuls TRUNCATE/REFERENCES/TRIGGER
+-- sont accordés par défaut à ces trois rôles (vérifié en Phase 3B.1).
+--
+-- CONSÉQUENCE : ce test ne peut PAS vérifier ici l'absence de SELECT pour
+-- anon/authenticated sur public.workshops (elle serait localement fausse pour
+-- une raison sans rapport avec ce correctif), ni que service_role n'a QUE
+-- SELECT et rien de plus (INSERT/UPDATE/DELETE y sont déjà localement, par le
+-- bootstrap, avant même cette migration). Ces deux points sont vérifiés
+-- séparément, en lecture seule, sur le projet distant (voir rapport Phase 3B)
+-- — jamais affirmés comme démontrés localement. Ce que ce test vérifie
+-- localement, et qui reste discriminant dans les deux environnements, ce sont
+-- les privilèges au niveau FONCTION (jamais élargis par le bootstrap local,
+-- contrairement aux tables) : l'EXECUTE du wrapper reste réservé à service_role.
+do $$
+declare
+  v_sig constant text := 'public.provision_workshop_api(uuid, text)';
+begin
+  if not has_table_privilege('service_role', 'public.workshops', 'select') then
+    raise exception 'T40 FAIL: service_role sans SELECT sur public.workshops (correctif manquant ou régressé)';
+  end if;
+  -- Non-régression : le correctif ne doit pas avoir élargi qui peut EXECUTE
+  -- le wrapper (déjà couvert par T36, revérifié ici après la nouvelle migration).
+  if has_function_privilege('anon', v_sig, 'execute') then
+    raise exception 'T40 FAIL: anon a EXECUTE sur % après le correctif (régression)', v_sig;
+  end if;
+  if has_function_privilege('authenticated', v_sig, 'execute') then
+    raise exception 'T40 FAIL: authenticated a EXECUTE sur % après le correctif (régression)', v_sig;
+  end if;
+  if not has_function_privilege('service_role', v_sig, 'execute') then
+    raise exception 'T40 FAIL: service_role a perdu EXECUTE sur % (régression)', v_sig;
+  end if;
+  raise notice 'T40 OK — service_role a SELECT sur public.workshops, EXECUTE du wrapper inchangé (anon/authenticated toujours refusés)';
+end;
+$$;
+
+-- ── T40b — le correctif ne casse pas l'idempotence du wrapper (T37 rejoué) ──
+do $$
+declare
+  v_owner constant uuid := '88888888-8888-8888-8888-888888888888';
+  v_ws1 public.workshops; v_ws2 public.workshops;
+  v_n int;
+begin
+  insert into auth.users (id, phone) values (v_owner, '+221770000008');
+  set local role service_role;
+  select * into v_ws1 from public.provision_workshop_api(v_owner, 'Atelier T40b');
+  select * into v_ws2 from public.provision_workshop_api(v_owner, null);
+  reset role;
+
+  if v_ws1.id <> v_ws2.id then
+    raise exception 'T40b FAIL: le correctif de privilège a cassé l''idempotence (% <> %)', v_ws1.id, v_ws2.id;
+  end if;
+  select count(*) into v_n from public.workshops where owner_id = v_owner;
+  if v_n <> 1 then
+    raise exception 'T40b FAIL: % atelier(s) pour cet owner après le correctif (attendu 1)', v_n;
+  end if;
+  raise notice 'T40b OK — wrapper toujours idempotent après le correctif de privilège (T37 rejoué)';
+end;
+$$;
+
+-- ═══════════════════════════════════════════════════════════════════════════
+-- PHASE 4 — GRANT + politiques RLS (T41+)
+-- Deux ateliers A/B (chacun owner + assistant), un non-membre, et un
+-- utilisateur DOUBLE-MEMBRE de A et B (pour le test d'immutabilité croisée).
+-- Fixture stockée dans une table temporaire (déposée automatiquement à la fin
+-- de la transaction) pour être réutilisée par les groupes suivants.
+-- ═══════════════════════════════════════════════════════════════════════════
+create temporary table t4x_fixture (key text primary key, value uuid) on commit drop;
+-- Table de service du HARNAIS DE TEST uniquement (temporaire, déposée à la fin
+-- de la transaction) — ce GRANT n'a aucun rapport avec les privilèges de la
+-- migration Phase 4 et ne touche aucune table applicative.
+grant select on t4x_fixture to authenticated, anon;
+
+do $$
+declare
+  v_owner_a    constant uuid := 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa';
+  v_assist_a   constant uuid := 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaab';
+  v_owner_b    constant uuid := 'bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb';
+  v_assist_b   constant uuid := 'bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbba';
+  v_nonmember  constant uuid := 'cccccccc-cccc-cccc-cccc-cccccccccccc';
+  v_dual       constant uuid := 'dddddddd-dddd-dddd-dddd-dddddddddddd';
+  v_ws_a       public.workshops;
+  v_ws_b       public.workshops;
+  v_client_a   public.clients;
+  v_client_b   public.clients;
+  v_fiche_a    public.fiches;
+  v_reminder_a public.reminders;
+begin
+  insert into auth.users (id, phone) values
+    (v_owner_a,   '+221770000101'),
+    (v_assist_a,  '+221770000102'),
+    (v_owner_b,   '+221770000103'),
+    (v_assist_b,  '+221770000104'),
+    (v_nonmember, '+221770000105'),
+    (v_dual,      '+221770000106');
+
+  select * into v_ws_a from app_hidden.provision_workshop(v_owner_a, 'Atelier A (Phase 4)');
+  select * into v_ws_b from app_hidden.provision_workshop(v_owner_b, 'Atelier B (Phase 4)');
+
+  insert into public.workshop_members (workshop_id, user_id, role) values
+    (v_ws_a.id, v_assist_a, 'assistant'),
+    (v_ws_b.id, v_assist_b, 'assistant'),
+    (v_ws_a.id, v_dual,     'assistant'),
+    (v_ws_b.id, v_dual,     'assistant');
+
+  insert into public.clients (workshop_id, display_name) values (v_ws_a.id, 'Cliente Phase4 A') returning * into v_client_a;
+  insert into public.clients (workshop_id, display_name) values (v_ws_b.id, 'Cliente Phase4 B') returning * into v_client_b;
+
+  set local role service_role;
+  select * into v_fiche_a from app_hidden.create_fiche_from_draft(v_ws_a.id, v_client_a.id, jsonb_build_object('garment', 'Robe test Phase 4'));
+  reset role;
+
+  insert into public.reminders (workshop_id, type) values (v_ws_a.id, 'retard') returning * into v_reminder_a;
+
+  insert into t4x_fixture (key, value) values
+    ('owner_a', v_owner_a), ('assist_a', v_assist_a),
+    ('owner_b', v_owner_b), ('assist_b', v_assist_b),
+    ('nonmember', v_nonmember), ('dual', v_dual),
+    ('ws_a', v_ws_a.id), ('ws_b', v_ws_b.id),
+    ('client_a', v_client_a.id), ('client_b', v_client_b.id),
+    ('carnet_a', v_fiche_a.carnet_id), ('fiche_a', v_fiche_a.id),
+    ('reminder_a', v_reminder_a.id);
+
+  raise notice 'T41 fixture OK — 2 ateliers, owner+assistant chacun, 1 non-membre, 1 double-membre';
+end;
+$$;
+
+-- ── T42 — anon : refus au niveau du PRIVILÈGE (42501), pas seulement RLS ───
+do $$
+declare
+  v_tbl text;
+  v_code text;
+  v_ok boolean;
+begin
+  foreach v_tbl in array array[
+    'workshops','workshop_members','carnets','clients','fiches','client_payments',
+    'media_assets','modeles','modele_medias','subscription_plans','subscriptions',
+    'subscription_transactions','promo_codes','sync_conflicts','reminders',
+    'fiches_view','fiche_balances'
+  ] loop
+    v_ok := false;
+    begin
+      set local role anon;
+      execute format('select 1 from public.%I limit 1', v_tbl);
+    exception
+      when insufficient_privilege then v_ok := true;
+    end;
+    reset role;
+    if not v_ok then
+      raise exception 'T42 FAIL: anon a pu lire % sans erreur 42501', v_tbl;
+    end if;
+  end loop;
+  raise notice 'T42 OK — anon reçoit 42501 (privilège manquant, pas juste 0 ligne) sur les 15 tables + 2 vues';
+end;
+$$;
+
+-- ── T43 — authentifié non membre : GRANT présent, RLS filtre à 0 ligne ─────
+-- (jamais insufficient_privilege ici : authenticated a le GRANT, seule la
+-- RLS doit filtrer). Puis relecture privilégiée (postgres) confirmant que
+-- les lignes existent toujours — la RLS masque, elle ne supprime rien.
+do $$
+declare v_cnt int;
+begin
+  set local role authenticated;
+  perform set_config('request.jwt.claim.sub', (select value from t4x_fixture where key = 'nonmember')::text, true);
+
+  select count(*) into v_cnt from public.workshops where id in (select value from t4x_fixture where key in ('ws_a','ws_b'));
+  if v_cnt <> 0 then raise exception 'T43 FAIL: non-membre voit % atelier(s)', v_cnt; end if;
+
+  select count(*) into v_cnt from public.clients where workshop_id in (select value from t4x_fixture where key in ('ws_a','ws_b'));
+  if v_cnt <> 0 then raise exception 'T43 FAIL: non-membre voit % client(s)', v_cnt; end if;
+
+  select count(*) into v_cnt from public.fiches where workshop_id in (select value from t4x_fixture where key in ('ws_a','ws_b'));
+  if v_cnt <> 0 then raise exception 'T43 FAIL: non-membre voit % fiche(s)', v_cnt; end if;
+
+  perform set_config('request.jwt.claim.sub', '', true);
+  reset role;
+
+  -- Relecture privilégiée (rôle postgres, propriétaire des tables) : les
+  -- lignes existent toujours — confirmé, pas juste supposé.
+  select count(*) into v_cnt from public.clients where id = (select value from t4x_fixture where key = 'client_a');
+  if v_cnt <> 1 then raise exception 'T43 FAIL: la cliente A a disparu après le test de non-membre'; end if;
+
+  raise notice 'T43 OK — non-membre : 0 ligne (RLS, pas privilège manquant), données intactes après relecture privilégiée';
+end;
+$$;
+
+-- ── T44 — isolation croisée A/B, paramétrée sur les tables multi-atelier ──
+do $$
+declare
+  v_tbl text;
+  v_cnt int;
+begin
+  set local role authenticated;
+  perform set_config('request.jwt.claim.sub', (select value from t4x_fixture where key = 'owner_a')::text, true);
+  foreach v_tbl in array array['clients','fiches','client_payments','media_assets','modeles','modele_medias','carnets','reminders'] loop
+    execute format(
+      'select count(*) from public.%I where workshop_id = $1', v_tbl
+    ) into v_cnt using (select value from t4x_fixture where key = 'ws_b');
+    if v_cnt <> 0 then raise exception 'T44 FAIL: owner A voit % ligne(s) de B sur %', v_cnt, v_tbl; end if;
+  end loop;
+  perform set_config('request.jwt.claim.sub', '', true);
+  reset role;
+  raise notice 'T44 OK — owner A : 0 ligne de B sur les 8 tables multi-atelier testées';
+end;
+$$;
+
+-- ── T45 — double-membre (A et B) : déplacement de workshop_id → 42501 ─────
+-- Le privilège de colonne (workshop_id absent du GRANT UPDATE) bloque AVANT
+-- même que la RLS soit évaluée — le test vérifie précisément ce point, pas
+-- seulement un refus générique.
+do $$
+declare v_blocked boolean;
+begin
+  set local role authenticated;
+  perform set_config('request.jwt.claim.sub', (select value from t4x_fixture where key = 'dual')::text, true);
+
+  v_blocked := false;
+  begin
+    update public.clients set workshop_id = (select value from t4x_fixture where key = 'ws_b')
+      where id = (select value from t4x_fixture where key = 'client_a');
+  exception when insufficient_privilege then v_blocked := true;
+  end;
+  if not v_blocked then raise exception 'T45 FAIL: clients.workshop_id modifiable malgré la double appartenance'; end if;
+
+  v_blocked := false;
+  begin
+    update public.fiches set workshop_id = (select value from t4x_fixture where key = 'ws_b')
+      where id = (select value from t4x_fixture where key = 'fiche_a');
+  exception when insufficient_privilege then v_blocked := true;
+  end;
+  if not v_blocked then raise exception 'T45 FAIL: fiches.workshop_id modifiable malgré la double appartenance'; end if;
+
+  perform set_config('request.jwt.claim.sub', '', true);
+  reset role;
+
+  -- Relecture privilégiée : la cliente A est toujours dans l'atelier A.
+  if (select workshop_id from public.clients where id = (select value from t4x_fixture where key = 'client_a'))
+     <> (select value from t4x_fixture where key = 'ws_a') then
+    raise exception 'T45 FAIL: client_a a changé d''atelier malgré le refus attendu';
+  end if;
+
+  raise notice 'T45 OK — double-membre A+B : déplacement de workshop_id refusé (42501) sur clients ET fiches, données intactes';
+end;
+$$;
+
+-- ── T46 — aucune insertion directe dans fiches / carnets ──────────────────
+do $$
+declare v_blocked boolean;
+begin
+  set local role authenticated;
+  perform set_config('request.jwt.claim.sub', (select value from t4x_fixture where key = 'owner_a')::text, true);
+
+  v_blocked := false;
+  begin
+    insert into public.fiches (workshop_id, carnet_id, number, page_number, slot_number)
+    values ((select value from t4x_fixture where key = 'ws_a'), (select value from t4x_fixture where key = 'carnet_a'), 999, 250, 3);
+  exception when insufficient_privilege then v_blocked := true;
+  end;
+  if not v_blocked then raise exception 'T46 FAIL: INSERT direct dans fiches accepté'; end if;
+
+  v_blocked := false;
+  begin
+    insert into public.carnets (workshop_id, number) values ((select value from t4x_fixture where key = 'ws_a'), 999);
+  exception when insufficient_privilege then v_blocked := true;
+  end;
+  if not v_blocked then raise exception 'T46 FAIL: INSERT direct dans carnets accepté'; end if;
+
+  perform set_config('request.jwt.claim.sub', '', true);
+  reset role;
+  raise notice 'T46 OK — aucun INSERT direct possible sur fiches/carnets (seule porte : create_fiche_from_draft)';
+end;
+$$;
+
+-- ── T47 — workshop_members : aucune élévation / modification de rôle ──────
+do $$
+declare v_blocked boolean;
+begin
+  -- L'assistant ne peut pas se promouvoir lui-même (aucun GRANT UPDATE du tout).
+  set local role authenticated;
+  perform set_config('request.jwt.claim.sub', (select value from t4x_fixture where key = 'assist_a')::text, true);
+  v_blocked := false;
+  begin
+    update public.workshop_members set role = 'owner'
+      where workshop_id = (select value from t4x_fixture where key = 'ws_a')
+        and user_id = (select value from t4x_fixture where key = 'assist_a');
+  exception when insufficient_privilege then v_blocked := true;
+  end;
+  if not v_blocked then raise exception 'T47 FAIL: assistant a pu modifier son propre rôle'; end if;
+
+  -- L'owner lui-même ne peut pas modifier un rôle par ce chemin (aucun GRANT UPDATE).
+  perform set_config('request.jwt.claim.sub', (select value from t4x_fixture where key = 'owner_a')::text, true);
+  v_blocked := false;
+  begin
+    update public.workshop_members set role = 'owner'
+      where workshop_id = (select value from t4x_fixture where key = 'ws_a')
+        and user_id = (select value from t4x_fixture where key = 'assist_a');
+  exception when insufficient_privilege then v_blocked := true;
+  end;
+  if not v_blocked then raise exception 'T47 FAIL: owner a pu modifier un rôle via UPDATE (aucun GRANT prévu)'; end if;
+
+  perform set_config('request.jwt.claim.sub', '', true);
+  reset role;
+
+  -- Protection trigger existante (indépendante de la RLS) : même en
+  -- contournant la RLS (rôle postgres), la ligne owner officielle reste
+  -- protégée par app_hidden.protect_owner_membership (régression T29a/b).
+  v_blocked := false;
+  begin
+    update public.workshop_members set role = 'assistant'
+      where workshop_id = (select value from t4x_fixture where key = 'ws_a')
+        and user_id = (select value from t4x_fixture where key = 'owner_a');
+  exception when restrict_violation then v_blocked := true;
+  end;
+  if not v_blocked then raise exception 'T47 FAIL: le trigger protect_owner_membership n''a pas bloqué la rétrogradation de l''owner'; end if;
+
+  raise notice 'T47 OK — aucune élévation/modification de rôle par RLS (assistant et owner), protection trigger distincte confirmée';
+end;
+$$;
+
+-- ── T48 — workshops.is_demo non modifiable ; name modifiable par l'owner seul ─
+do $$
+declare v_blocked boolean;
+begin
+  set local role authenticated;
+  perform set_config('request.jwt.claim.sub', (select value from t4x_fixture where key = 'owner_a')::text, true);
+
+  v_blocked := false;
+  begin
+    update public.workshops set is_demo = true where id = (select value from t4x_fixture where key = 'ws_a');
+  exception when insufficient_privilege then v_blocked := true;
+  end;
+  if not v_blocked then raise exception 'T48 FAIL: is_demo modifiable par authenticated'; end if;
+
+  update public.workshops set name = 'Atelier A renommé' where id = (select value from t4x_fixture where key = 'ws_a');
+  if (select name from public.workshops where id = (select value from t4x_fixture where key = 'ws_a')) <> 'Atelier A renommé' then
+    raise exception 'T48 FAIL: owner n''a pas pu renommer son atelier';
+  end if;
+
+  -- L'assistant ne peut pas renommer l'atelier (pas de politique UPDATE pour lui).
+  perform set_config('request.jwt.claim.sub', (select value from t4x_fixture where key = 'assist_a')::text, true);
+  v_blocked := false;
+  begin
+    update public.workshops set name = 'Renommé par assistant' where id = (select value from t4x_fixture where key = 'ws_a');
+    if not found then v_blocked := true; end if;  -- RLS filtre la ligne : 0 ligne affectée
+  exception when insufficient_privilege then v_blocked := true;
+  end;
+  if not v_blocked then raise exception 'T48 FAIL: assistant a pu renommer l''atelier'; end if;
+
+  perform set_config('request.jwt.claim.sub', '', true);
+  reset role;
+  raise notice 'T48 OK — is_demo immuable pour authenticated, name modifiable par l''owner uniquement';
+end;
+$$;
+
+-- ── T49 — client_payments : immuable après insertion (aucun UPDATE/DELETE) ─
+do $$
+declare
+  v_payment_id uuid;
+  v_blocked boolean;
+begin
+  set local role authenticated;
+  perform set_config('request.jwt.claim.sub', (select value from t4x_fixture where key = 'owner_a')::text, true);
+  insert into public.client_payments (workshop_id, fiche_id, amount)
+    values ((select value from t4x_fixture where key = 'ws_a'), (select value from t4x_fixture where key = 'fiche_a'), 5000)
+    returning id into v_payment_id;
+
+  v_blocked := false;
+  begin
+    update public.client_payments set amount = 1 where id = v_payment_id;
+  exception when insufficient_privilege then v_blocked := true;
+  end;
+  if not v_blocked then raise exception 'T49 FAIL: client_payments.amount modifiable après insertion'; end if;
+
+  v_blocked := false;
+  begin
+    delete from public.client_payments where id = v_payment_id;
+  exception when insufficient_privilege then v_blocked := true;
+  end;
+  if not v_blocked then raise exception 'T49 FAIL: client_payments supprimable par authenticated'; end if;
+
+  perform set_config('request.jwt.claim.sub', '', true);
+  reset role;
+  raise notice 'T49 OK — versement immuable après insertion (aucun UPDATE ni DELETE possible)';
+end;
+$$;
+
+-- ── T50 — vues : mêmes limites que les tables sous-jacentes ────────────────
+do $$
+declare v_cnt int;
+begin
+  set local role authenticated;
+  perform set_config('request.jwt.claim.sub', (select value from t4x_fixture where key = 'nonmember')::text, true);
+  select count(*) into v_cnt from public.fiches_view where workshop_id = (select value from t4x_fixture where key = 'ws_a');
+  if v_cnt <> 0 then raise exception 'T50 FAIL: non-membre voit % ligne(s) de fiches_view', v_cnt; end if;
+  select count(*) into v_cnt from public.fiche_balances where workshop_id = (select value from t4x_fixture where key = 'ws_a');
+  if v_cnt <> 0 then raise exception 'T50 FAIL: non-membre voit % ligne(s) de fiche_balances', v_cnt; end if;
+  perform set_config('request.jwt.claim.sub', (select value from t4x_fixture where key = 'owner_a')::text, true);
+  select count(*) into v_cnt from public.fiches_view where workshop_id = (select value from t4x_fixture where key = 'ws_a');
+  if v_cnt <> 1 then raise exception 'T50 FAIL: owner A ne voit pas sa propre fiche via fiches_view (% ligne)', v_cnt; end if;
+  perform set_config('request.jwt.claim.sub', '', true);
+  reset role;
+  raise notice 'T50 OK — fiches_view/fiche_balances respectent exactement les limites de fiches/client_payments';
+end;
+$$;
+
+-- ── T51 — privilèges de colonne exacts (has_column_privilege) ─────────────
+-- Table de vérité (table, colonne, update attendu) — data-driven, sans
+-- fonction auxiliaire (PL/pgSQL ne permet pas de fonction imbriquée dans un
+-- bloc DO ; aucune nouvelle fonction persistante n'est créée).
+do $$
+declare
+  v_row record;
+  v_actual boolean;
+  v_checks constant text[][] := array[
+    ['clients',       'id',           'false'],
+    ['clients',       'workshop_id',  'false'],
+    ['clients',       'created_at',   'false'],
+    ['clients',       'display_name', 'true'],
+    ['fiches',        'workshop_id',  'false'],
+    ['fiches',        'client_id',    'false'],
+    ['fiches',        'version',      'false'],
+    ['fiches',        'carnet_id',    'false'],
+    ['fiches',        'status',       'true'],
+    ['workshops',     'is_demo',      'false'],
+    ['workshops',     'owner_id',     'false'],
+    ['workshops',     'name',         'true'],
+    ['reminders',     'id',           'false'],
+    ['reminders',     'workshop_id',  'false'],
+    ['reminders',     'type',         'false'],
+    ['reminders',     'created_at',   'false'],
+    ['reminders',     'at_time',      'true'],
+    ['reminders',     'enabled',      'true'],
+    ['reminders',     'sound',        'true'],
+    ['carnets',       'next_number',  'false'],
+    ['carnets',       'status',       'true'],
+    ['media_assets',  'fiche_id',     'false'],
+    ['media_assets',  'metadata',     'true'],
+    ['modeles',       'workshop_id',  'false'],
+    ['modeles',       'nom',          'true']
+  ];
+  v_i int;
+begin
+  for v_i in 1 .. array_length(v_checks, 1) loop
+    v_actual := has_column_privilege(
+      'authenticated',
+      format('public.%s', v_checks[v_i][1])::regclass,
+      v_checks[v_i][2],
+      'update'
+    );
+    if v_actual <> (v_checks[v_i][3] = 'true') then
+      raise exception 'T51 FAIL: %.% pour authenticated — attendu update=%, obtenu %',
+        v_checks[v_i][1], v_checks[v_i][2], v_checks[v_i][3], v_actual;
+    end if;
+  end loop;
+  raise notice 'T51 OK — % privilèges de colonne exacts conformes à la matrice', array_length(v_checks, 1);
+end;
+$$;
+
+-- ── T52 — sync_conflicts et les 4 tables d'abonnement : fermées, testées séparément ─
+do $$
+declare v_tbl text;
+begin
+  foreach v_tbl in array array['sync_conflicts','subscription_plans','subscriptions','subscription_transactions','promo_codes'] loop
+    if has_table_privilege('anon', format('public.%s', v_tbl)::regclass, 'select') then
+      raise exception 'T52 FAIL: anon a un privilège sur %', v_tbl;
+    end if;
+    if has_table_privilege('authenticated', format('public.%s', v_tbl)::regclass, 'select')
+       or has_table_privilege('authenticated', format('public.%s', v_tbl)::regclass, 'insert')
+       or has_table_privilege('authenticated', format('public.%s', v_tbl)::regclass, 'update')
+       or has_table_privilege('authenticated', format('public.%s', v_tbl)::regclass, 'delete') then
+      raise exception 'T52 FAIL: authenticated a un privilège sur %', v_tbl;
+    end if;
+    if (select count(*) from pg_policies where schemaname = 'public' and tablename = v_tbl) <> 0 then
+      raise exception 'T52 FAIL: une politique existe sur % (devrait être fermée sans policy)', v_tbl;
+    end if;
+  end loop;
+  raise notice 'T52 OK — sync_conflicts + 4 tables d''abonnement entièrement fermées (aucun GRANT, aucune politique), testées individuellement';
+end;
+$$;
+
+-- ── T53 — aucune politique autoréférente dans pg_policies ─────────────────
+do $$
+declare v_bad int;
+begin
+  -- Le texte reconstruit par pg_get_expr omet le préfixe de schéma quand la
+  -- table est sur le search_path par défaut au moment de la création de la
+  -- politique — on teste donc la forme qualifiée ET la forme nue.
+  select count(*) into v_bad
+  from pg_policies
+  where schemaname = 'public'
+    and (
+      coalesce(qual, '')          ~ ('from\s+(public\.)?' || tablename || '\M')
+      or coalesce(with_check, '') ~ ('from\s+(public\.)?' || tablename || '\M')
+    );
+  if v_bad <> 0 then
+    raise exception 'T53 FAIL: % politique(s) relisent directement leur propre table', v_bad;
+  end if;
+  raise notice 'T53 OK — aucune politique RLS ne relit directement sa propre table (% politiques inspectées)',
+    (select count(*) from pg_policies where schemaname = 'public');
+end;
+$$;
+
+-- ── T54 — service_role : aucune régression sur les garanties Phase 2/3 ────
+-- Cette migration ne mentionne `service_role` dans AUCUN GRANT/REVOKE (relu
+-- dans le fichier de migration) — le test vérifie donc une INVARIANCE, pas
+-- une forme figée : la base Docker locale accorde par défaut à service_role
+-- un CRUD complet (bootstrap), le distant réel n'accorde que
+-- REFERENCES/TRIGGER/TRUNCATE + SELECT ciblé sur workshops — les deux
+-- environnements sont légitimement différents (documenté, Phase 3B) et
+-- aucun des deux n'est la "bonne" forme absolue à comparer. Ce que cette
+-- migration garantit, dans les deux environnements : le GRANT SELECT sur
+-- workshops (Phase 3B) et l'EXECUTE sur les 7 fonctions restent présents —
+-- rien n'a pu régresser, quel que soit l'environnement.
+do $$
+declare v_missing int;
+begin
+  if not has_table_privilege('service_role', 'public.workshops', 'select') then
+    raise exception 'T54 FAIL: service_role a perdu SELECT sur public.workshops (régression Phase 3B)';
+  end if;
+
+  -- current_workshop_ids n'a JAMAIS été accordée à service_role (EXECUTE →
+  -- authenticated seul, appelée depuis les politiques RLS) — exclue à raison.
+  select count(*) into v_missing
+  from (values
+    ('public',     'provision_workshop_api'),
+    ('app_hidden', 'create_fiche_from_draft'),
+    ('app_hidden', 'provision_workshop')
+  ) as expected(nspname, proname)
+  where not exists (
+    select 1 from pg_proc p join pg_namespace n on n.oid = p.pronamespace
+    where n.nspname = expected.nspname and p.proname = expected.proname
+      and has_function_privilege('service_role', p.oid, 'execute')
+  );
+  if v_missing <> 0 then
+    raise exception 'T54 FAIL: service_role a perdu EXECUTE sur % fonction(s) attendue(s)', v_missing;
+  end if;
+
+  if not has_function_privilege('authenticated', 'app_hidden.current_workshop_ids()', 'execute') then
+    raise exception 'T54 FAIL: authenticated a perdu EXECUTE sur current_workshop_ids (base des politiques Phase 4)';
+  end if;
+
+  raise notice 'T54 OK — service_role : garanties Phase 2/3 intactes (SELECT workshops, EXECUTE sur provision_workshop_api/create_fiche_from_draft/provision_workshop) — cette migration ne mentionne service_role dans aucun GRANT/REVOKE';
+end;
+$$;
+
+-- ── T55 — absence de récursion sur workshop_members (statement_timeout) ───
+do $$
+declare v_cnt int;
+begin
+  set local statement_timeout = '2s';
+  set local role authenticated;
+  perform set_config('request.jwt.claim.sub', (select value from t4x_fixture where key = 'owner_a')::text, true);
+  select count(*) into v_cnt from public.workshop_members;
+  perform set_config('request.jwt.claim.sub', '', true);
+  reset role;
+  set local statement_timeout = 0;
+  raise notice 'T55 OK — requête sur workshop_members sans timeout ni 42P17 (% ligne(s) visibles pour owner A)', v_cnt;
+exception
+  when sqlstate '42P17' then
+    raise exception 'T55 FAIL: récursion infinie détectée sur workshop_members (42P17)';
+  when query_canceled then
+    raise exception 'T55 FAIL: requête sur workshop_members au-delà du statement_timeout (2s) — suspicion de récursion';
+end;
+$$;
+
+do $$ begin raise notice '════════  SCHÉMA PHASE 2 + WRAPPER PHASE 3A + CORRECTIFS GRANT + PHASE 4 GRANT/RLS : 55 groupes de tests OK  ════════'; end; $$;
 
 rollback;
