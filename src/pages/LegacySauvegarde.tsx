@@ -109,9 +109,17 @@ export default function LegacySauvegarde() {
   // différents et produirait un faux `counts_mismatch` si les repositories
   // changent pendant que le tailleur suit le parcours (Phase 6A, correction
   // review « snapshot de vérification incohérent »).
-  const [backup] = useState(() => buildLegacyBackup());
+  //
+  // `backup` et `fileName` dérivent tous deux du MÊME `now`, capturé une
+  // seule fois ici — deux appels séparés à `new Date()` pourraient tomber de
+  // part et d'autre d'un changement de jour et produire un nom de fichier
+  // (YYYY-MM-DD) incohérent avec le snapshot réellement exporté/vérifié
+  // (Phase 6A, correction review « deux appels distincts à new Date() »).
+  const [{ backup, fileName }] = useState(() => {
+    const now = new Date();
+    return { backup: buildLegacyBackup(window.localStorage, now), fileName: legacyBackupFileName(now) };
+  });
   const serialized = useMemo(() => serializeLegacyBackup(backup), [backup]);
-  const fileName = useMemo(() => legacyBackupFileName(), []);
 
   const [downloaded, setDownloaded] = useState(false);
   const [verification, setVerification] = useState<BackupVerificationResult | null>(null);

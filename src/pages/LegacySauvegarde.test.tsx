@@ -1,7 +1,8 @@
-import { describe, expect, it, beforeEach, afterEach } from "vitest";
+import { describe, expect, it, vi, beforeEach, afterEach } from "vitest";
 import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter } from "react-router-dom";
+import * as legacyBackupModule from "../lib/legacyBackup";
 import LegacySauvegarde from "./LegacySauvegarde";
 import { LEGACY_STORAGE_KEY } from "../lib/store";
 
@@ -71,5 +72,60 @@ describe("LegacySauvegarde — le snapshot pris à l'ouverture ne bouge plus", (
 
     // "1 client" — dérivé de backup.normalized, pas d'une relecture du storage.
     expect(screen.getByText(/1 client\(s\), 0 fiche\(s\), 0 modèle\(s\) seront/)).toBeInTheDocument();
+  });
+});
+
+// Phase 6A, correction review « deux appels distincts à new Date() » — backup
+// (generatedAt) et fileName doivent dériver du même instant, capturé une
+// seule fois, même si l'horloge change de jour pendant que l'écran est ouvert.
+describe("LegacySauvegarde — backup et fileName partagent le même instant", () => {
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it("passes the exact same Date instance to buildLegacyBackup() and legacyBackupFileName()", () => {
+    window.localStorage.setItem(LEGACY_STORAGE_KEY, persisted([client1]));
+    const buildSpy = vi.spyOn(legacyBackupModule, "buildLegacyBackup");
+    const fileNameSpy = vi.spyOn(legacyBackupModule, "legacyBackupFileName");
+
+    renderPage();
+
+    expect(buildSpy).toHaveBeenCalledTimes(1);
+    expect(fileNameSpy).toHaveBeenCalledTimes(1);
+    const nowForBackup = buildSpy.mock.calls[0][1];
+    const nowForFileName = fileNameSpy.mock.calls[0][0];
+    expect(nowForBackup).toBeInstanceOf(Date);
+    expect(nowForBackup).toBe(nowForFileName); // même référence — un seul `new Date()`, pas deux
+
+    buildSpy.mockRestore();
+    fileNameSpy.mockRestore();
+  });
+
+  it("keeps generatedAt and the displayed fileName pinned to the instant captured at mount, even around a simulated day change", () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date(2026, 0, 31, 23, 59, 59, 900)); // 100ms avant minuit, 31 janvier
+    window.localStorage.setItem(LEGACY_STORAGE_KEY, persisted([]));
+
+    const buildSpy = vi.spyOn(legacyBackupModule, "buildLegacyBackup");
+    const fileNameSpy = vi.spyOn(legacyBackupModule, "legacyBackupFileName");
+
+    renderPage();
+
+    const nowForBackup = buildSpy.mock.calls[0][1];
+    const nowForFileName = fileNameSpy.mock.calls[0][0];
+    expect(nowForBackup).toBe(nowForFileName);
+    expect(nowForBackup?.getDate()).toBe(31);
+
+    // Le fichier affiché correspond à cet instant (31 janvier) — pas à un
+    // second `new Date()` recalculé séparément pour le nom de fichier.
+    expect(screen.getByRole("button", { name: /tayoo-sauvegarde-2026-01-31\.json/ })).toBeInTheDocument();
+
+    // L'horloge avance jusqu'au lendemain PENDANT que l'écran reste ouvert —
+    // le nom déjà affiché ne doit pas se recalculer rétroactivement.
+    vi.setSystemTime(new Date(2026, 1, 1, 0, 0, 5));
+    expect(screen.getByRole("button", { name: /tayoo-sauvegarde-2026-01-31\.json/ })).toBeInTheDocument();
+
+    buildSpy.mockRestore();
+    fileNameSpy.mockRestore();
   });
 });
