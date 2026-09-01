@@ -216,7 +216,7 @@ type FicheInfoPatch = Partial<
   Pick<Fiche, "nom" | "prenom" | "telephone" | "clientId" | "garment" | "description" | "fabricColor" | "voiceNote" | "dueDate" | "price" | "avance" | "signature" | "soldeLe">
 >;
 
-interface StoreState {
+export interface StoreState {
   clients: Client[];
   fiches: Fiche[];
   modeles: Modele[];

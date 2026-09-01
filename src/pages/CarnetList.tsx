@@ -2,7 +2,8 @@ import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { AnimatePresence, motion, type PanInfo } from "framer-motion";
 import clsx from "clsx";
-import { useStore } from "../lib/store";
+import { useClients, useFiches, useClient } from "../repositories/hooks";
+import { useRepositories } from "../repositories/RepositoryProvider";
 import Avatar from "../components/ui/Avatar";
 import PageHeader from "../components/ui/PageHeader";
 import MobileBrandBar from "../components/layout/MobileBrandBar";
@@ -46,10 +47,9 @@ const slideVariants = {
 };
 
 export default function CarnetList() {
-  const fiches = useStore((s) => s.fiches);
-  const clients = useStore((s) => s.clients);
-  const addFiche = useStore((s) => s.addFiche);
-  const deleteFiches = useStore((s) => s.deleteFiches);
+  const fiches = useFiches();
+  const clients = useClients();
+  const { fiches: ficheRepository } = useRepositories();
   const navigate = useNavigate();
   const [query, setQuery] = useState("");
   const [pageIndex, setPageIndex] = useState(0);
@@ -131,7 +131,7 @@ export default function CarnetList() {
 
   function handleAdd() {
     haptic(16);
-    const id = addFiche();
+    const id = ficheRepository.add();
     navigate(`/carnet/${id}`);
   }
 
@@ -165,7 +165,7 @@ export default function CarnetList() {
 
   function handleBulkDelete() {
     haptic(16);
-    deleteFiches([...selectedIds]);
+    ficheRepository.removeMany([...selectedIds]);
     setSelectedIds(new Set());
     setSelectMode(false);
     setConfirmDeleteOpen(false);
@@ -418,7 +418,9 @@ function FicheRow({
   selected: boolean;
   onToggleSelect: () => void;
 }) {
-  const client = useStore((s) => (fiche.clientId ? s.getClient(fiche.clientId) : undefined));
+  // `useClient` ne peut pas être appelé conditionnellement (règle des Hooks) —
+  // une chaîne vide ne correspond à aucun id, comportement identique à avant.
+  const client = useClient(fiche.clientId ?? "");
   const digits = (fiche.telephone || client?.phone || "").replace(/\s/g, "");
 
   return (

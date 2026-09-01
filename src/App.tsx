@@ -19,6 +19,7 @@ import OtpVerify from "./pages/auth/OtpVerify";
 import WorkshopName from "./pages/auth/WorkshopName";
 import { AuthProvider } from "./lib/auth/AuthProvider";
 import RequireAuth from "./lib/auth/RequireAuth";
+import { RepositoryProvider } from "./repositories/RepositoryProvider";
 
 function ScrollToTop() {
   const { pathname } = useLocation();
@@ -60,35 +61,37 @@ function ProtectedAppRoute() {
 
 export default function App() {
   return (
-    <AuthProvider>
-      <ScrollToTop />
-      <Routes>
-        <Route element={<AuthRoute />}>
-          <Route path="/connexion" element={<PhoneEntry />} />
-          <Route path="/connexion/code" element={<OtpVerify />} />
-          <Route path="/connexion/atelier" element={<WorkshopName />} />
-        </Route>
+    <RepositoryProvider>
+      <AuthProvider>
+        <ScrollToTop />
+        <Routes>
+          <Route element={<AuthRoute />}>
+            <Route path="/connexion" element={<PhoneEntry />} />
+            <Route path="/connexion/code" element={<OtpVerify />} />
+            <Route path="/connexion/atelier" element={<WorkshopName />} />
+          </Route>
 
-        <Route element={<ProtectedAppRoute />}>
-          <Route path="/" element={<CarnetList />} />
-          <Route path="/carnet" element={<Navigate to="/" replace />} />
-          <Route path="/carnet/nouvelle" element={<FicheNew />} />
-          <Route path="/carnet/:id" element={<FicheDetail />} />
-          <Route path="/commandes/nouvelle" element={<FicheNew />} />
-          <Route path="/catalogue/nouveau" element={<ModeleNew />} />
-          <Route path="/catalogue/:id" element={<ModeleDetail />} />
-          <Route path="/catalogue" element={<Catalogue />} />
-          <Route path="/commandes" element={<OrdersLayout />}>
-            <Route index element={<OrdersEmptyState />} />
-            <Route path=":id" element={<OrderToFicheRedirect />} />
+          <Route element={<ProtectedAppRoute />}>
+            <Route path="/" element={<CarnetList />} />
+            <Route path="/carnet" element={<Navigate to="/" replace />} />
+            <Route path="/carnet/nouvelle" element={<FicheNew />} />
+            <Route path="/carnet/:id" element={<FicheDetail />} />
+            <Route path="/commandes/nouvelle" element={<FicheNew />} />
+            <Route path="/catalogue/nouveau" element={<ModeleNew />} />
+            <Route path="/catalogue/:id" element={<ModeleDetail />} />
+            <Route path="/catalogue" element={<Catalogue />} />
+            <Route path="/commandes" element={<OrdersLayout />}>
+              <Route index element={<OrdersEmptyState />} />
+              <Route path=":id" element={<OrderToFicheRedirect />} />
+            </Route>
+            <Route path="/clients/nouveau" element={<ClientNew />} />
+            <Route path="/clients" element={<ClientsLayout />}>
+              <Route index element={<ClientsEmptyState />} />
+              <Route path=":id" element={<ClientDetail />} />
+            </Route>
           </Route>
-          <Route path="/clients/nouveau" element={<ClientNew />} />
-          <Route path="/clients" element={<ClientsLayout />}>
-            <Route index element={<ClientsEmptyState />} />
-            <Route path=":id" element={<ClientDetail />} />
-          </Route>
-        </Route>
-      </Routes>
-    </AuthProvider>
+        </Routes>
+      </AuthProvider>
+    </RepositoryProvider>
   );
 }

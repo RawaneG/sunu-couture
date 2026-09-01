@@ -2,7 +2,8 @@ import { useState } from "react";
 import { Navigate, useNavigate, useParams } from "react-router-dom";
 import { motion } from "framer-motion";
 import clsx from "clsx";
-import { useStore, resteFor } from "../lib/store";
+import { useFiche, useClient } from "../repositories/hooks";
+import { useRepositories } from "../repositories/RepositoryProvider";
 import PageHeader from "../components/ui/PageHeader";
 import VoiceRecorder from "../components/ui/VoiceRecorder";
 import FicheChampCell from "../components/ui/FicheChampCell";
@@ -21,39 +22,33 @@ import type { Modele } from "../lib/types";
 export default function FicheDetail() {
   const { id } = useParams();
   const navigate = useNavigate();
-  const fiches = useStore((s) => s.fiches);
-  const clients = useStore((s) => s.clients);
-  const setFicheInfo = useStore((s) => s.setFicheInfo);
-  const setFicheChamp = useStore((s) => s.setFicheChamp);
-  const strikeFicheChamp = useStore((s) => s.strikeFicheChamp);
-  const restoreFicheChamp = useStore((s) => s.restoreFicheChamp);
-  const addFicheTissuPhoto = useStore((s) => s.addFicheTissuPhoto);
-  const removeFicheTissuPhoto = useStore((s) => s.removeFicheTissuPhoto);
-  const deleteFiche = useStore((s) => s.deleteFiche);
+  const { fiches: ficheRepository, media: mediaRepository, payments: paymentRepository } = useRepositories();
   const [confirmDeleteOpen, setConfirmDeleteOpen] = useState(false);
   const [catalogueOpen, setCatalogueOpen] = useState(false);
 
-  const fiche = fiches.find((f) => f.id === id);
+  const fiche = useFiche(id ?? "");
+  // `useClient` ne peut pas être appelé conditionnellement (règle des Hooks) —
+  // une chaîne vide ne correspond à aucun id, comportement identique à avant.
+  const client = useClient(fiche?.clientId ?? "");
   if (!fiche) return <Navigate to="/" replace />;
 
-  const client = fiche.clientId ? clients.find((c) => c.id === fiche.clientId) : undefined;
   const phoneDigits = (fiche.telephone || client?.phone || "").replace(/\s/g, "");
 
   function handleDelete() {
     if (!fiche) return;
     haptic(16);
-    deleteFiche(fiche.id);
+    ficheRepository.remove(fiche.id);
     navigate("/", { replace: true });
   }
 
   async function handleAddPhoto(dataUrl: string) {
     if (!fiche) return;
     const isFirstPhoto = fiche.tissuPhotos.length === 0;
-    addFicheTissuPhoto(fiche.id, dataUrl);
+    mediaRepository.addFichePhoto(fiche.id, dataUrl);
     if (isFirstPhoto) {
       try {
         const hex = await detectDominantColor(dataUrl);
-        setFicheInfo(fiche.id, { fabricColor: hex });
+        ficheRepository.setInfo(fiche.id, { fabricColor: hex });
       } catch {
         // couleur non détectée automatiquement — le tailleur peut toujours l'ajuster
       }
@@ -64,7 +59,7 @@ export default function FicheDetail() {
     if (!fiche) return;
     haptic(16);
     const photos = [...modele.photos, ...modele.patronPhotos];
-    for (const photo of photos) addFicheTissuPhoto(fiche.id, photo.dataUrl);
+    for (const photo of photos) mediaRepository.addFichePhoto(fiche.id, photo.dataUrl);
     setCatalogueOpen(false);
   }
 
@@ -123,16 +118,16 @@ export default function FicheDetail() {
           </p>
 
           <div className="mt-5 flex flex-col gap-2">
-            <NomField label="Nom" value={fiche.nom} onChange={(v) => setFicheInfo(fiche.id, { nom: v })} />
-            <NomField label="Prénom" value={fiche.prenom} onChange={(v) => setFicheInfo(fiche.id, { prenom: v })} />
-            <TelephoneField value={fiche.telephone} onChange={(v) => setFicheInfo(fiche.id, { telephone: v })} />
+            <NomField label="Nom" value={fiche.nom} onChange={(v) => ficheRepository.setInfo(fiche.id, { nom: v })} />
+            <NomField label="Prénom" value={fiche.prenom} onChange={(v) => ficheRepository.setInfo(fiche.id, { prenom: v })} />
+            <TelephoneField value={fiche.telephone} onChange={(v) => ficheRepository.setInfo(fiche.id, { telephone: v })} />
           </div>
 
           <div className="mt-4">
             <p className="mb-2 text-[13px] font-bold text-ink-soft">Note vocale</p>
             <VoiceRecorder
               value={fiche.voiceNote}
-              onChange={(v) => setFicheInfo(fiche.id, { voiceNote: v })}
+              onChange={(v) => ficheRepository.setInfo(fiche.id, { voiceNote: v })}
               label="cette fiche"
               persist
             />
@@ -145,9 +140,9 @@ export default function FicheDetail() {
                   key={key}
                   label={FICHE_MESURE_LABELS[key]}
                   champ={fiche.champs[key]}
-                  onChange={(v) => setFicheChamp(fiche.id, key, v)}
-                  onStrike={() => strikeFicheChamp(fiche.id, key)}
-                  onRestore={() => restoreFicheChamp(fiche.id, key)}
+                  onChange={(v) => ficheRepository.setChamp(fiche.id, key, v)}
+                  onStrike={() => ficheRepository.strikeChamp(fiche.id, key)}
+                  onRestore={() => ficheRepository.restoreChamp(fiche.id, key)}
                 />
               ))}
             </section>
@@ -158,32 +153,32 @@ export default function FicheDetail() {
                   key={key}
                   label={FICHE_INFO_LABELS[key]}
                   champ={fiche.champs[key]}
-                  onChange={(v) => setFicheChamp(fiche.id, key, v)}
-                  onStrike={() => strikeFicheChamp(fiche.id, key)}
-                  onRestore={() => restoreFicheChamp(fiche.id, key)}
+                  onChange={(v) => ficheRepository.setChamp(fiche.id, key, v)}
+                  onStrike={() => ficheRepository.strikeChamp(fiche.id, key)}
+                  onRestore={() => ficheRepository.restoreChamp(fiche.id, key)}
                 />
               ))}
 
-              <PrixChampCell value={fiche.price} onChange={(price) => setFicheInfo(fiche.id, { price })} />
-              <AvanceChampCell value={fiche.avance} onChange={(avance) => setFicheInfo(fiche.id, { avance })} />
-              <ResteChampCell reste={resteFor(fiche)} />
+              <PrixChampCell value={fiche.price} onChange={(price) => ficheRepository.setInfo(fiche.id, { price })} />
+              <AvanceChampCell value={fiche.avance} onChange={(avance) => ficheRepository.setInfo(fiche.id, { avance })} />
+              <ResteChampCell reste={paymentRepository.getBalance(fiche.id).reste} />
 
-              <FicheDateField label="Retrait le" value={fiche.dueDate} onChange={(v) => setFicheInfo(fiche.id, { dueDate: v })} />
-              <FicheDateField label="Soldé le" value={fiche.soldeLe} onChange={(v) => setFicheInfo(fiche.id, { soldeLe: v })} />
+              <FicheDateField label="Retrait le" value={fiche.dueDate} onChange={(v) => ficheRepository.setInfo(fiche.id, { dueDate: v })} />
+              <FicheDateField label="Soldé le" value={fiche.soldeLe} onChange={(v) => ficheRepository.setInfo(fiche.id, { soldeLe: v })} />
 
               <div className="mt-4">
                 <p className="mb-2 text-[13px] font-bold text-ink-soft">Photos du tissu</p>
                 <FabricPhotos
                   photos={fiche.tissuPhotos}
                   onAdd={handleAddPhoto}
-                  onRemove={(photoId) => removeFicheTissuPhoto(fiche.id, photoId)}
+                  onRemove={(photoId) => mediaRepository.removeFichePhoto(fiche.id, photoId)}
                   onPickCatalogue={() => setCatalogueOpen(true)}
                 />
               </div>
 
               <div className="mt-4">
                 <p className="mb-2 text-[13px] font-bold text-ink-soft">Signature client</p>
-                <SignaturePad value={fiche.signature} onChange={(dataUrl) => setFicheInfo(fiche.id, { signature: dataUrl })} />
+                <SignaturePad value={fiche.signature} onChange={(dataUrl) => ficheRepository.setInfo(fiche.id, { signature: dataUrl })} />
               </div>
             </section>
           </div>

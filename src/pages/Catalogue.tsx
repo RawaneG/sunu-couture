@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { useStore } from "../lib/store";
+import { useModeles } from "../repositories/hooks";
+import { useRepositories } from "../repositories/RepositoryProvider";
 import PageHeader from "../components/ui/PageHeader";
 import ModeleGrid from "../components/ui/ModeleGrid";
 import ConfirmDialog from "../components/ui/ConfirmDialog";
@@ -8,8 +9,8 @@ import { IconPlus, IconScissors } from "../lib/icons";
 import { haptic } from "../lib/haptics";
 
 export default function Catalogue() {
-  const modeles = useStore((s) => s.modeles);
-  const removeModeles = useStore((s) => s.removeModeles);
+  const modeles = useModeles();
+  const { modeles: modeleRepository } = useRepositories();
   const navigate = useNavigate();
   const [selectMode, setSelectMode] = useState(false);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
@@ -44,7 +45,7 @@ export default function Catalogue() {
 
   function handleBulkDelete() {
     haptic(16);
-    removeModeles([...selectedIds]);
+    modeleRepository.removeMany([...selectedIds]);
     setSelectedIds(new Set());
     setSelectMode(false);
     setConfirmDeleteOpen(false);

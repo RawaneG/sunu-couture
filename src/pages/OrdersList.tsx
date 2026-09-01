@@ -2,7 +2,8 @@ import { useMemo, useState } from "react";
 import { useSearchParams, useMatch } from "react-router-dom";
 import { AnimatePresence, motion } from "framer-motion";
 import clsx from "clsx";
-import { useStore, resteFor } from "../lib/store";
+import { useFiches, useClients } from "../repositories/hooks";
+import { useRepositories } from "../repositories/RepositoryProvider";
 import OrderRow from "../components/ui/OrderRow";
 import Fab from "../components/ui/Fab";
 import PageHeader from "../components/ui/PageHeader";
@@ -29,8 +30,9 @@ const FILTERS = [
 ] as const;
 
 export default function OrdersList() {
-  const fiches = useStore((s) => s.fiches);
-  const clients = useStore((s) => s.clients);
+  const fiches = useFiches();
+  const clients = useClients();
+  const { payments: paymentRepository } = useRepositories();
   const [params, setParams] = useSearchParams();
   const filter = params.get("filter") ?? "all";
   const activeMatch = useMatch("/commandes/:id");
@@ -44,7 +46,7 @@ export default function OrdersList() {
     if (filter === "late") result = result.filter((f) => f.late);
     else if (filter === "today")
       result = result.filter((f) => !f.late && isDueToday(f.dueDate, null, f.status));
-    else if (filter === "reste") result = result.filter((f) => resteFor(f) > 0);
+    else if (filter === "reste") result = result.filter((f) => paymentRepository.getBalance(f.id).reste > 0);
     else if (filter === "recu") result = result.filter((f) => !f.late && f.status === "recu");
     else if (filter === "couture") result = result.filter((f) => !f.late && f.status === "couture");
     else if (filter === "pret") result = result.filter((f) => !f.late && f.status === "pret");
@@ -57,7 +59,7 @@ export default function OrdersList() {
       });
     }
     return result;
-  }, [fiches, clients, filter, query]);
+  }, [fiches, clients, filter, query, paymentRepository]);
 
   const firstCallableIndex = useMemo(
     () => filtered.findIndex((f) => Boolean(f.telephone || clients.find((c) => c.id === f.clientId)?.phone)),

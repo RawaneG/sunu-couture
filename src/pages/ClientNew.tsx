@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { motion } from "framer-motion";
-import { useStore } from "../lib/store";
+import { useRepositories } from "../repositories/RepositoryProvider";
 import PageHeader from "../components/ui/PageHeader";
 import ClientFields from "../components/ui/ClientFields";
 import { IconCheck } from "../lib/icons";
@@ -9,7 +9,7 @@ import { haptic } from "../lib/haptics";
 
 export default function ClientNew() {
   const navigate = useNavigate();
-  const addClient = useStore((s) => s.addClient);
+  const { clients: clientRepository } = useRepositories();
 
   const [name, setName] = useState("");
   const [phone, setPhone] = useState("");
@@ -20,7 +20,7 @@ export default function ClientNew() {
   function handleSubmit() {
     if (!canSubmit) return;
     haptic(16);
-    const id = addClient({ name, phone, photo });
+    const id = clientRepository.add({ name, phone, photo });
     navigate(`/clients/${id}`);
   }
 

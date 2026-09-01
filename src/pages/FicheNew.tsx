@@ -1,6 +1,6 @@
 import { useEffect, useRef } from "react";
 import { useNavigate } from "react-router-dom";
-import { useStore } from "../lib/store";
+import { useRepositories } from "../repositories/RepositoryProvider";
 
 /**
  * "Nouvelle fiche" isn't a form screen — it creates the record (next carnet
@@ -8,16 +8,16 @@ import { useStore } from "../lib/store";
  * editing, the same screen used to review any existing fiche.
  */
 export default function FicheNew() {
-  const addFiche = useStore((s) => s.addFiche);
+  const { fiches: ficheRepository } = useRepositories();
   const navigate = useNavigate();
   const createdRef = useRef(false);
 
   useEffect(() => {
     if (createdRef.current) return;
     createdRef.current = true;
-    const id = addFiche();
+    const id = ficheRepository.add();
     navigate(`/carnet/${id}`, { replace: true });
-  }, [addFiche, navigate]);
+  }, [ficheRepository, navigate]);
 
   return null;
 }
