@@ -244,4 +244,57 @@ describe("migrateLegacyState — v8 → v9", () => {
     const { modeles } = migrateLegacyState({ clients: [], fiches: [] });
     expect(modeles).toEqual([]);
   });
+
+  // Phase 6A, correction review « state.modeles peut ne pas être un tableau » —
+  // `state` vient d'un payload `unknown` réel, `modeles` truthy ne veut pas
+  // dire tableau. Array.isArray() doit protéger .map() à l'exécution, pas
+  // seulement satisfaire TypeScript.
+  describe("migrateLegacyState — state.modeles non-array (runtime shape-guard)", () => {
+    it("defaults to [] when modeles is absent", () => {
+      expect(migrateLegacyState({}).modeles).toEqual([]);
+    });
+
+    it("defaults to [] when modeles is null", () => {
+      expect(migrateLegacyState({ modeles: null }).modeles).toEqual([]);
+    });
+
+    it("never throws when modeles is a plain object ({})", () => {
+      expect(() => migrateLegacyState({ modeles: {} })).not.toThrow();
+      expect(migrateLegacyState({ modeles: {} }).modeles).toEqual([]);
+    });
+
+    it("never throws when modeles is a string", () => {
+      expect(() => migrateLegacyState({ modeles: "abc" })).not.toThrow();
+      expect(migrateLegacyState({ modeles: "abc" }).modeles).toEqual([]);
+    });
+
+    it("never throws when modeles is a number", () => {
+      expect(() => migrateLegacyState({ modeles: 42 })).not.toThrow();
+      expect(migrateLegacyState({ modeles: 42 }).modeles).toEqual([]);
+    });
+
+    it("behaves normally when modeles is a genuine empty array", () => {
+      expect(migrateLegacyState({ modeles: [] }).modeles).toEqual([]);
+    });
+
+    it("keeps the existing deterministic handling of a malformed-but-array modeles list", () => {
+      const legacy = { modeles: [{ nom: "Sans id" }, null, "not-an-object", { id: "m-real", nom: "Boubou" }] };
+      const { modeles } = migrateLegacyState(legacy);
+      expect(modeles).toHaveLength(4);
+      expect(modeles.map((m) => m.id)).toEqual([
+        "legacy-modele-sans-id-0",
+        "legacy-modele-sans-id-1",
+        "legacy-modele-sans-id-2",
+        "m-real",
+      ]);
+    });
+
+    it("produces the exact same result across two successive analyses of the same corrupted payload", () => {
+      const corrupted = { modeles: "corrupted" };
+      expect(migrateLegacyState(corrupted)).toEqual(migrateLegacyState(corrupted));
+
+      const partiallyCorrupted = { modeles: [null, { nom: "x" }, 42] };
+      expect(migrateLegacyState(partiallyCorrupted)).toEqual(migrateLegacyState(partiallyCorrupted));
+    });
+  });
 });

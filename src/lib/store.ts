@@ -512,6 +512,19 @@ export function migrateLegacyState(persisted: unknown): { clients: Client[]; fic
   // different shape, so unlike clients/fiches above this never needs field
   // remapping, only defaulting for a persisted file older than the feature.
   //
+  // `state` comes from `unknown` (a real persisted payload can be anything) —
+  // `state.modeles` being present and truthy does NOT mean it's an array
+  // (Phase 6A, correction review « state.modeles peut ne pas être un
+  // tableau ») : `{}`, `"corrupted"`, `42`… would all make `.map()` throw
+  // below. `Array.isArray()` is a genuine RUNTIME guard, not just a TS
+  // annotation — the `as` cast on `state` above gives no protection here.
+  // A non-array `modeles` isn't signalled as a distinct anomaly to the
+  // tailor (that would mean threading a new anomalies channel through
+  // `migrateLegacyState()` just for this one top-level shape, well beyond
+  // what's needed) — it's simply treated as "no modeles readable", exactly
+  // like `modeles` being absent.
+  const legacyModeles: Partial<Modele>[] = Array.isArray(state.modeles) ? state.modeles : [];
+
   // A modele with no `id` NEVER gets a random uid() here (Phase 6A, correction
   // blocker « aucune identité aléatoire silencieuse ») : the same malformed
   // payload must produce the exact same analysis every time it's re-read, and
@@ -520,13 +533,21 @@ export function migrateLegacyState(persisted: unknown): { clients: Client[]; fic
   // analyses of the same (unchanged) payload always agree — that
   // `legacyPreview.ts` recognizes and surfaces as an anomaly rather than
   // silently treating it as if it were a genuine legacy id.
-  const modeles: Modele[] = (state.modeles ?? []).map((m, index) => ({
-    id: typeof m.id === "string" && m.id.length > 0 ? m.id : `${LEGACY_SYNTHETIC_MODELE_ID_PREFIX}${index}`,
-    nom: m.nom ?? "",
-    photos: Array.isArray(m.photos) ? m.photos : [],
-    patronPhotos: Array.isArray(m.patronPhotos) ? m.patronPhotos : [],
-    createdAt: m.createdAt ?? new Date(0).toISOString(),
-  }));
+  const modeles: Modele[] = legacyModeles.map((raw, index) => {
+    // Same reasoning at element level — `legacyModeles[i]` can itself be
+    // `null`/a string/a number inside an otherwise-array `modeles` (e.g.
+    // `modeles: [null, "x"]`) ; falling back to `{}` keeps every field below
+    // going through its own explicit default instead of reading a property
+    // off a non-object and throwing.
+    const m: Partial<Modele> = raw && typeof raw === "object" && !Array.isArray(raw) ? raw : {};
+    return {
+      id: typeof m.id === "string" && m.id.length > 0 ? m.id : `${LEGACY_SYNTHETIC_MODELE_ID_PREFIX}${index}`,
+      nom: typeof m.nom === "string" ? m.nom : "",
+      photos: Array.isArray(m.photos) ? m.photos : [],
+      patronPhotos: Array.isArray(m.patronPhotos) ? m.patronPhotos : [],
+      createdAt: typeof m.createdAt === "string" ? m.createdAt : new Date(0).toISOString(),
+    };
+  });
 
   return { clients, fiches, modeles };
 }

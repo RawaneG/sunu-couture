@@ -3,7 +3,6 @@ import { motion } from "framer-motion";
 import PageHeader from "../components/ui/PageHeader";
 import { IconCheck, IconAlert, IconDownload, IconShieldCheck, IconSquare, IconCheckSquare } from "../lib/icons";
 import { haptic } from "../lib/haptics";
-import { useClients, useFiches, useModeles } from "../repositories/hooks";
 import { buildLegacyBackup, serializeLegacyBackup, verifyLegacyBackup, legacyBackupFileName, type BackupVerificationResult } from "../lib/legacyBackup";
 import { saveLegacyBackupToIndexedDb, type LegacyIndexedDbOutcome } from "../lib/legacyIndexedDbBackup";
 import { buildLegacyPreview, overrideKey, type LegacyOriginOverrides } from "../lib/legacyPreview";
@@ -102,12 +101,14 @@ function IndexedDbBadge({ outcome }: { outcome: LegacyIndexedDbOutcome }) {
 }
 
 export default function LegacySauvegarde() {
-  const clients = useClients();
-  const fiches = useFiches();
-  const modeles = useModeles();
-
   // Un unique instantané pris à l'ouverture de l'écran — pas recalculé à
   // chaque changement du store le temps que le tailleur suive le parcours.
+  // C'est la SEULE source utilisée par le téléchargement, la vérification ET
+  // la prévisualisation : comparer avec une lecture ultérieure du store
+  // (useClients/useFiches/useModeles, retirées ici) comparerait deux instants
+  // différents et produirait un faux `counts_mismatch` si les repositories
+  // changent pendant que le tailleur suit le parcours (Phase 6A, correction
+  // review « snapshot de vérification incohérent »).
   const [backup] = useState(() => buildLegacyBackup());
   const serialized = useMemo(() => serializeLegacyBackup(backup), [backup]);
   const fileName = useMemo(() => legacyBackupFileName(), []);
@@ -118,7 +119,6 @@ export default function LegacySauvegarde() {
   const [indexedDbOutcome, setIndexedDbOutcome] = useState<LegacyIndexedDbOutcome | null>(null);
   const [overrides, setOverrides] = useState<LegacyOriginOverrides>({});
 
-  const sourceData = useMemo(() => ({ clients, fiches, modeles }), [clients, fiches, modeles]);
   const preview = useMemo(() => buildLegacyPreview(backup.normalized, overrides), [backup, overrides]);
 
   function handleDownload() {
@@ -142,9 +142,11 @@ export default function LegacySauvegarde() {
 
   function handleVerify() {
     haptic(8);
-    // La comparaison porte sur la copie brute DE CE snapshot (backup.rawStorageValue),
-    // jamais sur un nouveau localStorage.getItem() — voir legacyBackup.ts.
-    setVerification(verifyLegacyBackup({ normalized: sourceData, rawStorageValue: backup.rawStorageValue }, serialized));
+    // La comparaison porte entièrement sur CE snapshot (backup.normalized +
+    // backup.rawStorageValue) — jamais sur un état plus récent du store ou un
+    // nouveau localStorage.getItem() — voir legacyBackup.ts et la note sur
+    // `backup` ci-dessus.
+    setVerification(verifyLegacyBackup({ normalized: backup.normalized, rawStorageValue: backup.rawStorageValue }, serialized));
   }
 
   async function handleIndexedDbBackup() {
