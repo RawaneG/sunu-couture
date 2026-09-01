@@ -214,6 +214,32 @@ describe("migrateLegacyState — v8 → v9", () => {
     expect(modeles[0]).toMatchObject({ id: "m1", nom: "", photos: [], patronPhotos: [] });
   });
 
+  // Phase 6A, correction blocker « aucune identité aléatoire silencieuse » :
+  // un modèle sans id ne doit JAMAIS recevoir un uid() aléatoire — l'analyse
+  // doit être reproductible, et l'identifiant temporaire doit être clairement
+  // distinguable d'un vrai id legacy.
+  it("assigns a deterministic, clearly-marked placeholder id to a modele with no id — never a random uid()", () => {
+    const legacy = { modeles: [{ nom: "Sans id" }] };
+    const { modeles: first } = migrateLegacyState(legacy);
+    const { modeles: second } = migrateLegacyState(legacy);
+    expect(first[0].id).toBe(second[0].id); // même payload → même id à chaque analyse
+    expect(first[0].id).toMatch(/^legacy-modele-sans-id-/); // jamais confondu avec un vrai uid("m...")
+  });
+
+  it("produces the exact same report (ids included) across two successive analyses of the same malformed payload", () => {
+    const legacy = { modeles: [{ nom: "A" }, { id: "m-real", nom: "B" }, {}] };
+    const run1 = migrateLegacyState(legacy).modeles;
+    const run2 = migrateLegacyState(legacy).modeles;
+    expect(run1).toEqual(run2);
+    expect(run1.map((m) => m.id)).toEqual(["legacy-modele-sans-id-0", "m-real", "legacy-modele-sans-id-2"]);
+  });
+
+  it("keeps a real modele id untouched even when another modele in the same payload is missing one", () => {
+    const legacy = { modeles: [{}, { id: "m-real", nom: "Boubou" }] };
+    const { modeles } = migrateLegacyState(legacy);
+    expect(modeles[1].id).toBe("m-real");
+  });
+
   it("defaults modeles to an empty array on a persisted store from before the catalogue feature existed", () => {
     const { modeles } = migrateLegacyState({ clients: [], fiches: [] });
     expect(modeles).toEqual([]);

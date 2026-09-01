@@ -5,18 +5,20 @@ import {
   verifyLegacyBackup,
   legacyBackupFileName,
   LEGACY_BACKUP_FORMAT,
+  SAFE_LEGACY_ANNEX_KEYS,
   type StorageLike,
 } from "./legacyBackup";
 import { LEGACY_STORAGE_KEY } from "./store";
 
-/** Minimal in-memory stand-in for `Storage` — only the read surface `buildLegacyBackup` uses. */
-function fakeStorage(entries: Record<string, string>): StorageLike {
-  const keys = Object.keys(entries);
+/** Minimal in-memory stand-in for `Storage` — only the read surface `buildLegacyBackup`
+ * uses (allowlist-based `getItem`, no `key()`/`length` sweep since Phase 6A's security
+ * correction). `setItem` throws deliberately: if `buildLegacyBackup`/`verifyLegacyBackup`
+ * ever tried to write, the test would fail loudly instead of silently succeeding. */
+function fakeStorage(entries: Record<string, string>): StorageLike & { setItem: () => never } {
   return {
     getItem: (key) => (key in entries ? entries[key] : null),
-    key: (i) => keys[i] ?? null,
-    get length() {
-      return keys.length;
+    setItem: () => {
+      throw new Error("buildLegacyBackup/verifyLegacyBackup must never write to storage");
     },
   };
 }
@@ -32,6 +34,7 @@ describe("buildLegacyBackup — export", () => {
     expect(backup.counts).toEqual({ clients: 0, fiches: 0, modeles: 0 });
     expect(backup.normalized).toEqual({ clients: [], fiches: [], modeles: [] });
     expect(backup.rawParseError).toBeNull();
+    expect(backup.rawStorageValue).toBeNull();
   });
 
   it("exports every client, fiche and modele present in storage", () => {
@@ -54,21 +57,9 @@ describe("buildLegacyBackup — export", () => {
     expect(backup.normalized.modeles[0].id).toBe("m1");
   });
 
-  it("carries every other localStorage key over verbatim as annex, without touching the main key", () => {
-    const storage = fakeStorage({
-      [LEGACY_STORAGE_KEY]: persistedPayload({ clients: [], fiches: [] }),
-      "sunu-theme": "dark",
-      "sunu-swipe-hint-seen": "1",
-    });
-    const backup = buildLegacyBackup(storage);
-    expect(backup.annex).toEqual({ "sunu-theme": "dark", "sunu-swipe-hint-seen": "1" });
-    expect(backup.annex).not.toHaveProperty(LEGACY_STORAGE_KEY);
-  });
-
   it("reports a corrupted main key clearly (rawParseError) instead of throwing or silently dropping data", () => {
     const backup = buildLegacyBackup(fakeStorage({ [LEGACY_STORAGE_KEY]: "{not json" }));
     expect(backup.rawParseError).not.toBeNull();
-    // annex/other keys must still be captured even though the main key failed to parse.
     expect(backup.counts).toEqual({ clients: 0, fiches: 0, modeles: 0 });
   });
 
@@ -85,11 +76,89 @@ describe("buildLegacyBackup — export", () => {
     expect(reparsed.normalized).toEqual(backup.normalized);
   });
 
-  it("never mutates the storage it reads from", () => {
-    const raw = persistedPayload({ clients: [{ id: "c1", name: "Awa", phone: "77", photo: null, colorSeed: "indigo" }], fiches: [] });
-    const storage = fakeStorage({ [LEGACY_STORAGE_KEY]: raw });
-    buildLegacyBackup(storage);
-    expect(storage.getItem(LEGACY_STORAGE_KEY)).toBe(raw);
+  it("never writes to storage while building the backup (fakeStorage.setItem throws if called)", () => {
+    const storage = fakeStorage({ [LEGACY_STORAGE_KEY]: persistedPayload({ clients: [], fiches: [] }) });
+    expect(() => buildLegacyBackup(storage)).not.toThrow();
+  });
+});
+
+describe("buildLegacyBackup — copie brute (rawStorageValue)", () => {
+  it("preserves a valid JSON value byte-for-byte, including its exact whitespace/key order", () => {
+    const raw = '{"version":12,"state":{"clients":[],  "fiches":[]}}'; // formatage volontairement inhabituel
+    const backup = buildLegacyBackup(fakeStorage({ [LEGACY_STORAGE_KEY]: raw }));
+    expect(backup.rawStorageValue).toBe(raw);
+  });
+
+  it("preserves a corrupted (invalid JSON) value exactly, verbatim, rather than dropping it", () => {
+    const corrupted = '{"state":{"clients": [ { "id": "c1", "name": "Awa"  MALFORMED}}';
+    const backup = buildLegacyBackup(fakeStorage({ [LEGACY_STORAGE_KEY]: corrupted }));
+    expect(backup.rawStorageValue).toBe(corrupted);
+    expect(backup.rawParseError).not.toBeNull();
+  });
+
+  it("is null only when the key is genuinely absent, never as a stand-in for a parse failure", () => {
+    const empty = buildLegacyBackup(fakeStorage({}));
+    expect(empty.rawStorageValue).toBeNull();
+
+    const corrupted = buildLegacyBackup(fakeStorage({ [LEGACY_STORAGE_KEY]: "not json at all" }));
+    expect(corrupted.rawStorageValue).toBe("not json at all");
+  });
+
+  it("keeps rawState/normalized as complementary views that never replace rawStorageValue", () => {
+    const raw = persistedPayload({ clients: [], fiches: [] });
+    const backup = buildLegacyBackup(fakeStorage({ [LEGACY_STORAGE_KEY]: raw }));
+    expect(backup.rawStorageValue).toBe(raw);
+    // rawState is the extracted `.state`, a DIFFERENT (smaller) value than the raw wrapper string.
+    expect(backup.rawState).toEqual({ clients: [], fiches: [] });
+  });
+});
+
+describe("buildLegacyBackup — allowlist des clés annexes (sécurité)", () => {
+  it("only ever copies the explicitly safe keys, never a generic sweep of localStorage", () => {
+    const storage = fakeStorage({
+      [LEGACY_STORAGE_KEY]: persistedPayload({ clients: [], fiches: [] }),
+      "sunu-theme": "dark",
+      "sunu-swipe-hint-seen": "1",
+      "sunu-carnet-page-hint-seen": "1",
+    });
+    const backup = buildLegacyBackup(storage);
+    expect(backup.annex).toEqual({ "sunu-theme": "dark", "sunu-swipe-hint-seen": "1", "sunu-carnet-page-hint-seen": "1" });
+  });
+
+  it("never exports a Supabase Auth session or any other credential-shaped key, even though it exists in storage", () => {
+    const sensitiveKeys = [
+      "sb-nffcdygtqzlivsresuuk-auth-token",
+      "supabase.auth.token",
+      "access_token",
+      "refresh_token",
+      "session",
+      "secret",
+    ];
+    const entries: Record<string, string> = { [LEGACY_STORAGE_KEY]: persistedPayload({ clients: [], fiches: [] }) };
+    for (const key of sensitiveKeys) entries[key] = "SENSITIVE-VALUE-SHOULD-NEVER-BE-EXPORTED";
+
+    const backup = buildLegacyBackup(fakeStorage(entries));
+    const serialized = serializeLegacyBackup(backup);
+
+    for (const key of sensitiveKeys) {
+      expect(Object.keys(backup.annex)).not.toContain(key);
+    }
+    // Belt-and-suspenders: the sensitive VALUE itself must not appear anywhere
+    // in the serialized file (rules out it leaking under some other field name too).
+    expect(serialized).not.toContain("SENSITIVE-VALUE-SHOULD-NEVER-BE-EXPORTED");
+  });
+
+  it("ignores an unknown/future localStorage key even if it looks harmless", () => {
+    const storage = fakeStorage({
+      [LEGACY_STORAGE_KEY]: persistedPayload({ clients: [], fiches: [] }),
+      "some-future-preference-key": "value",
+    });
+    const backup = buildLegacyBackup(storage);
+    expect(backup.annex).not.toHaveProperty("some-future-preference-key");
+  });
+
+  it("the allowlist itself only names the keys actually used elsewhere in the app", () => {
+    expect(SAFE_LEGACY_ANNEX_KEYS).toEqual(["sunu-theme", "sunu-swipe-hint-seen", "sunu-carnet-page-hint-seen"]);
   });
 });
 
@@ -104,7 +173,7 @@ describe("legacyBackupFileName", () => {
 });
 
 describe("verifyLegacyBackup — vérification", () => {
-  it("passes when the reparsed backup's counters match the source exactly", () => {
+  it("passes when the reparsed backup's raw copy and counters match the source snapshot exactly", () => {
     const storage = fakeStorage({
       [LEGACY_STORAGE_KEY]: persistedPayload({
         clients: [{ id: "c1", name: "Awa", phone: "77", photo: null, colorSeed: "indigo" }],
@@ -113,34 +182,55 @@ describe("verifyLegacyBackup — vérification", () => {
     });
     const backup = buildLegacyBackup(storage);
     const serialized = serializeLegacyBackup(backup);
-    const result = verifyLegacyBackup(backup.normalized, serialized);
+    const result = verifyLegacyBackup({ normalized: backup.normalized, rawStorageValue: backup.rawStorageValue }, serialized);
     expect(result.status).toBe("ok");
     expect(result.ok).toBe(true);
+    expect(result.rawStorageValueMatches).toBe(true);
     expect(result.counts).toEqual({ clients: 1, fiches: 0, modeles: 0 });
   });
 
   it("fails clearly on invalid JSON instead of throwing", () => {
-    const result = verifyLegacyBackup({ clients: [], fiches: [], modeles: [] }, "{not json");
+    const result = verifyLegacyBackup({ normalized: { clients: [], fiches: [], modeles: [] }, rawStorageValue: null }, "{not json");
     expect(result.status).toBe("invalid_json");
     expect(result.ok).toBe(false);
   });
 
   it("fails clearly on an unexpected structure (wrong format tag)", () => {
-    const result = verifyLegacyBackup({ clients: [], fiches: [], modeles: [] }, JSON.stringify({ format: "something-else" }));
+    const result = verifyLegacyBackup(
+      { normalized: { clients: [], fiches: [], modeles: [] }, rawStorageValue: null },
+      JSON.stringify({ format: "something-else" }),
+    );
     expect(result.status).toBe("invalid_structure");
     expect(result.ok).toBe(false);
   });
 
   it("fails clearly when a counter diverges between source and backup", () => {
-    const source = { clients: [{ id: "c1", name: "Awa", phone: "77", photo: null, colorSeed: "indigo" }], fiches: [], modeles: [] };
+    const source = {
+      normalized: { clients: [{ id: "c1", name: "Awa", phone: "77", photo: null, colorSeed: "indigo" }], fiches: [], modeles: [] },
+      rawStorageValue: "raw",
+    };
     const tamperedBackup = JSON.stringify({
       format: "tayoo-legacy-backup",
+      rawStorageValue: "raw",
       normalized: { clients: [], fiches: [], modeles: [] }, // client silently dropped
     });
     const result = verifyLegacyBackup(source, tamperedBackup);
     expect(result.status).toBe("counts_mismatch");
     expect(result.ok).toBe(false);
     expect(result.mismatches.some((m) => m.startsWith("clients"))).toBe(true);
+  });
+
+  it("fails clearly, with its own distinct status, when the raw copy itself doesn't match — even if the counters happen to agree", () => {
+    const source = { normalized: { clients: [], fiches: [], modeles: [] }, rawStorageValue: "original-raw-value" };
+    const tampered = JSON.stringify({
+      format: "tayoo-legacy-backup",
+      rawStorageValue: "SOMETHING-ELSE", // altered/corrupted during serialization
+      normalized: { clients: [], fiches: [], modeles: [] },
+    });
+    const result = verifyLegacyBackup(source, tampered);
+    expect(result.status).toBe("raw_mismatch");
+    expect(result.ok).toBe(false);
+    expect(result.rawStorageValueMatches).toBe(false);
   });
 
   it("counts legacy media (tissu photos, signature, voice note, modele photos) and flags a mismatch there too", () => {
@@ -150,12 +240,16 @@ describe("verifyLegacyBackup — vérification", () => {
       dueDate: null, soldeLe: null, signature: "data:sig", price: 0, avance: 0, garment: "", description: null,
       fabricColor: "#000", status: "recu" as const, late: false, createdAt: "2026-01-01T00:00:00.000Z",
     };
-    const source = { clients: [], fiches: [fiche], modeles: [] };
-    const backupSameMedia = JSON.stringify({ format: "tayoo-legacy-backup", normalized: source });
+    const source = { normalized: { clients: [], fiches: [fiche], modeles: [] }, rawStorageValue: "raw" };
+    const backupSameMedia = JSON.stringify({ format: "tayoo-legacy-backup", rawStorageValue: "raw", normalized: source.normalized });
     expect(verifyLegacyBackup(source, backupSameMedia).status).toBe("ok");
 
     const strippedFiche = { ...fiche, tissuPhotos: [], signature: null, voiceNote: null };
-    const backupMissingMedia = JSON.stringify({ format: "tayoo-legacy-backup", normalized: { clients: [], fiches: [strippedFiche], modeles: [] } });
+    const backupMissingMedia = JSON.stringify({
+      format: "tayoo-legacy-backup",
+      rawStorageValue: "raw",
+      normalized: { clients: [], fiches: [strippedFiche], modeles: [] },
+    });
     const result = verifyLegacyBackup(source, backupMissingMedia);
     expect(result.status).toBe("counts_mismatch");
     expect(result.mismatches.some((m) => m.startsWith("médias"))).toBe(true);

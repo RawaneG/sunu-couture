@@ -2,9 +2,10 @@
 // Structure volontairement réutilisable telle quelle par la Phase 6B (import
 // effectif) — ce module ne fait ni lecture ni écriture, seulement du calcul pur
 // sur des données déjà normalisées.
-import type { Client, Fiche } from "./types";
+import type { Client, Fiche, Modele } from "./types";
 import { classifyClientOrigin, classifyFicheOrigin, classifyModeleOrigin, type LegacyOrigin } from "./legacyClassification";
 import type { LegacyNormalizedData } from "./legacyBackup";
+import { LEGACY_SYNTHETIC_MODELE_ID_PREFIX } from "./store";
 
 export type LegacyItemKind = "client" | "fiche" | "modele";
 
@@ -55,6 +56,19 @@ function ficheAnomalies(f: Fiche): string[] {
   return anomalies;
 }
 
+/** Signale, sans jamais la masquer, une identité de modèle absente dans les
+ * données d'origine — `migrateLegacyState()` lui attribue un identifiant
+ * temporaire déterministe (préfixé, jamais un `uid()` aléatoire) plutôt que
+ * de fabriquer silencieusement une identité legacy qui n'a jamais existé
+ * (Phase 6A, correction blocker « aucune identité aléatoire silencieuse »). */
+function modeleAnomalies(m: Modele): string[] {
+  const anomalies: string[] = [];
+  if (m.id.startsWith(LEGACY_SYNTHETIC_MODELE_ID_PREFIX)) {
+    anomalies.push("Identifiant de modèle manquant dans les données d'origine — identifiant temporaire attribué pour cette analyse");
+  }
+  return anomalies;
+}
+
 /**
  * Construit le rapport de prévisualisation à partir des données déjà
  * normalisées (`migrateLegacyState()`/`buildLegacyBackup().normalized`) et
@@ -98,7 +112,7 @@ export function buildLegacyPreview(
       label: m.nom.trim() || "Modèle sans nom",
       detectedOrigin,
       origin: overrides[overrideKey("modele", m.id)] ?? detectedOrigin,
-      anomalies: [],
+      anomalies: modeleAnomalies(m),
     });
   }
 

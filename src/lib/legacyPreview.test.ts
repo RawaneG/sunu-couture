@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { buildLegacyPreview, overrideKey } from "./legacyPreview";
-import { seedClients, seedFiches } from "./store";
+import { seedClients, seedFiches, migrateLegacyState } from "./store";
 import type { Client, Fiche } from "./types";
 
 function realClient(overrides: Partial<Client> = {}): Client {
@@ -80,5 +80,31 @@ describe("buildLegacyPreview — fiche anomalies", () => {
   it("does not flag a valid, parseable dueDate", () => {
     const report = buildLegacyPreview({ clients: [], fiches: [fiche({ dueDate: "2026-09-01T00:00:00.000Z" })], modeles: [] });
     expect(report.anomalyItems).toHaveLength(0);
+  });
+});
+
+// Phase 6A, correction blocker « aucune identité aléatoire silencieuse » (§4).
+describe("buildLegacyPreview — modèle sans identifiant legacy", () => {
+  it("flags a modele with a synthesized placeholder id as an anomaly, without dropping it", () => {
+    const { modeles } = migrateLegacyState({ modeles: [{ nom: "Sans id" }] });
+    const report = buildLegacyPreview({ clients: [], fiches: [], modeles });
+    expect(report.items).toHaveLength(1);
+    expect(report.anomalyItems).toHaveLength(1);
+    expect(report.anomalyItems[0].anomalies[0]).toMatch(/identifiant/i);
+  });
+
+  it("does not flag a modele that has a genuine legacy id", () => {
+    const { modeles } = migrateLegacyState({ modeles: [{ id: "m-real", nom: "Boubou" }] });
+    const report = buildLegacyPreview({ clients: [], fiches: [], modeles });
+    expect(report.anomalyItems).toHaveLength(0);
+  });
+
+  it("produces the exact same preview report across two successive analyses of the same malformed payload", () => {
+    const legacy = { modeles: [{ nom: "Sans id A" }, { id: "m-real" }, {}] };
+    const report1 = buildLegacyPreview(migrateLegacyState(legacy), {}, new Date(2026, 0, 1));
+    const report2 = buildLegacyPreview(migrateLegacyState(legacy), {}, new Date(2026, 0, 1));
+    expect(report1.items).toEqual(report2.items);
+    expect(report1.anomalyItems).toEqual(report2.anomalyItems);
+    expect(report1.anomalyItems).toHaveLength(2); // les deux modèles sans id, jamais masqués
   });
 });

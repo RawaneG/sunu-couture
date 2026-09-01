@@ -137,7 +137,9 @@ export default function LegacySauvegarde() {
 
   function handleVerify() {
     haptic(8);
-    setVerification(verifyLegacyBackup(sourceData, serialized));
+    // La comparaison porte sur la copie brute DE CE snapshot (backup.rawStorageValue),
+    // jamais sur un nouveau localStorage.getItem() — voir legacyBackup.ts.
+    setVerification(verifyLegacyBackup({ normalized: sourceData, rawStorageValue: backup.rawStorageValue }, serialized));
   }
 
   async function handleIndexedDbBackup() {
@@ -208,7 +210,7 @@ export default function LegacySauvegarde() {
             }
           >
             <IconShieldCheck size={18} strokeWidth={2} />
-            Vérifier le fichier téléchargé
+            Vérifier la sauvegarde générée
           </motion.button>
           {!canVerify && <p className="text-[12px] font-semibold text-ink-faint">Téléchargez d'abord la sauvegarde (étape 2).</p>}
           {verification && <VerificationBadge result={verification} />}

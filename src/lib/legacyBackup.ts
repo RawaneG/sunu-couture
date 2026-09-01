@@ -15,23 +15,47 @@ export interface LegacyNormalizedData {
   modeles: Modele[];
 }
 
+/**
+ * Clés `localStorage` NON sensibles réellement utilisées ailleurs dans l'app,
+ * en dehors du store métier — les seules recopiées dans `annex`. Toute autre
+ * clé (y compris une clé future, y compris tout ce qui ressemble à une session
+ * Supabase Auth : `sb-*-auth-token`, `supabase.auth.token`…) est IGNORÉE, même
+ * si elle existe dans `localStorage` au moment de l'export (Phase 6A, correction
+ * blocker sécurité). Une sauvegarde métier ne doit jamais pouvoir embarquer un
+ * access token / refresh token / credential — l'ajout d'une clé ici doit donc
+ * être un choix explicite et vérifié, jamais automatique.
+ * Source : src/lib/theme.ts (`sunu-theme`), src/lib/onboarding.ts (les deux
+ * indices d'onboarding). Aucune autre clé n'est écrite par l'app à ce jour.
+ */
+export const SAFE_LEGACY_ANNEX_KEYS = ["sunu-theme", "sunu-swipe-hint-seen", "sunu-carnet-page-hint-seen"] as const;
+
 export interface LegacyBackupFile {
   format: typeof LEGACY_BACKUP_FORMAT;
   formatVersion: typeof LEGACY_BACKUP_FORMAT_VERSION;
   generatedAt: string;
   storageKey: string;
+  /** Valeur EXACTE, verbatim, de `localStorage.getItem("sunu-couture")` au
+   * moment du snapshot — jamais parsée ni transformée. C'est la copie de
+   * secours réelle (celle qui permet une restauration fidèle) : `null`
+   * seulement si la clé était absente ; sinon toujours la chaîne d'origine
+   * telle quelle, MÊME si elle n'est pas du JSON valide (Phase 6A, correction
+   * blocker « préserver réellement la copie brute »). */
+  rawStorageValue: string | null;
   /** Version `zustand/persist` trouvée dans le stockage, si présente. */
   storedVersion: number | null;
-  /** Payload `.state` exact trouvé dans le stockage — copie brute, non modifiée,
-   * gardée pour une restauration fidèle même si `normalized` ci-dessous change
-   * de forme dans une future version du backup. */
+  /** Vue d'analyse complémentaire : payload `.state` déjà extrait du JSON
+   * parsé, pour lecture humaine / debug. NE remplace JAMAIS `rawStorageValue`
+   * ci-dessus — en cas de JSON corrompu, ce champ vaut `{}` alors que
+   * `rawStorageValue` continue de porter la chaîne corrompue intacte. */
   rawState: unknown;
   /** Renseigné seulement si `localStorage[storageKey]` existait mais n'était pas
-   * du JSON valide — la sauvegarde continue quand même (annex + reste). */
+   * du JSON valide. `rawStorageValue` reste néanmoins préservé intact. */
   rawParseError: string | null;
-  /** Toutes les autres clés `localStorage` (préférences, indices onboarding…),
-   * verbatim — « clés annexes » du plan, aucune perte silencieuse. */
-  annex: Record<string, string>;
+  /** Sous-ensemble ALLOWLISTÉ des autres clés `localStorage` (voir
+   * `SAFE_LEGACY_ANNEX_KEYS`), verbatim — jamais une capture générique de tout
+   * `localStorage` (risque de session Supabase Auth, Phase 6A correction
+   * blocker sécurité). */
+  annex: Partial<Record<(typeof SAFE_LEGACY_ANNEX_KEYS)[number], string>>;
   normalized: LegacyNormalizedData;
   counts: { clients: number; fiches: number; modeles: number };
 }
@@ -52,8 +76,9 @@ function extractStoredVersion(parsed: unknown): number | null {
 }
 
 /** Sous-ensemble de `Storage` utilisé — permet d'injecter un faux storage dans
- * les tests sans dépendre d'un `localStorage` réel. */
-export type StorageLike = Pick<Storage, "getItem" | "key" | "length">;
+ * les tests sans dépendre d'un `localStorage` réel. Lecture seule : aucune
+ * méthode d'écriture n'est jamais appelée par ce module. */
+export type StorageLike = Pick<Storage, "getItem">;
 
 /**
  * Construit la sauvegarde complète en mémoire. Pure : ne lit `storage` qu'en
@@ -64,12 +89,16 @@ export function buildLegacyBackup(
   storage: StorageLike = window.localStorage,
   now: Date = new Date(),
 ): LegacyBackupFile {
-  const rawText = storage.getItem(LEGACY_STORAGE_KEY);
+  // Capturée EN PREMIER, avant tout parsing — c'est cette chaîne, telle
+  // quelle, qui constitue la copie de secours réelle (§1). Rien ci-dessous ne
+  // doit jamais se substituer à elle dans le fichier exporté.
+  const rawStorageValue = storage.getItem(LEGACY_STORAGE_KEY);
+
   let parsed: unknown = null;
   let rawParseError: string | null = null;
-  if (rawText !== null) {
+  if (rawStorageValue !== null) {
     try {
-      parsed = JSON.parse(rawText);
+      parsed = JSON.parse(rawStorageValue);
     } catch (err) {
       rawParseError = err instanceof Error ? err.message : String(err);
     }
@@ -82,10 +111,10 @@ export function buildLegacyBackup(
   // logique de migration concurrente (consigne Phase 6A §5).
   const { clients, fiches, modeles } = migrateLegacyState(state);
 
-  const annex: Record<string, string> = {};
-  for (let i = 0; i < storage.length; i++) {
-    const key = storage.key(i);
-    if (key === null || key === LEGACY_STORAGE_KEY) continue;
+  // Allowlist explicite (§2) — jamais un balayage de tout `localStorage` :
+  // une session Supabase Auth ne doit jamais pouvoir se retrouver ici.
+  const annex: LegacyBackupFile["annex"] = {};
+  for (const key of SAFE_LEGACY_ANNEX_KEYS) {
     const value = storage.getItem(key);
     if (value !== null) annex[key] = value;
   }
@@ -95,6 +124,7 @@ export function buildLegacyBackup(
     formatVersion: LEGACY_BACKUP_FORMAT_VERSION,
     generatedAt: now.toISOString(),
     storageKey: LEGACY_STORAGE_KEY,
+    rawStorageValue,
     storedVersion,
     rawState: state,
     rawParseError,
@@ -118,7 +148,16 @@ export function legacyBackupFileName(now: Date = new Date()): string {
   return `tayoo-sauvegarde-${now.getFullYear()}-${pad2(now.getMonth() + 1)}-${pad2(now.getDate())}.json`;
 }
 
-export type BackupVerificationStatus = "ok" | "invalid_json" | "invalid_structure" | "counts_mismatch";
+export type BackupVerificationStatus = "ok" | "invalid_json" | "invalid_structure" | "raw_mismatch" | "counts_mismatch";
+
+/** Ce qui a servi à construire le snapshot dont on vérifie la sérialisation —
+ * `rawStorageValue` doit venir du MÊME `LegacyBackupFile` que celui qu'on
+ * relit ici (pas d'un nouveau `localStorage.getItem()` à l'instant de la
+ * vérification, qui comparerait deux instants différents pour rien). */
+export interface BackupVerificationSource {
+  normalized: LegacyNormalizedData;
+  rawStorageValue: string | null;
+}
 
 export interface BackupVerificationResult {
   status: BackupVerificationStatus;
@@ -127,6 +166,9 @@ export interface BackupVerificationResult {
   /** Photos tissu + signature + note vocale (fiches) + photos modèle/patron — la
    * « présence/quantité des médias legacy » demandée par le cahier des charges. */
   legacyMediaCount: number;
+  /** La copie brute présente dans le fichier relu est-elle strictement
+   * identique à celle qui a servi à construire le snapshot ? */
+  rawStorageValueMatches: boolean;
   mismatches: string[];
 }
 
@@ -151,12 +193,16 @@ function isNormalizedShape(value: unknown): value is LegacyNormalizedData {
 
 /**
  * Étape 3 du parcours (§3) : relit le JSON généré (jamais l'objet en mémoire —
- * un bug de sérialisation ne serait sinon jamais détecté), et compare ses
- * compteurs à la donnée source actuelle. Échoue clairement (`ok: false`) sur
- * JSON invalide, structure inattendue, ou tout compteur divergent — jamais
- * de "sauvegarde réussie" affiché avant ce résultat.
+ * un bug de sérialisation ne serait sinon jamais détecté). Vérifie DEUX choses
+ * indépendantes : (1) la copie brute (`rawStorageValue`) présente dans le
+ * fichier relu est strictement identique à celle qui a servi à construire le
+ * snapshot — la vraie sauvegarde de secours — et (2) les compteurs de la vue
+ * normalisée correspondent à la donnée source actuelle. Échoue clairement
+ * (`ok: false`) sur JSON invalide, structure inattendue, copie brute altérée,
+ * ou tout compteur divergent — jamais de "sauvegarde réussie" affiché avant
+ * ce résultat.
  */
-export function verifyLegacyBackup(source: LegacyNormalizedData, serialized: string): BackupVerificationResult {
+export function verifyLegacyBackup(source: BackupVerificationSource, serialized: string): BackupVerificationResult {
   const zeroCounts = { clients: 0, fiches: 0, modeles: 0 };
 
   let parsed: unknown;
@@ -168,6 +214,7 @@ export function verifyLegacyBackup(source: LegacyNormalizedData, serialized: str
       ok: false,
       counts: zeroCounts,
       legacyMediaCount: 0,
+      rawStorageValueMatches: false,
       mismatches: ["Le fichier généré n'est pas un JSON valide."],
     };
   }
@@ -179,9 +226,12 @@ export function verifyLegacyBackup(source: LegacyNormalizedData, serialized: str
       ok: false,
       counts: zeroCounts,
       legacyMediaCount: 0,
+      rawStorageValueMatches: false,
       mismatches: ["La structure du fichier ne correspond pas au format de sauvegarde Tayoo attendu."],
     };
   }
+
+  const rawStorageValueMatches = (backup.rawStorageValue ?? null) === source.rawStorageValue;
 
   const backupData = backup.normalized;
   const counts = {
@@ -189,21 +239,36 @@ export function verifyLegacyBackup(source: LegacyNormalizedData, serialized: str
     fiches: backupData.fiches.length,
     modeles: backupData.modeles.length,
   };
-  const sourceCounts = { clients: source.clients.length, fiches: source.fiches.length, modeles: source.modeles.length };
+  const sourceCounts = {
+    clients: source.normalized.clients.length,
+    fiches: source.normalized.fiches.length,
+    modeles: source.normalized.modeles.length,
+  };
   const legacyMediaCount = countLegacyMedia(backupData);
-  const sourceMediaCount = countLegacyMedia(source);
+  const sourceMediaCount = countLegacyMedia(source.normalized);
 
   const mismatches: string[] = [];
+  if (!rawStorageValueMatches) mismatches.push("copie brute (rawStorageValue) : ne correspond pas à la valeur source du snapshot");
   if (counts.clients !== sourceCounts.clients) mismatches.push(`clients : source=${sourceCounts.clients}, sauvegarde=${counts.clients}`);
   if (counts.fiches !== sourceCounts.fiches) mismatches.push(`fiches : source=${sourceCounts.fiches}, sauvegarde=${counts.fiches}`);
   if (counts.modeles !== sourceCounts.modeles) mismatches.push(`modèles : source=${sourceCounts.modeles}, sauvegarde=${counts.modeles}`);
   if (legacyMediaCount !== sourceMediaCount) mismatches.push(`médias : source=${sourceMediaCount}, sauvegarde=${legacyMediaCount}`);
 
+  let status: BackupVerificationStatus;
+  if (!rawStorageValueMatches) {
+    status = "raw_mismatch";
+  } else if (mismatches.length === 0) {
+    status = "ok";
+  } else {
+    status = "counts_mismatch";
+  }
+
   return {
-    status: mismatches.length === 0 ? "ok" : "counts_mismatch",
+    status,
     ok: mismatches.length === 0,
     counts,
     legacyMediaCount,
+    rawStorageValueMatches,
     mismatches,
   };
 }
