@@ -185,10 +185,65 @@ function countLegacyMedia(data: LegacyNormalizedData): number {
   return n;
 }
 
+function isPlainRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+// Chaque élément est validé individuellement — pas seulement "c'est un
+// tableau" — pour que `countLegacyMedia()` ci-dessous puisse lire
+// `tissuPhotos`/`photos`/`patronPhotos` sans jamais planter sur un fichier
+// relu structurellement incompatible (ex: `{"fiches":[null]}`,
+// `{"fiches":[{}]}` sans `tissuPhotos`, ou `tissuPhotos: "abc"`). Phase 6A,
+// correction review « aucun crash sur backup relu malformed » — Option A
+// (validation renforcée en amont plutôt qu'un try/catch autour des compteurs).
+function isValidLegacyClientShape(value: unknown): boolean {
+  return isPlainRecord(value) && typeof value.id === "string";
+}
+
+function isValidLegacyFicheShape(value: unknown): boolean {
+  return isPlainRecord(value) && typeof value.id === "string" && Array.isArray(value.tissuPhotos);
+}
+
+function isValidLegacyModeleShape(value: unknown): boolean {
+  return (
+    isPlainRecord(value) &&
+    typeof value.id === "string" &&
+    Array.isArray(value.photos) &&
+    Array.isArray(value.patronPhotos)
+  );
+}
+
 function isNormalizedShape(value: unknown): value is LegacyNormalizedData {
-  if (!value || typeof value !== "object") return false;
-  const v = value as Record<string, unknown>;
-  return Array.isArray(v.clients) && Array.isArray(v.fiches) && Array.isArray(v.modeles);
+  if (!isPlainRecord(value)) return false;
+  const { clients, fiches, modeles } = value;
+  return (
+    Array.isArray(clients) &&
+    clients.every(isValidLegacyClientShape) &&
+    Array.isArray(fiches) &&
+    fiches.every(isValidLegacyFicheShape) &&
+    Array.isArray(modeles) &&
+    modeles.every(isValidLegacyModeleShape)
+  );
+}
+
+/**
+ * Valide la forme MINIMALE requise d'un backup relu pour que la suite de
+ * `verifyLegacyBackup()` soit sûre — jamais juste `format`+`normalized`
+ * (Phase 6A, correction review « validation stricte du format de backup ») :
+ * `formatVersion` doit être explicitement correct, et `rawStorageValue` doit
+ * être une clé PRÉSENTE (`"rawStorageValue" in backup` — un champ absent
+ * n'est PAS une vraie valeur `null`, `backup.rawStorageValue ?? null` les
+ * confondait à tort) de type `string | null`.
+ */
+function isValidBackupShape(parsed: unknown): parsed is LegacyBackupFile {
+  if (!isPlainRecord(parsed)) return false;
+  if (parsed.format !== LEGACY_BACKUP_FORMAT) return false;
+  if (parsed.formatVersion !== LEGACY_BACKUP_FORMAT_VERSION) return false;
+  if (!("rawStorageValue" in parsed)) return false;
+  const raw = parsed.rawStorageValue;
+  if (raw !== null && typeof raw !== "string") return false;
+  if (!isNormalizedShape(parsed.normalized)) return false;
+  return true;
 }
 
 /**
@@ -219,8 +274,7 @@ export function verifyLegacyBackup(source: BackupVerificationSource, serialized:
     };
   }
 
-  const backup = parsed as Partial<LegacyBackupFile> | null;
-  if (backup?.format !== LEGACY_BACKUP_FORMAT || !isNormalizedShape(backup.normalized)) {
+  if (!isValidBackupShape(parsed)) {
     return {
       status: "invalid_structure",
       ok: false,
@@ -230,8 +284,11 @@ export function verifyLegacyBackup(source: BackupVerificationSource, serialized:
       mismatches: ["La structure du fichier ne correspond pas au format de sauvegarde Tayoo attendu."],
     };
   }
+  const backup = parsed; // narrowed à LegacyBackupFile par isValidBackupShape ci-dessus
 
-  const rawStorageValueMatches = (backup.rawStorageValue ?? null) === source.rawStorageValue;
+  // rawStorageValue est garanti PRÉSENT (pas seulement `undefined` masqué en
+  // `null`) par isValidBackupShape — comparaison directe, sans `?? null`.
+  const rawStorageValueMatches = backup.rawStorageValue === source.rawStorageValue;
 
   const backupData = backup.normalized;
   const counts = {

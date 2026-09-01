@@ -131,7 +131,12 @@ export default function LegacySauvegarde() {
     document.body.appendChild(a);
     a.click();
     a.remove();
-    URL.revokeObjectURL(url);
+    // Révocation différée : selon le navigateur, le traitement du clic (et
+    // donc le vrai démarrage du téléchargement) peut être asynchrone —
+    // révoquer l'Object URL dans la même pile d'exécution que a.click() peut
+    // l'interrompre. setTimeout(0) laisse le navigateur amorcer le
+    // téléchargement avant qu'on libère l'URL (Phase 6A, correction review).
+    setTimeout(() => URL.revokeObjectURL(url), 0);
     setDownloaded(true);
   }
 
@@ -145,9 +150,16 @@ export default function LegacySauvegarde() {
   async function handleIndexedDbBackup() {
     haptic(8);
     setIndexedDbState("checking");
-    const outcome = await saveLegacyBackupToIndexedDb(serialized);
-    setIndexedDbOutcome(outcome);
-    setIndexedDbState("idle");
+    // saveLegacyBackupToIndexedDb() ne lance jamais (toute erreur devient un
+    // outcome "unavailable"/"quota_exceeded") — le try/finally est une défense
+    // en profondeur : même si une future implémentation recommençait à
+    // rejeter, l'écran ne resterait jamais bloqué sur "checking".
+    try {
+      const outcome = await saveLegacyBackupToIndexedDb(serialized);
+      setIndexedDbOutcome(outcome);
+    } finally {
+      setIndexedDbState("idle");
+    }
   }
 
   function toggleOrigin(kind: "client" | "fiche" | "modele", id: string, current: LegacyOrigin) {

@@ -86,8 +86,11 @@ function writeRecord(factory: IDBFactory, dbName: string, storeName: string, key
 /**
  * Étape 4 du parcours (§4) : copie de secours IndexedDB, réalisée SEULEMENT
  * après le backup fichier et SEULEMENT si l'espace estimé semble suffisant.
- * Ne touche jamais `localStorage`. `QuotaExceededError` est capturé et rendu
- * explicite plutôt que de remonter comme une exception non gérée.
+ * Ne touche jamais `localStorage`. Ne lance JAMAIS d'exception vers
+ * l'appelant : `QuotaExceededError` (`"quota_exceeded"`) et toute autre erreur
+ * IndexedDB inattendue — SecurityError, InvalidStateError, échec d'ouverture
+ * ou de transaction, IndexedDB bloqué par le navigateur… (`"unavailable"`) —
+ * sont toujours converties en `LegacyIndexedDbOutcome` structuré.
  */
 export async function saveLegacyBackupToIndexedDb(
   serializedBackup: string,
@@ -122,6 +125,13 @@ export async function saveLegacyBackupToIndexedDb(
     if (isQuotaExceeded(err)) {
       return { status: "quota_exceeded", message: "Mémoire du téléphone pleine — libérez de l'espace, puis réessayez." };
     }
-    throw err;
+    // Toute autre erreur IndexedDB (SecurityError, InvalidStateError, échec
+    // d'ouverture/de transaction, IndexedDB bloqué par le navigateur…) est
+    // rendue explicite ici plutôt que relancée — cette copie est une SECOURS
+    // optionnelle, jamais autorisée à faire planter l'écran ou bloquer
+    // l'appelant dans un état "checking" (Phase 6A, correction review « aucune
+    // exception non gérée »). Le fichier téléchargé reste la sauvegarde réelle.
+    const reason = err instanceof Error ? err.message : String(err);
+    return { status: "unavailable", reason: `Copie de secours IndexedDB indisponible : ${reason}` };
   }
 }

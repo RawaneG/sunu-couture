@@ -2,10 +2,10 @@ import { describe, expect, it, vi } from "vitest";
 import { IDBFactory } from "fake-indexeddb";
 import { saveLegacyBackupToIndexedDb } from "./legacyIndexedDbBackup";
 
-/** Minimal fake IDBFactory whose transaction always errors with a real
- * QuotaExceededError DOMException — fake-indexeddb doesn't simulate quota
- * exhaustion itself, so this hand-rolled double exercises that one path. */
-function quotaExceededFactory(): IDBFactory {
+/** Fake IDBFactory whose transaction always errors with the given error —
+ * fake-indexeddb doesn't simulate quota exhaustion or driver-level failures
+ * itself, so this hand-rolled double exercises those paths deterministically. */
+function transactionErrorFactory(error: unknown): IDBFactory {
   return {
     open: () => {
       const req: Partial<IDBOpenDBRequest> & Record<string, unknown> = {};
@@ -13,14 +13,52 @@ function quotaExceededFactory(): IDBFactory {
         const tx: Partial<IDBTransaction> & Record<string, unknown> = {
           objectStore: () => ({ put: () => undefined }) as unknown as IDBObjectStore,
         };
-        Object.defineProperty(tx, "error", {
-          get: () => new DOMException("Quota dépassé", "QuotaExceededError"),
-        });
+        Object.defineProperty(tx, "error", { get: () => error });
         const db = {
           objectStoreNames: { contains: () => true },
           transaction: () => {
             queueMicrotask(() => (tx.onerror as (() => void) | undefined)?.());
             return tx as unknown as IDBTransaction;
+          },
+          close: () => undefined,
+        };
+        (req as { result?: unknown }).result = db;
+        (req.onsuccess as (() => void) | undefined)?.();
+      });
+      return req as unknown as IDBOpenDBRequest;
+    },
+  } as unknown as IDBFactory;
+}
+
+const quotaExceededFactory = () => transactionErrorFactory(new DOMException("Quota dépassé", "QuotaExceededError"));
+
+/** Fake IDBFactory whose `open()` itself errors — simulates a DB-open failure
+ * (driver unavailable, permission denied, corrupted DB…) before any transaction. */
+function openErrorFactory(error: unknown): IDBFactory {
+  return {
+    open: () => {
+      const req: Partial<IDBOpenDBRequest> & Record<string, unknown> = {};
+      queueMicrotask(() => {
+        (req as { error?: unknown }).error = error;
+        (req.onerror as (() => void) | undefined)?.();
+      });
+      return req as unknown as IDBOpenDBRequest;
+    },
+  } as unknown as IDBFactory;
+}
+
+/** Fake IDBFactory whose `db.transaction(...)` call itself throws
+ * synchronously (e.g. a real browser throwing InvalidStateError/SecurityError
+ * from `transaction()` rather than erroring the transaction asynchronously). */
+function transactionThrowsFactory(error: unknown): IDBFactory {
+  return {
+    open: () => {
+      const req: Partial<IDBOpenDBRequest> & Record<string, unknown> = {};
+      queueMicrotask(() => {
+        const db = {
+          objectStoreNames: { contains: () => true },
+          transaction: () => {
+            throw error;
           },
           close: () => undefined,
         };
@@ -89,6 +127,62 @@ describe("saveLegacyBackupToIndexedDb — IndexedDB indisponible", () => {
       expect(outcome.status).toBe("unavailable");
     } finally {
       vi.unstubAllGlobals();
+    }
+  });
+});
+
+// Phase 6A, correction review « IndexedDB — aucune exception non gérée ».
+describe("saveLegacyBackupToIndexedDb — erreurs IndexedDB inattendues (jamais relancées)", () => {
+  it("reports unavailable (not a rejection) on a SecurityError raised by the transaction", async () => {
+    const factory = transactionErrorFactory(new DOMException("Contexte non sécurisé", "SecurityError"));
+    await expect(saveLegacyBackupToIndexedDb('{"a":1}', { indexedDbFactory: factory })).resolves.toMatchObject({
+      status: "unavailable",
+    });
+  });
+
+  it("reports unavailable on an InvalidStateError raised by the transaction", async () => {
+    const factory = transactionErrorFactory(new DOMException("État invalide", "InvalidStateError"));
+    await expect(saveLegacyBackupToIndexedDb('{"a":1}', { indexedDbFactory: factory })).resolves.toMatchObject({
+      status: "unavailable",
+    });
+  });
+
+  it("reports unavailable on a DB-open failure (driver unavailable, permission denied…)", async () => {
+    const factory = openErrorFactory(new Error("Impossible d'ouvrir la base"));
+    await expect(saveLegacyBackupToIndexedDb('{"a":1}', { indexedDbFactory: factory })).resolves.toMatchObject({
+      status: "unavailable",
+    });
+  });
+
+  it("reports unavailable when db.transaction() itself throws synchronously (blocked/disabled IndexedDB)", async () => {
+    const factory = transactionThrowsFactory(new DOMException("IndexedDB bloqué", "InvalidStateError"));
+    await expect(saveLegacyBackupToIndexedDb('{"a":1}', { indexedDbFactory: factory })).resolves.toMatchObject({
+      status: "unavailable",
+    });
+  });
+
+  it("reports unavailable on a plain, non-DOMException error too", async () => {
+    const factory = transactionErrorFactory(new Error("Erreur générique inattendue"));
+    const outcome = await saveLegacyBackupToIndexedDb('{"a":1}', { indexedDbFactory: factory });
+    expect(outcome.status).toBe("unavailable");
+    if (outcome.status === "unavailable") {
+      expect(outcome.reason).toContain("Erreur générique inattendue");
+    }
+  });
+
+  it("never rejects the returned promise for any of these unexpected errors (the UI never needs a try/catch)", async () => {
+    const factories = [
+      transactionErrorFactory(new DOMException("x", "SecurityError")),
+      transactionErrorFactory(new DOMException("x", "InvalidStateError")),
+      openErrorFactory(new Error("open failed")),
+      transactionThrowsFactory(new DOMException("x", "InvalidStateError")),
+    ];
+    for (const factory of factories) {
+      // Si la promesse rejetait, `.resolves` échouerait ici avec le rejet —
+      // c'est la preuve elle-même, pas juste une assertion sur la forme.
+      await expect(saveLegacyBackupToIndexedDb('{"a":1}', { indexedDbFactory: factory })).resolves.toEqual(
+        expect.objectContaining({ status: "unavailable" }),
+      );
     }
   });
 });

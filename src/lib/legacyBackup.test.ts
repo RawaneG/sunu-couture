@@ -5,6 +5,7 @@ import {
   verifyLegacyBackup,
   legacyBackupFileName,
   LEGACY_BACKUP_FORMAT,
+  LEGACY_BACKUP_FORMAT_VERSION,
   SAFE_LEGACY_ANNEX_KEYS,
   type StorageLike,
 } from "./legacyBackup";
@@ -25,6 +26,19 @@ function fakeStorage(entries: Record<string, string>): StorageLike & { setItem: 
 
 function persistedPayload(state: unknown, version = 12): string {
   return JSON.stringify({ state, version });
+}
+
+/** A structurally-valid backup envelope (right format/formatVersion/rawStorageValue
+ * shape) that tests can layer specific mutations onto — building it by hand each
+ * time would obscure which single deviation each test is actually about. */
+function validBackupEnvelope(overrides: Record<string, unknown> = {}): Record<string, unknown> {
+  return {
+    format: LEGACY_BACKUP_FORMAT,
+    formatVersion: LEGACY_BACKUP_FORMAT_VERSION,
+    rawStorageValue: "raw",
+    normalized: { clients: [], fiches: [], modeles: [] },
+    ...overrides,
+  };
 }
 
 describe("buildLegacyBackup — export", () => {
@@ -209,11 +223,9 @@ describe("verifyLegacyBackup — vérification", () => {
       normalized: { clients: [{ id: "c1", name: "Awa", phone: "77", photo: null, colorSeed: "indigo" }], fiches: [], modeles: [] },
       rawStorageValue: "raw",
     };
-    const tamperedBackup = JSON.stringify({
-      format: "tayoo-legacy-backup",
-      rawStorageValue: "raw",
-      normalized: { clients: [], fiches: [], modeles: [] }, // client silently dropped
-    });
+    const tamperedBackup = JSON.stringify(
+      validBackupEnvelope({ normalized: { clients: [], fiches: [], modeles: [] } }), // client silently dropped
+    );
     const result = verifyLegacyBackup(source, tamperedBackup);
     expect(result.status).toBe("counts_mismatch");
     expect(result.ok).toBe(false);
@@ -222,11 +234,9 @@ describe("verifyLegacyBackup — vérification", () => {
 
   it("fails clearly, with its own distinct status, when the raw copy itself doesn't match — even if the counters happen to agree", () => {
     const source = { normalized: { clients: [], fiches: [], modeles: [] }, rawStorageValue: "original-raw-value" };
-    const tampered = JSON.stringify({
-      format: "tayoo-legacy-backup",
-      rawStorageValue: "SOMETHING-ELSE", // altered/corrupted during serialization
-      normalized: { clients: [], fiches: [], modeles: [] },
-    });
+    const tampered = JSON.stringify(
+      validBackupEnvelope({ rawStorageValue: "SOMETHING-ELSE" }), // altered/corrupted during serialization
+    );
     const result = verifyLegacyBackup(source, tampered);
     expect(result.status).toBe("raw_mismatch");
     expect(result.ok).toBe(false);
@@ -241,17 +251,120 @@ describe("verifyLegacyBackup — vérification", () => {
       fabricColor: "#000", status: "recu" as const, late: false, createdAt: "2026-01-01T00:00:00.000Z",
     };
     const source = { normalized: { clients: [], fiches: [fiche], modeles: [] }, rawStorageValue: "raw" };
-    const backupSameMedia = JSON.stringify({ format: "tayoo-legacy-backup", rawStorageValue: "raw", normalized: source.normalized });
+    const backupSameMedia = JSON.stringify(validBackupEnvelope({ normalized: source.normalized }));
     expect(verifyLegacyBackup(source, backupSameMedia).status).toBe("ok");
 
     const strippedFiche = { ...fiche, tissuPhotos: [], signature: null, voiceNote: null };
-    const backupMissingMedia = JSON.stringify({
-      format: "tayoo-legacy-backup",
-      rawStorageValue: "raw",
-      normalized: { clients: [], fiches: [strippedFiche], modeles: [] },
-    });
+    const backupMissingMedia = JSON.stringify(
+      validBackupEnvelope({ normalized: { clients: [], fiches: [strippedFiche], modeles: [] } }),
+    );
     const result = verifyLegacyBackup(source, backupMissingMedia);
     expect(result.status).toBe("counts_mismatch");
     expect(result.mismatches.some((m) => m.startsWith("médias"))).toBe(true);
+  });
+});
+
+// Phase 6A, correction review « validation stricte du format de backup ».
+describe("verifyLegacyBackup — validation stricte format/formatVersion/rawStorageValue", () => {
+  const source = { normalized: { clients: [], fiches: [], modeles: [] }, rawStorageValue: null };
+
+  it("rejects a backup with formatVersion absent", () => {
+    const envelope = validBackupEnvelope();
+    delete envelope.formatVersion;
+    const result = verifyLegacyBackup(source, JSON.stringify(envelope));
+    expect(result.status).toBe("invalid_structure");
+  });
+
+  it("rejects a backup with a different formatVersion", () => {
+    const result = verifyLegacyBackup(source, JSON.stringify(validBackupEnvelope({ formatVersion: 999 })));
+    expect(result.status).toBe("invalid_structure");
+  });
+
+  it("rejects a backup with rawStorageValue absent — not the same as it being explicitly null", () => {
+    const envelope = validBackupEnvelope({ rawStorageValue: null });
+    delete envelope.rawStorageValue; // la clé elle-même disparaît du JSON
+    const serialized = JSON.stringify(envelope);
+    expect(serialized).not.toContain("rawStorageValue"); // confirme que la clé est bien absente, pas juste vide
+    const result = verifyLegacyBackup(source, serialized);
+    expect(result.status).toBe("invalid_structure");
+  });
+
+  it("rejects a backup built with rawStorageValue: undefined (JSON.stringify drops it, same as absent)", () => {
+    const envelope = validBackupEnvelope({ rawStorageValue: undefined });
+    const serialized = JSON.stringify(envelope);
+    expect(serialized).not.toContain("rawStorageValue");
+    const result = verifyLegacyBackup(source, serialized);
+    expect(result.status).toBe("invalid_structure");
+  });
+
+  it("rejects a backup where rawStorageValue has the wrong type (number)", () => {
+    const result = verifyLegacyBackup(source, JSON.stringify(validBackupEnvelope({ rawStorageValue: 123 })));
+    expect(result.status).toBe("invalid_structure");
+  });
+
+  it("accepts rawStorageValue explicitly null when the rest is valid", () => {
+    const result = verifyLegacyBackup(
+      { normalized: { clients: [], fiches: [], modeles: [] }, rawStorageValue: null },
+      JSON.stringify(validBackupEnvelope({ rawStorageValue: null })),
+    );
+    expect(result.status).toBe("ok");
+  });
+
+  it("accepts a genuine string rawStorageValue when the rest is valid", () => {
+    const result = verifyLegacyBackup(
+      { normalized: { clients: [], fiches: [], modeles: [] }, rawStorageValue: "the-raw-value" },
+      JSON.stringify(validBackupEnvelope({ rawStorageValue: "the-raw-value" })),
+    );
+    expect(result.status).toBe("ok");
+  });
+});
+
+// Phase 6A, correction review « aucun crash sur backup relu malformed ».
+describe("verifyLegacyBackup — jamais de throw sur un backup structurellement malformé", () => {
+  const source = { normalized: { clients: [], fiches: [], modeles: [] }, rawStorageValue: "raw" };
+
+  function verifyStructure(normalized: unknown) {
+    return () => verifyLegacyBackup(source, JSON.stringify(validBackupEnvelope({ normalized })));
+  }
+
+  it("never throws, and reports invalid_structure, when a fiche entry is null", () => {
+    expect(verifyStructure({ clients: [], fiches: [null], modeles: [] })).not.toThrow();
+    expect(verifyStructure({ clients: [], fiches: [null], modeles: [] })().status).toBe("invalid_structure");
+  });
+
+  it("never throws, and reports invalid_structure, when a modele entry is null", () => {
+    expect(verifyStructure({ clients: [], fiches: [], modeles: [null] })).not.toThrow();
+    expect(verifyStructure({ clients: [], fiches: [], modeles: [null] })().status).toBe("invalid_structure");
+  });
+
+  it("never throws, and reports invalid_structure, on a fiche missing tissuPhotos entirely", () => {
+    const bareFiche = { id: "f1" }; // pas de tissuPhotos
+    expect(verifyStructure({ clients: [], fiches: [bareFiche], modeles: [] })).not.toThrow();
+    expect(verifyStructure({ clients: [], fiches: [bareFiche], modeles: [] })().status).toBe("invalid_structure");
+  });
+
+  it("never throws, and reports invalid_structure, on a modele missing photos", () => {
+    const bareModele = { id: "m1", patronPhotos: [] }; // pas de photos
+    expect(verifyStructure({ clients: [], fiches: [], modeles: [bareModele] })).not.toThrow();
+    expect(verifyStructure({ clients: [], fiches: [], modeles: [bareModele] })().status).toBe("invalid_structure");
+  });
+
+  it("never throws, and reports invalid_structure, on a modele missing patronPhotos", () => {
+    const bareModele = { id: "m1", photos: [] }; // pas de patronPhotos
+    expect(verifyStructure({ clients: [], fiches: [], modeles: [bareModele] })).not.toThrow();
+    expect(verifyStructure({ clients: [], fiches: [], modeles: [bareModele] })().status).toBe("invalid_structure");
+  });
+
+  it("never throws, and reports invalid_structure, when tissuPhotos has the wrong type (string instead of array)", () => {
+    const badFiche = { id: "f1", tissuPhotos: "abc" };
+    expect(verifyStructure({ clients: [], fiches: [badFiche], modeles: [] })).not.toThrow();
+    expect(verifyStructure({ clients: [], fiches: [badFiche], modeles: [] })().status).toBe("invalid_structure");
+  });
+
+  it("keeps behaving normally (unchanged) when every array is genuinely well-formed", () => {
+    const goodFiche = { id: "f1", tissuPhotos: [] };
+    const goodModele = { id: "m1", photos: [], patronPhotos: [] };
+    const result = verifyStructure({ clients: [], fiches: [goodFiche], modeles: [goodModele] })();
+    expect(result.status).not.toBe("invalid_structure");
   });
 });
