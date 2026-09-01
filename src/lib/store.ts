@@ -11,6 +11,11 @@ function uid(prefix: string): string {
   return `${prefix}${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 }
 
+/** Clé `localStorage` du store persisté — seule source de vérité pour tout
+ * code qui doit lire le stockage brut en dehors du store lui-même (Phase 6A,
+ * `legacyBackup.ts`). Ne JAMAIS dupliquer cette chaîne ailleurs. */
+export const LEGACY_STORAGE_KEY = "sunu-couture";
+
 function normalizePhone(phone: string | null | undefined): string {
   return (phone ?? "").replace(/\D/g, "");
 }
@@ -39,7 +44,10 @@ export function nextFicheSlot(fiches: Fiche[]): { carnetNumero: number; numero: 
   return { carnetNumero: activeCarnet, numero: maxInCarnet + 1 };
 }
 
-const seedClients: Client[] = [
+// Exportées pour la Phase 6A (`legacyClassification.ts`) : une donnée n'est
+// « démo » que si elle est identique, id ET champs, à l'un de ces enregistrements
+// — jamais une heuristique approximative (§5.1.3, docs/refonte/02-PLAN-MIGRATION.md).
+export const seedClients: Client[] = [
   { id: "c1", name: "Awa Diouf", phone: "77 512 44 08", photo: null, colorSeed: "indigo" },
   { id: "c2", name: "Modou Fall", phone: "76 233 90 17", photo: null, colorSeed: "terracotta" },
   { id: "c3", name: "Fatou Ndiaye", phone: "70 845 21 63", photo: null, colorSeed: "teal" },
@@ -57,7 +65,7 @@ function seedChamps(values: Partial<Record<FicheChampKey, string>>): Record<Fich
   return champs;
 }
 
-const seedFiches: Fiche[] = [
+export const seedFiches: Fiche[] = [
   {
     id: "f1",
     carnetNumero: 1,
@@ -253,10 +261,16 @@ function colorSeedFor(seedString: string): string {
   return palette[sum % palette.length];
 }
 
-/** Upgrades a v8-or-earlier persisted store (separate clients/orders/fiches) to the unified v9 Fiche model. Exported standalone so the migration's business rules can be tested without going through the persist middleware. */
-export function migrateLegacyState(persisted: unknown): { clients: Client[]; fiches: Fiche[] } {
+/** Upgrades a v8-or-earlier persisted store (separate clients/orders/fiches) to the unified v9 Fiche model. Exported standalone so the migration's business rules can be tested without going through the persist middleware.
+ *
+ * `modeles` was folded in additively for Phase 6A (`legacyBackup.ts`) — no
+ * legacy version of the store ever wrote it in a different shape than today's
+ * `Modele[]`, so it only needs defaulting/shape-guarding, never rewriting like
+ * clients/orders/fiches above. */
+export function migrateLegacyState(persisted: unknown): { clients: Client[]; fiches: Fiche[]; modeles: Modele[] } {
   const state = (persisted ?? {}) as {
     clients?: (Client & { measurementsNote?: VoiceNote | null; measurementsText?: string | null })[];
+    modeles?: Partial<Modele>[];
     orders?: {
       id: string;
       clientId: string;
@@ -433,7 +447,18 @@ export function migrateLegacyState(persisted: unknown): { clients: Client[]; fic
     if (legacy.text && !target.description) target.description = legacy.text;
   }
 
-  return { clients, fiches };
+  // Defensive shape-guarding only — no legacy version stored modeles under a
+  // different shape, so unlike clients/fiches above this never needs field
+  // remapping, only defaulting for a persisted file older than the feature.
+  const modeles: Modele[] = (state.modeles ?? []).map((m) => ({
+    id: m.id ?? uid("m"),
+    nom: m.nom ?? "",
+    photos: Array.isArray(m.photos) ? m.photos : [],
+    patronPhotos: Array.isArray(m.patronPhotos) ? m.patronPhotos : [],
+    createdAt: m.createdAt ?? new Date(0).toISOString(),
+  }));
+
+  return { clients, fiches, modeles };
 }
 
 export const useStore = create<StoreState>()(

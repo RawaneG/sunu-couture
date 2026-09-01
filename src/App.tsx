@@ -14,6 +14,7 @@ import FicheNew from "./pages/FicheNew";
 import Catalogue from "./pages/Catalogue";
 import ModeleNew from "./pages/ModeleNew";
 import ModeleDetail from "./pages/ModeleDetail";
+import LegacySauvegarde from "./pages/LegacySauvegarde";
 import PhoneEntry from "./pages/auth/PhoneEntry";
 import OtpVerify from "./pages/auth/OtpVerify";
 import WorkshopName from "./pages/auth/WorkshopName";
@@ -84,6 +85,11 @@ export default function App() {
               <Route index element={<OrdersEmptyState />} />
               <Route path=":id" element={<OrderToFicheRedirect />} />
             </Route>
+            {/* Phase 6A — outil de sauvegarde/prévisualisation avant migration cloud
+                (docs/refonte/02-PLAN-MIGRATION.md §5). Pas d'entrée dans le BottomNav
+                (4 icônes, usage quotidien) — c'est un outil ponctuel du porteur, pas
+                un écran que le tailleur visite au jour le jour. */}
+            <Route path="/sauvegarde" element={<LegacySauvegarde />} />
             <Route path="/clients/nouveau" element={<ClientNew />} />
             <Route path="/clients" element={<ClientsLayout />}>
               <Route index element={<ClientsEmptyState />} />

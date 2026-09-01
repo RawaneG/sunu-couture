@@ -209,3 +209,16 @@ export const IconTrash = base(
     <path d="M4.5 7h15M9.5 7V5a1.5 1.5 0 0 1 1.5-1.5h2A1.5 1.5 0 0 1 14.5 5v2M18 7l-.7 12a2 2 0 0 1-2 1.9H8.7a2 2 0 0 1-2-1.9L6 7" />
   </>
 );
+// Phase 6A — assistant de sauvegarde/prévisualisation (docs/refonte/02-PLAN-MIGRATION.md §5)
+export const IconDownload = base(
+  <>
+    <path d="M12 4v11.5M7.5 11 12 15.5 16.5 11" />
+    <path d="M5 18.5h14" />
+  </>
+);
+export const IconShieldCheck = base(
+  <>
+    <path d="M12 3.5 19 6.3v5.2c0 4.6-3 7.9-7 9-4-1.1-7-4.4-7-9V6.3Z" />
+    <path d="M9 12 11.2 14.2 15.5 9.8" />
+  </>
+);

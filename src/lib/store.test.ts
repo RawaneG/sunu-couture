@@ -196,4 +196,26 @@ describe("migrateLegacyState — v8 → v9", () => {
     const { fiches } = migrateLegacyState(legacy);
     expect(fiches[0].description).toBe("Épaule 46, poitrine 102");
   });
+
+  // Phase 6A (docs/refonte/02-PLAN-MIGRATION.md §5.1.2) : migrateLegacyState()
+  // doit aussi produire `modeles`, sans jamais supprimer une donnée inattendue.
+  it("carries modeles over unchanged when already shaped like today's Modele[]", () => {
+    const legacy = {
+      modeles: [{ id: "m1", nom: "Boubou wax", photos: [{ id: "p1", dataUrl: "data:x" }], patronPhotos: [], createdAt: "2026-01-01T00:00:00.000Z" }],
+    };
+    const { modeles } = migrateLegacyState(legacy);
+    expect(modeles).toEqual(legacy.modeles);
+  });
+
+  it("defaults missing modele fields instead of dropping the record (no silent data loss)", () => {
+    const legacy = { modeles: [{ id: "m1" }] };
+    const { modeles } = migrateLegacyState(legacy);
+    expect(modeles).toHaveLength(1);
+    expect(modeles[0]).toMatchObject({ id: "m1", nom: "", photos: [], patronPhotos: [] });
+  });
+
+  it("defaults modeles to an empty array on a persisted store from before the catalogue feature existed", () => {
+    const { modeles } = migrateLegacyState({ clients: [], fiches: [] });
+    expect(modeles).toEqual([]);
+  });
 });
