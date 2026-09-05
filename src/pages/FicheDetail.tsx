@@ -17,7 +17,8 @@ import { haptic } from "../lib/haptics";
 import { formatFullDateWithYear, toDateInputValue, fromDateInputValue, sanitizePhone } from "../lib/format";
 import { detectDominantColor } from "../lib/color";
 import { FICHE_MESURE_KEYS, FICHE_MESURE_LABELS, FICHE_INFO_KEYS, FICHE_INFO_LABELS } from "../lib/types";
-import type { Modele } from "../lib/types";
+import type { Modele, FicheChampKey } from "../lib/types";
+import type { FicheInfoPatch } from "../repositories/FicheRepository";
 
 export default function FicheDetail() {
   const { id } = useParams();
@@ -25,43 +26,111 @@ export default function FicheDetail() {
   const { fiches: ficheRepository, media: mediaRepository, payments: paymentRepository } = useRepositories();
   const [confirmDeleteOpen, setConfirmDeleteOpen] = useState(false);
   const [catalogueOpen, setCatalogueOpen] = useState(false);
+  const [writeError, setWriteError] = useState<string | null>(null);
 
-  const fiche = useFiche(id ?? "");
+  const ficheState = useFiche(id ?? "");
   // `useClient` ne peut pas être appelé conditionnellement (règle des Hooks) —
   // une chaîne vide ne correspond à aucun id, comportement identique à avant.
-  const client = useClient(fiche?.clientId ?? "");
+  // `loading`/`error` dégradent silencieusement vers "pas de client" ici :
+  // c'est un affichage secondaire (téléphone de secours), jamais une
+  // redirection — seule l'absence de la FICHE elle-même en déclenche une,
+  // et seulement une fois l'hydratation terminée (voir plus bas).
+  const clientState = useClient(ficheState.status === "ready" ? (ficheState.data?.clientId ?? "") : "");
+  const client = clientState.status === "ready" ? clientState.data : undefined;
+
+  if (ficheState.status === "loading") {
+    return (
+      <div role="status" aria-live="polite" className="flex min-h-[50vh] flex-col items-center justify-center gap-3 px-4 text-center">
+        <p className="text-sm font-semibold text-ink-soft">Chargement de la fiche…</p>
+      </div>
+    );
+  }
+  if (ficheState.status === "error") {
+    return (
+      <div role="alert" className="flex min-h-[50vh] flex-col items-center justify-center gap-3 px-4 text-center">
+        <p className="text-sm font-semibold text-terracotta">
+          La fiche n'a pas pu être chargée. Vérifie ta connexion et réessaie.
+        </p>
+      </div>
+    );
+  }
+  // Ici, et seulement ici (status === "ready"), `undefined` signifie
+  // réellement "introuvable" — jamais pendant un chargement en cours.
+  const fiche = ficheState.data;
   if (!fiche) return <Navigate to="/" replace />;
 
   const phoneDigits = (fiche.telephone || client?.phone || "").replace(/\s/g, "");
 
-  function handleDelete() {
-    if (!fiche) return;
-    haptic(16);
-    ficheRepository.remove(fiche.id);
-    navigate("/", { replace: true });
-  }
+  // Écritures fiche — la mutation Zustand locale reste immédiate ; l'échec
+  // (réseau, validation) est surfacé sans jamais devenir un rejet non géré.
+  // Expressions `const` (pas des déclarations `function`) : nécessaire pour
+  // que TypeScript conserve le rétrécissement de `fiche` (non-`undefined`,
+  // vérifié juste au-dessus) à l'intérieur de ces fermetures.
+  const writeFicheInfo = (patch: FicheInfoPatch) => {
+    ficheRepository.setInfo(fiche.id, patch).catch(() => {
+      setWriteError("Une modification n'a pas pu être enregistrée. Réessaie.");
+    });
+  };
+  const writeFicheChamp = (key: FicheChampKey, valeur: string) => {
+    ficheRepository.setChamp(fiche.id, key, valeur).catch(() => {
+      setWriteError("Une modification n'a pas pu être enregistrée. Réessaie.");
+    });
+  };
+  const writeStrikeChamp = (key: FicheChampKey) => {
+    ficheRepository.strikeChamp(fiche.id, key).catch(() => {
+      setWriteError("Une modification n'a pas pu être enregistrée. Réessaie.");
+    });
+  };
+  const writeRestoreChamp = (key: FicheChampKey) => {
+    ficheRepository.restoreChamp(fiche.id, key).catch(() => {
+      setWriteError("Une modification n'a pas pu être enregistrée. Réessaie.");
+    });
+  };
 
-  async function handleAddPhoto(dataUrl: string) {
-    if (!fiche) return;
+  const handleDelete = async () => {
+    haptic(16);
+    try {
+      await ficheRepository.remove(fiche.id);
+      navigate("/", { replace: true });
+    } catch {
+      setWriteError("La suppression a échoué. Réessaie.");
+    }
+  };
+
+  const handleAddPhoto = async (dataUrl: string) => {
     const isFirstPhoto = fiche.tissuPhotos.length === 0;
-    mediaRepository.addFichePhoto(fiche.id, dataUrl);
+    try {
+      await mediaRepository.addFichePhoto(fiche.id, dataUrl);
+    } catch {
+      setWriteError("La photo n'a pas pu être ajoutée. Réessaie.");
+      return;
+    }
     if (isFirstPhoto) {
       try {
         const hex = await detectDominantColor(dataUrl);
-        ficheRepository.setInfo(fiche.id, { fabricColor: hex });
+        writeFicheInfo({ fabricColor: hex });
       } catch {
         // couleur non détectée automatiquement — le tailleur peut toujours l'ajuster
       }
     }
-  }
+  };
 
-  function handlePickModele(modele: Modele) {
-    if (!fiche) return;
+  const handleRemovePhoto = (photoId: string) => {
+    mediaRepository.removeFichePhoto(fiche.id, photoId).catch(() => {
+      setWriteError("La suppression de la photo a échoué. Réessaie.");
+    });
+  };
+
+  const handlePickModele = async (modele: Modele) => {
     haptic(16);
     const photos = [...modele.photos, ...modele.patronPhotos];
-    for (const photo of photos) mediaRepository.addFichePhoto(fiche.id, photo.dataUrl);
+    try {
+      for (const photo of photos) await mediaRepository.addFichePhoto(fiche.id, photo.dataUrl);
+    } catch {
+      setWriteError("Certaines photos n'ont pas pu être ajoutées. Réessaie.");
+    }
     setCatalogueOpen(false);
-  }
+  };
 
   const headerActions = (
     <>
@@ -103,6 +172,12 @@ export default function FicheDetail() {
         onClose={() => setConfirmDeleteOpen(false)}
       />
 
+      {writeError && (
+        <p role="alert" className="px-4 pt-2 text-[13px] font-semibold text-terracotta lg:px-10">
+          {writeError}
+        </p>
+      )}
+
       <motion.div
         key={fiche.id}
         initial={{ opacity: 0, y: 10 }}
@@ -118,16 +193,16 @@ export default function FicheDetail() {
           </p>
 
           <div className="mt-5 flex flex-col gap-2">
-            <NomField label="Nom" value={fiche.nom} onChange={(v) => ficheRepository.setInfo(fiche.id, { nom: v })} />
-            <NomField label="Prénom" value={fiche.prenom} onChange={(v) => ficheRepository.setInfo(fiche.id, { prenom: v })} />
-            <TelephoneField value={fiche.telephone} onChange={(v) => ficheRepository.setInfo(fiche.id, { telephone: v })} />
+            <NomField label="Nom" value={fiche.nom} onChange={(v) => writeFicheInfo({ nom: v })} />
+            <NomField label="Prénom" value={fiche.prenom} onChange={(v) => writeFicheInfo({ prenom: v })} />
+            <TelephoneField value={fiche.telephone} onChange={(v) => writeFicheInfo({ telephone: v })} />
           </div>
 
           <div className="mt-4">
             <p className="mb-2 text-[13px] font-bold text-ink-soft">Note vocale</p>
             <VoiceRecorder
               value={fiche.voiceNote}
-              onChange={(v) => ficheRepository.setInfo(fiche.id, { voiceNote: v })}
+              onChange={(v) => writeFicheInfo({ voiceNote: v })}
               label="cette fiche"
               persist
             />
@@ -140,9 +215,9 @@ export default function FicheDetail() {
                   key={key}
                   label={FICHE_MESURE_LABELS[key]}
                   champ={fiche.champs[key]}
-                  onChange={(v) => ficheRepository.setChamp(fiche.id, key, v)}
-                  onStrike={() => ficheRepository.strikeChamp(fiche.id, key)}
-                  onRestore={() => ficheRepository.restoreChamp(fiche.id, key)}
+                  onChange={(v) => writeFicheChamp(key, v)}
+                  onStrike={() => writeStrikeChamp(key)}
+                  onRestore={() => writeRestoreChamp(key)}
                 />
               ))}
             </section>
@@ -153,32 +228,32 @@ export default function FicheDetail() {
                   key={key}
                   label={FICHE_INFO_LABELS[key]}
                   champ={fiche.champs[key]}
-                  onChange={(v) => ficheRepository.setChamp(fiche.id, key, v)}
-                  onStrike={() => ficheRepository.strikeChamp(fiche.id, key)}
-                  onRestore={() => ficheRepository.restoreChamp(fiche.id, key)}
+                  onChange={(v) => writeFicheChamp(key, v)}
+                  onStrike={() => writeStrikeChamp(key)}
+                  onRestore={() => writeRestoreChamp(key)}
                 />
               ))}
 
-              <PrixChampCell value={fiche.price} onChange={(price) => ficheRepository.setInfo(fiche.id, { price })} />
-              <AvanceChampCell value={fiche.avance} onChange={(avance) => ficheRepository.setInfo(fiche.id, { avance })} />
+              <PrixChampCell value={fiche.price} onChange={(price) => writeFicheInfo({ price })} />
+              <AvanceChampCell value={fiche.avance} onChange={(avance) => writeFicheInfo({ avance })} />
               <ResteChampCell reste={paymentRepository.getBalance(fiche.id).reste} />
 
-              <FicheDateField label="Retrait le" value={fiche.dueDate} onChange={(v) => ficheRepository.setInfo(fiche.id, { dueDate: v })} />
-              <FicheDateField label="Soldé le" value={fiche.soldeLe} onChange={(v) => ficheRepository.setInfo(fiche.id, { soldeLe: v })} />
+              <FicheDateField label="Retrait le" value={fiche.dueDate} onChange={(v) => writeFicheInfo({ dueDate: v })} />
+              <FicheDateField label="Soldé le" value={fiche.soldeLe} onChange={(v) => writeFicheInfo({ soldeLe: v })} />
 
               <div className="mt-4">
                 <p className="mb-2 text-[13px] font-bold text-ink-soft">Photos du tissu</p>
                 <FabricPhotos
                   photos={fiche.tissuPhotos}
                   onAdd={handleAddPhoto}
-                  onRemove={(photoId) => mediaRepository.removeFichePhoto(fiche.id, photoId)}
+                  onRemove={handleRemovePhoto}
                   onPickCatalogue={() => setCatalogueOpen(true)}
                 />
               </div>
 
               <div className="mt-4">
                 <p className="mb-2 text-[13px] font-bold text-ink-soft">Signature client</p>
-                <SignaturePad value={fiche.signature} onChange={(dataUrl) => ficheRepository.setInfo(fiche.id, { signature: dataUrl })} />
+                <SignaturePad value={fiche.signature} onChange={(dataUrl) => writeFicheInfo({ signature: dataUrl })} />
               </div>
             </section>
           </div>

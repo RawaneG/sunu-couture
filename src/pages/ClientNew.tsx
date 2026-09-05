@@ -14,14 +14,23 @@ export default function ClientNew() {
   const [name, setName] = useState("");
   const [phone, setPhone] = useState("");
   const [photo, setPhoto] = useState<string | null>(null);
+  const [submitting, setSubmitting] = useState(false);
+  const [submitError, setSubmitError] = useState<string | null>(null);
 
-  const canSubmit = name.trim().length > 0;
+  const canSubmit = name.trim().length > 0 && !submitting;
 
-  function handleSubmit() {
+  async function handleSubmit() {
     if (!canSubmit) return;
     haptic(16);
-    const id = clientRepository.add({ name, phone, photo });
-    navigate(`/clients/${id}`);
+    setSubmitting(true);
+    setSubmitError(null);
+    try {
+      const id = await clientRepository.add({ name, phone, photo });
+      navigate(`/clients/${id}`);
+    } catch {
+      setSubmitError("Le client n'a pas pu être enregistré. Réessaie.");
+      setSubmitting(false);
+    }
   }
 
   return (
@@ -44,6 +53,12 @@ export default function ClientNew() {
             onPhoneChange={setPhone}
             autoFocusName
           />
+
+          {submitError && (
+            <p role="alert" className="text-[13px] font-semibold text-terracotta">
+              {submitError}
+            </p>
+          )}
 
           <motion.button
             type="button"

@@ -26,43 +26,44 @@ export class LocalStorageFicheRepository implements FicheRepository {
     return useStore.getState().fichesForClient(clientId);
   }
 
-  add(input?: NewFicheInput): string {
+  // Mutations asynchrones (corr. R, Phase 7A) — voir LocalStorageClientRepository.
+  async add(input?: NewFicheInput): Promise<string> {
     const parsed = parseOrThrow(newFicheInputSchema, input, "FicheRepository.add");
     return useStore.getState().addFiche(parsed);
   }
 
-  setInfo(id: string, patch: FicheInfoPatch): void {
+  async setInfo(id: string, patch: FicheInfoPatch): Promise<void> {
     const parsed = parseOrThrow(ficheInfoPatchSchema, patch, "FicheRepository.setInfo");
     useStore.getState().setFicheInfo(id, parsed);
   }
 
-  setChamp(id: string, key: FicheChampKey, valeur: string): void {
+  async setChamp(id: string, key: FicheChampKey, valeur: string): Promise<void> {
     const parsedKey = parseOrThrow(ficheChampKeySchemaExport, key, "FicheRepository.setChamp(key)");
     const parsedValeur = parseOrThrow(champValeurSchema, valeur, "FicheRepository.setChamp(valeur)");
     useStore.getState().setFicheChamp(id, parsedKey, parsedValeur);
   }
 
-  strikeChamp(id: string, key: FicheChampKey): void {
+  async strikeChamp(id: string, key: FicheChampKey): Promise<void> {
     useStore.getState().strikeFicheChamp(id, key);
   }
 
-  restoreChamp(id: string, key: FicheChampKey): void {
+  async restoreChamp(id: string, key: FicheChampKey): Promise<void> {
     useStore.getState().restoreFicheChamp(id, key);
   }
 
-  setStatus(id: string, status: OrderStatus): void {
+  async setStatus(id: string, status: OrderStatus): Promise<void> {
     useStore.getState().setFicheStatus(id, status);
   }
 
-  advance(id: string): void {
+  async advance(id: string): Promise<void> {
     useStore.getState().advanceFiche(id);
   }
 
-  remove(id: string): void {
+  async remove(id: string): Promise<void> {
     useStore.getState().deleteFiche(id);
   }
 
-  removeMany(ids: string[]): void {
+  async removeMany(ids: string[]): Promise<void> {
     useStore.getState().deleteFiches(ids);
   }
 

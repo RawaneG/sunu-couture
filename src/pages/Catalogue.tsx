@@ -15,6 +15,7 @@ export default function Catalogue() {
   const [selectMode, setSelectMode] = useState(false);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [confirmDeleteOpen, setConfirmDeleteOpen] = useState(false);
+  const [deleteError, setDeleteError] = useState<string | null>(null);
 
   function handleAdd() {
     haptic(16);
@@ -43,12 +44,16 @@ export default function Catalogue() {
     setSelectedIds(allSelected ? new Set() : new Set(modeles.map((m) => m.id)));
   }
 
-  function handleBulkDelete() {
+  async function handleBulkDelete() {
     haptic(16);
-    modeleRepository.removeMany([...selectedIds]);
-    setSelectedIds(new Set());
-    setSelectMode(false);
     setConfirmDeleteOpen(false);
+    try {
+      await modeleRepository.removeMany([...selectedIds]);
+      setSelectedIds(new Set());
+      setSelectMode(false);
+    } catch {
+      setDeleteError("La suppression a échoué. Réessaie.");
+    }
   }
 
   const addButton = (
@@ -75,6 +80,12 @@ export default function Catalogue() {
         onConfirm={handleBulkDelete}
         onClose={() => setConfirmDeleteOpen(false)}
       />
+
+      {deleteError && (
+        <p role="alert" className="px-4 pt-2 text-[13px] font-semibold text-terracotta lg:px-10">
+          {deleteError}
+        </p>
+      )}
 
       <div className="px-4 lg:px-10 py-2 lg:py-4 max-w-3xl lg:mx-auto">
         {modeles.length === 0 ? (

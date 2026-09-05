@@ -7,33 +7,34 @@ export class LocalStorageMediaRepository implements MediaRepository {
   listFichePhotos(ficheId: string) {
     return useStore.getState().fiches.find((f) => f.id === ficheId)?.tissuPhotos ?? [];
   }
-  addFichePhoto(ficheId: string, dataUrl: string): void {
+  // Mutations asynchrones (corr. R, Phase 7A) — voir LocalStorageClientRepository.
+  async addFichePhoto(ficheId: string, dataUrl: string): Promise<void> {
     const parsed = parseOrThrow(dataUrlSchema, dataUrl, "MediaRepository.addFichePhoto");
     useStore.getState().addFicheTissuPhoto(ficheId, parsed);
   }
-  removeFichePhoto(ficheId: string, photoId: string): void {
+  async removeFichePhoto(ficheId: string, photoId: string): Promise<void> {
     useStore.getState().removeFicheTissuPhoto(ficheId, photoId);
   }
 
   listModelePhotos(modeleId: string) {
     return useStore.getState().modeles.find((m) => m.id === modeleId)?.photos ?? [];
   }
-  addModelePhoto(modeleId: string, dataUrl: string): void {
+  async addModelePhoto(modeleId: string, dataUrl: string): Promise<void> {
     const parsed = parseOrThrow(dataUrlSchema, dataUrl, "MediaRepository.addModelePhoto");
     useStore.getState().addModelePhoto(modeleId, parsed);
   }
-  removeModelePhoto(modeleId: string, photoId: string): void {
+  async removeModelePhoto(modeleId: string, photoId: string): Promise<void> {
     useStore.getState().removeModelePhoto(modeleId, photoId);
   }
 
   listModelePatronPhotos(modeleId: string) {
     return useStore.getState().modeles.find((m) => m.id === modeleId)?.patronPhotos ?? [];
   }
-  addModelePatronPhoto(modeleId: string, dataUrl: string): void {
+  async addModelePatronPhoto(modeleId: string, dataUrl: string): Promise<void> {
     const parsed = parseOrThrow(dataUrlSchema, dataUrl, "MediaRepository.addModelePatronPhoto");
     useStore.getState().addModelePatronPhoto(modeleId, parsed);
   }
-  removeModelePatronPhoto(modeleId: string, photoId: string): void {
+  async removeModelePatronPhoto(modeleId: string, photoId: string): Promise<void> {
     useStore.getState().removeModelePatronPhoto(modeleId, photoId);
   }
 

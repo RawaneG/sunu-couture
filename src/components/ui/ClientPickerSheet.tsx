@@ -27,6 +27,8 @@ export default function ClientPickerSheet({
   const [newPhoto, setNewPhoto] = useState<string | null>(null);
   const [newName, setNewName] = useState("");
   const [newPhone, setNewPhone] = useState("");
+  const [creating, setCreating] = useState(false);
+  const [createError, setCreateError] = useState<string | null>(null);
 
   const filtered = clients.filter((c) => matchesQuery(query, c.name, c.phone));
 
@@ -36,6 +38,8 @@ export default function ClientPickerSheet({
     setNewPhoto(null);
     setNewName("");
     setNewPhone("");
+    setCreating(false);
+    setCreateError(null);
   }
 
   function handleClose() {
@@ -48,10 +52,17 @@ export default function ClientPickerSheet({
     onSelect(id);
   }
 
-  function handleCreate() {
-    if (!newName.trim()) return;
-    const id = clientRepository.add({ name: newName, phone: newPhone, photo: newPhoto });
-    handleSelect(id);
+  async function handleCreate() {
+    if (!newName.trim() || creating) return;
+    setCreating(true);
+    setCreateError(null);
+    try {
+      const id = await clientRepository.add({ name: newName, phone: newPhone, photo: newPhoto });
+      handleSelect(id);
+    } catch {
+      setCreateError("Le client n'a pas pu être enregistré. Réessaie.");
+      setCreating(false);
+    }
   }
 
   if (!open) return null;
@@ -185,13 +196,18 @@ export default function ClientPickerSheet({
                 </div>
 
                 <div className="px-5 pb-5 pt-2">
+                  {createError && (
+                    <p role="alert" className="mb-2 text-[13px] font-semibold text-terracotta">
+                      {createError}
+                    </p>
+                  )}
                   <motion.button
                     type="button"
-                    whileTap={newName.trim() ? { scale: 0.97 } : undefined}
-                    disabled={!newName.trim()}
+                    whileTap={newName.trim() && !creating ? { scale: 0.97 } : undefined}
+                    disabled={!newName.trim() || creating}
                     onClick={() => {
                       haptic(14);
-                      handleCreate();
+                      void handleCreate();
                     }}
                     className="flex w-full items-center justify-center gap-2 rounded-2xl bg-amber-tile px-4 py-3.5 font-bold text-[#2a1c04] shadow-soft disabled:bg-surface-3 disabled:text-ink-faint"
                   >

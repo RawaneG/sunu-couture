@@ -14,20 +14,21 @@ export class LocalStorageModeleRepository implements ModeleRepository {
     return useStore.getState().getModele(id);
   }
 
-  add(): string {
+  // Mutations asynchrones (corr. R, Phase 7A) — voir LocalStorageClientRepository.
+  async add(): Promise<string> {
     return useStore.getState().addModele();
   }
 
-  setNom(id: string, nom: string): void {
+  async setNom(id: string, nom: string): Promise<void> {
     const parsed = parseOrThrow(modeleNomSchema, nom, "ModeleRepository.setNom");
     useStore.getState().setModeleNom(id, parsed);
   }
 
-  remove(id: string): void {
+  async remove(id: string): Promise<void> {
     useStore.getState().removeModele(id);
   }
 
-  removeMany(ids: string[]): void {
+  async removeMany(ids: string[]): Promise<void> {
     useStore.getState().removeModeles(ids);
   }
 

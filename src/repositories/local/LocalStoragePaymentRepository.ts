@@ -20,7 +20,8 @@ export class LocalStoragePaymentRepository implements PaymentRepository {
     return result;
   }
 
-  setAmount(ficheId: string, amount: number): void {
+  // Mutation asynchrone (corr. R, Phase 7A) — voir LocalStorageClientRepository.
+  async setAmount(ficheId: string, amount: number): Promise<void> {
     const parsed = parseOrThrow(amountSchema, amount, "PaymentRepository.setAmount");
     useStore.getState().setFicheInfo(ficheId, { avance: parsed });
   }

@@ -316,7 +316,10 @@ export interface StoreState {
   removeModeles: (ids: string[]) => void;
 }
 
-function colorSeedFor(seedString: string): string {
+/** Exportée (Phase 7A, corr. R) : un `SupabaseClientRepository` a besoin de
+ * la MÊME formule déterministe pour un client cloud dont `metadata.color_seed`
+ * est absent — jamais une couleur aléatoire, jamais persistée en retour. */
+export function colorSeedFor(seedString: string): string {
   const palette = ["indigo", "terracotta", "teal", "grey", "amber"];
   const sum = seedString.split("").reduce((a, c) => a + c.charCodeAt(0), 0);
   return palette[sum % palette.length];

@@ -1,4 +1,5 @@
 import type { Fiche, FicheChampKey, OrderStatus } from "../lib/types";
+import type { ObservableRepositoryStatus } from "./RepositoryStatus";
 
 export interface NewFicheInput {
   clientId?: string | null;
@@ -31,19 +32,25 @@ export type FicheInfoPatch = Partial<
  * `src/lib/types.ts`). La numérotation (`carnetNumero`/`numero`) reste gérée
  * ici pour l'instant (comme dans `store.ts` actuel) — `CarnetRepository`
  * n'expose que la LECTURE de l'état courant du carnet, jamais l'allocation
- * elle-même (aucun consommateur actuel n'en a besoin séparément). */
-export interface FicheRepository {
+ * elle-même (aucun consommateur actuel n'en a besoin séparément).
+ *
+ * Lectures synchrones, mutations asynchrones — voir `ClientRepository` pour
+ * la justification (corr. R, Phase 7A). `add()` reste ici la porte du
+ * comportement actuel (brouillon = fiche créée immédiatement) ; sa
+ * correction métier (aucune fiche vide au tap) appartient à la Phase 9A, pas
+ * à 7A — seule sa signature devient asynchrone dans cette phase. */
+export interface FicheRepository extends ObservableRepositoryStatus {
   list(): Fiche[];
   get(id: string): Fiche | undefined;
   listByClient(clientId: string): Fiche[];
-  add(input?: NewFicheInput): string;
-  setInfo(id: string, patch: FicheInfoPatch): void;
-  setChamp(id: string, key: FicheChampKey, valeur: string): void;
-  strikeChamp(id: string, key: FicheChampKey): void;
-  restoreChamp(id: string, key: FicheChampKey): void;
-  setStatus(id: string, status: OrderStatus): void;
-  advance(id: string): void;
-  remove(id: string): void;
-  removeMany(ids: string[]): void;
+  add(input?: NewFicheInput): Promise<string>;
+  setInfo(id: string, patch: FicheInfoPatch): Promise<void>;
+  setChamp(id: string, key: FicheChampKey, valeur: string): Promise<void>;
+  strikeChamp(id: string, key: FicheChampKey): Promise<void>;
+  restoreChamp(id: string, key: FicheChampKey): Promise<void>;
+  setStatus(id: string, status: OrderStatus): Promise<void>;
+  advance(id: string): Promise<void>;
+  remove(id: string): Promise<void>;
+  removeMany(ids: string[]): Promise<void>;
   subscribe(listener: () => void): () => void;
 }
