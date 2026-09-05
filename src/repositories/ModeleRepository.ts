@@ -8,13 +8,16 @@ import type { Modele } from "../lib/types";
  * paiement, ni de l'abonnement — ses PHOTOS vivent dans `MediaRepository`,
  * mais le modèle lui-même a besoin d'un CRUD propre pour respecter l'objectif
  * de la phase : plus aucune page ne doit lire `useStore` pour une donnée
- * métier). */
+ * métier).
+ *
+ * Lectures synchrones, mutations asynchrones (corr. R, Phase 7A) — voir
+ * `ClientRepository`. Aucune implémentation cloud avant la Phase 8B. */
 export interface ModeleRepository {
   list(): Modele[];
   get(id: string): Modele | undefined;
-  add(): string;
-  setNom(id: string, nom: string): void;
-  remove(id: string): void;
-  removeMany(ids: string[]): void;
+  add(): Promise<string>;
+  setNom(id: string, nom: string): Promise<void>;
+  remove(id: string): Promise<void>;
+  removeMany(ids: string[]): Promise<void>;
   subscribe(listener: () => void): () => void;
 }

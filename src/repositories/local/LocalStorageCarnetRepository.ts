@@ -36,6 +36,12 @@ export class LocalStorageCarnetRepository implements CarnetRepository {
     return this.ensureCache().nextSlot;
   }
 
+  getCarnetNumero(): number | undefined {
+    // Pas de `carnet_id` séparé côté local — `Fiche.carnetNumero` est déjà
+    // un champ direct de la fiche, jamais résolu via cette méthode.
+    return undefined;
+  }
+
   subscribe(listener: () => void): () => void {
     return subscribeToSlice("fiches", listener);
   }

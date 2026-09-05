@@ -23,6 +23,7 @@ export default function ClientsList() {
   const [selectMode, setSelectMode] = useState(false);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [confirmDeleteOpen, setConfirmDeleteOpen] = useState(false);
+  const [deleteError, setDeleteError] = useState<string | null>(null);
 
   const filtered = clients.filter((c) => matchesQuery(query, c.name, c.phone));
   const firstCallableIndex = filtered.findIndex((c) => Boolean(c.phone));
@@ -49,12 +50,16 @@ export default function ClientsList() {
     setSelectedIds(allSelected ? new Set() : new Set(filtered.map((c) => c.id)));
   }
 
-  function handleBulkDelete() {
+  async function handleBulkDelete() {
     haptic(16);
-    clientRepository.removeMany([...selectedIds]);
-    setSelectedIds(new Set());
-    setSelectMode(false);
     setConfirmDeleteOpen(false);
+    try {
+      await clientRepository.removeMany([...selectedIds]);
+      setSelectedIds(new Set());
+      setSelectMode(false);
+    } catch {
+      setDeleteError("La suppression a échoué. Réessaie.");
+    }
   }
 
   const addButton = (
@@ -86,6 +91,12 @@ export default function ClientsList() {
         onConfirm={handleBulkDelete}
         onClose={() => setConfirmDeleteOpen(false)}
       />
+
+      {deleteError && (
+        <p role="alert" className="px-4 pt-2 text-[13px] font-semibold text-terracotta lg:px-6">
+          {deleteError}
+        </p>
+      )}
 
       <div className="flex items-center justify-between gap-2 px-4 lg:px-6 pt-2 lg:-mt-2">
         {selectMode ? (

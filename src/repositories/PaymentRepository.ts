@@ -18,11 +18,16 @@ export interface FicheBalance {
   reste: number;
 }
 
+/** Lectures synchrones, mutation asynchrone (corr. R, Phase 7A) — voir
+ * `ClientRepository`. Le passage de `setAmount()` (remplacement) à un
+ * `add()` de type ledger honnête appartient à la Phase 11A, pas à 7A : seule
+ * la signature de `setAmount()` change de forme ici, sa sémantique reste
+ * identique (remplace `Fiche.avance`). */
 export interface PaymentRepository {
   /** 0 ou 1 élément — voir note ci-dessus. */
   list(ficheId: string): Payment[];
   /** Remplace `Fiche.avance` (comportement actuel : un seul champ écrasé). */
-  setAmount(ficheId: string, amount: number): void;
+  setAmount(ficheId: string, amount: number): Promise<void>;
   getBalance(ficheId: string): FicheBalance;
   subscribe(listener: () => void): () => void;
 }

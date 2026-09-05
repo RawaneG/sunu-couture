@@ -15,13 +15,51 @@ export default function ModeleDetail() {
   const navigate = useNavigate();
   const [confirmDeleteOpen, setConfirmDeleteOpen] = useState(false);
 
+  const [mediaError, setMediaError] = useState<string | null>(null);
+
   const modele = useModele(id ?? "");
   if (!modele) return <Navigate to="/catalogue" replace />;
 
-  function handleDelete() {
+  async function handleDelete() {
     haptic(16);
-    modeleRepository.remove(modele!.id);
-    navigate("/catalogue", { replace: true });
+    try {
+      await modeleRepository.remove(modele!.id);
+      navigate("/catalogue", { replace: true });
+    } catch {
+      setMediaError("La suppression a échoué. Réessaie.");
+    }
+  }
+
+  async function handleAddPhoto(dataUrl: string) {
+    try {
+      await mediaRepository.addModelePhoto(modele!.id, dataUrl);
+    } catch {
+      setMediaError("La photo n'a pas pu être ajoutée. Réessaie.");
+    }
+  }
+
+  async function handleRemovePhoto(photoId: string) {
+    try {
+      await mediaRepository.removeModelePhoto(modele!.id, photoId);
+    } catch {
+      setMediaError("La suppression de la photo a échoué. Réessaie.");
+    }
+  }
+
+  async function handleAddPatronPhoto(dataUrl: string) {
+    try {
+      await mediaRepository.addModelePatronPhoto(modele!.id, dataUrl);
+    } catch {
+      setMediaError("La photo n'a pas pu être ajoutée. Réessaie.");
+    }
+  }
+
+  async function handleRemovePatronPhoto(photoId: string) {
+    try {
+      await mediaRepository.removeModelePatronPhoto(modele!.id, photoId);
+    } catch {
+      setMediaError("La suppression de la photo a échoué. Réessaie.");
+    }
   }
 
   const headerActions = (
@@ -52,6 +90,12 @@ export default function ModeleDetail() {
         onClose={() => setConfirmDeleteOpen(false)}
       />
 
+      {mediaError && (
+        <p role="alert" className="px-4 pt-2 text-[13px] font-semibold text-terracotta lg:px-10">
+          {mediaError}
+        </p>
+      )}
+
       <motion.div
         key={modele.id}
         initial={{ opacity: 0, y: 10 }}
@@ -62,20 +106,12 @@ export default function ModeleDetail() {
         <div className="glass-card rounded-2xl p-4 lg:rounded-3xl lg:shadow-soft lg:p-8">
           <div>
             <p className="mb-2 text-[13px] font-bold text-ink-soft">Photos du modèle</p>
-            <FabricPhotos
-              photos={modele.photos}
-              onAdd={(dataUrl) => mediaRepository.addModelePhoto(modele.id, dataUrl)}
-              onRemove={(photoId) => mediaRepository.removeModelePhoto(modele.id, photoId)}
-            />
+            <FabricPhotos photos={modele.photos} onAdd={handleAddPhoto} onRemove={handleRemovePhoto} />
           </div>
 
           <div className="mt-5">
             <p className="mb-2 text-[13px] font-bold text-ink-soft">Patron de coupe</p>
-            <FabricPhotos
-              photos={modele.patronPhotos}
-              onAdd={(dataUrl) => mediaRepository.addModelePatronPhoto(modele.id, dataUrl)}
-              onRemove={(photoId) => mediaRepository.removeModelePatronPhoto(modele.id, photoId)}
-            />
+            <FabricPhotos photos={modele.patronPhotos} onAdd={handleAddPatronPhoto} onRemove={handleRemovePatronPhoto} />
           </div>
         </div>
       </motion.div>

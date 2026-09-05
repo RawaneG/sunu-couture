@@ -62,8 +62,8 @@ function ProtectedAppRoute() {
 
 export default function App() {
   return (
-    <RepositoryProvider>
-      <AuthProvider>
+    <AuthProvider>
+      <RepositoryProvider>
         <ScrollToTop />
         <Routes>
           <Route element={<AuthRoute />}>
@@ -97,7 +97,7 @@ export default function App() {
             </Route>
           </Route>
         </Routes>
-      </AuthProvider>
-    </RepositoryProvider>
+      </RepositoryProvider>
+    </AuthProvider>
   );
 }

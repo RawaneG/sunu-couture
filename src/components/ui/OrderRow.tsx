@@ -21,7 +21,10 @@ export default function OrderRow({
   const navigate = useNavigate();
   // `useClient` ne peut pas être appelé conditionnellement (règle des Hooks) —
   // une chaîne vide ne correspond à aucun id, comportement identique à avant.
-  const client = useClient(fiche.clientId ?? "");
+  // `loading`/`error` dégradent silencieusement vers "pas de client" ici :
+  // c'est un affichage secondaire (nom/avatar), jamais une redirection.
+  const clientState = useClient(fiche.clientId ?? "");
+  const client = clientState.status === "ready" ? clientState.data : undefined;
   const name = [fiche.prenom, fiche.nom].filter(Boolean).join(" ") || client?.name || "Sans nom";
   const phone = fiche.telephone || client?.phone || "";
 

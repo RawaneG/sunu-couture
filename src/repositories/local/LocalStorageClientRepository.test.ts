@@ -14,9 +14,9 @@ describe("LocalStorageClientRepository — contrat", () => {
     expect(new LocalStorageClientRepository().list()).toEqual([]);
   });
 
-  it("add() crée un client et le rend immédiatement visible via list()/get()", () => {
+  it("add() crée un client et le rend immédiatement visible via list()/get() (mutation Zustand synchrone sous la Promise)", async () => {
     const repo = new LocalStorageClientRepository();
-    const id = repo.add({ name: "Awa Diouf", phone: "77 512 44 08", photo: null });
+    const id = await repo.add({ name: "Awa Diouf", phone: "77 512 44 08", photo: null });
     expect(repo.list().map((c) => c.id)).toEqual([id]);
     expect(repo.get(id)?.name).toBe("Awa Diouf");
   });
@@ -25,35 +25,35 @@ describe("LocalStorageClientRepository — contrat", () => {
     expect(new LocalStorageClientRepository().get("inconnu")).toBeUndefined();
   });
 
-  it("remove() supprime un seul client sans toucher aux autres (pas de perte de données)", () => {
+  it("remove() supprime un seul client sans toucher aux autres (pas de perte de données)", async () => {
     const repo = new LocalStorageClientRepository();
-    const a = repo.add({ name: "Awa Diouf", phone: "", photo: null });
-    const b = repo.add({ name: "Modou Fall", phone: "", photo: null });
-    repo.remove(a);
+    const a = await repo.add({ name: "Awa Diouf", phone: "", photo: null });
+    const b = await repo.add({ name: "Modou Fall", phone: "", photo: null });
+    await repo.remove(a);
     expect(repo.list().map((c) => c.id)).toEqual([b]);
   });
 
-  it("removeMany() supprime exactement les ids demandés, sans perte des autres", () => {
+  it("removeMany() supprime exactement les ids demandés, sans perte des autres", async () => {
     const repo = new LocalStorageClientRepository();
-    const a = repo.add({ name: "Awa", phone: "", photo: null });
-    const b = repo.add({ name: "Modou", phone: "", photo: null });
-    const c = repo.add({ name: "Fatou", phone: "", photo: null });
-    repo.removeMany([a, c]);
+    const a = await repo.add({ name: "Awa", phone: "", photo: null });
+    const b = await repo.add({ name: "Modou", phone: "", photo: null });
+    const c = await repo.add({ name: "Fatou", phone: "", photo: null });
+    await repo.removeMany([a, c]);
     expect(repo.list().map((x) => x.id)).toEqual([b]);
   });
 
-  it("add() rejette une entrée invalide avec une RepositoryValidationError, sans créer de client", () => {
+  it("add() rejette une entrée invalide avec une RepositoryValidationError, sans créer de client", async () => {
     const repo = new LocalStorageClientRepository();
     // @ts-expect-error — phone doit être une string, on force une entrée invalide
-    expect(() => repo.add({ name: "Awa", phone: 12345, photo: null })).toThrow(RepositoryValidationError);
+    await expect(repo.add({ name: "Awa", phone: 12345, photo: null })).rejects.toThrow(RepositoryValidationError);
     expect(repo.list()).toEqual([]);
   });
 });
 
 describe("LocalStorageClientRepository — persistance et compatibilité", () => {
-  it("les données créées par une instance restent visibles depuis une NOUVELLE instance (backend partagé, pas d'état par instance)", () => {
+  it("les données créées par une instance restent visibles depuis une NOUVELLE instance (backend partagé, pas d'état par instance)", async () => {
     const first = new LocalStorageClientRepository();
-    const id = first.add({ name: "Awa Diouf", phone: "77 512 44 08", photo: null });
+    const id = await first.add({ name: "Awa Diouf", phone: "77 512 44 08", photo: null });
 
     const second = new LocalStorageClientRepository();
     expect(second.get(id)?.name).toBe("Awa Diouf");
@@ -70,24 +70,24 @@ describe("LocalStorageClientRepository — persistance et compatibilité", () =>
 });
 
 describe("LocalStorageClientRepository — réactivité (subscribe/unsubscribe)", () => {
-  it("notifie le listener quand la collection clients change réellement", () => {
+  it("notifie le listener quand la collection clients change réellement", async () => {
     const repo = new LocalStorageClientRepository();
     const listener = vi.fn();
     const unsubscribe = repo.subscribe(listener);
 
-    repo.add({ name: "Awa", phone: "", photo: null });
+    await repo.add({ name: "Awa", phone: "", photo: null });
     expect(listener).toHaveBeenCalledTimes(1);
 
     unsubscribe();
   });
 
-  it("ne notifie plus après unsubscribe()", () => {
+  it("ne notifie plus après unsubscribe()", async () => {
     const repo = new LocalStorageClientRepository();
     const listener = vi.fn();
     const unsubscribe = repo.subscribe(listener);
     unsubscribe();
 
-    repo.add({ name: "Awa", phone: "", photo: null });
+    await repo.add({ name: "Awa", phone: "", photo: null });
     expect(listener).not.toHaveBeenCalled();
   });
 

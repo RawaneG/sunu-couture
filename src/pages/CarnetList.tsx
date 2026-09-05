@@ -59,6 +59,7 @@ export default function CarnetList() {
   const [selectMode, setSelectMode] = useState(false);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [confirmDeleteOpen, setConfirmDeleteOpen] = useState(false);
+  const [actionError, setActionError] = useState<string | null>(null);
   const cardRef = useRef<HTMLDivElement>(null);
 
   const activeCarnet = useMemo(() => fiches.reduce((max, f) => Math.max(max, f.carnetNumero), 0) || 1, [fiches]);
@@ -129,10 +130,15 @@ export default function CarnetList() {
     setPageIndex(clamped);
   }
 
-  function handleAdd() {
+  async function handleAdd() {
     haptic(16);
-    const id = ficheRepository.add();
-    navigate(`/carnet/${id}`);
+    setActionError(null);
+    try {
+      const id = await ficheRepository.add();
+      navigate(`/carnet/${id}`);
+    } catch {
+      setActionError("La fiche n'a pas pu être créée. Réessaie.");
+    }
   }
 
   function handleDragEnd(_: unknown, info: PanInfo) {
@@ -163,12 +169,16 @@ export default function CarnetList() {
     setSelectedIds(allSelected ? new Set() : new Set(filtered.map((f) => f.id)));
   }
 
-  function handleBulkDelete() {
+  async function handleBulkDelete() {
     haptic(16);
-    ficheRepository.removeMany([...selectedIds]);
-    setSelectedIds(new Set());
-    setSelectMode(false);
     setConfirmDeleteOpen(false);
+    try {
+      await ficheRepository.removeMany([...selectedIds]);
+      setSelectedIds(new Set());
+      setSelectMode(false);
+    } catch {
+      setActionError("La suppression a échoué. Réessaie.");
+    }
   }
 
   const addButton = (
@@ -201,6 +211,12 @@ export default function CarnetList() {
         onConfirm={handleBulkDelete}
         onClose={() => setConfirmDeleteOpen(false)}
       />
+
+      {actionError && (
+        <p role="alert" className="px-4 pt-2 text-[13px] font-semibold text-terracotta lg:px-10">
+          {actionError}
+        </p>
+      )}
 
       <div className="px-4 lg:px-10 py-2 lg:py-4 max-w-3xl lg:mx-auto">
         {fiches.length === 0 ? (
@@ -420,7 +436,10 @@ function FicheRow({
 }) {
   // `useClient` ne peut pas être appelé conditionnellement (règle des Hooks) —
   // une chaîne vide ne correspond à aucun id, comportement identique à avant.
-  const client = useClient(fiche.clientId ?? "");
+  // `loading`/`error` dégradent silencieusement vers "pas de client" ici :
+  // c'est un affichage secondaire (nom/avatar), jamais une redirection.
+  const clientState = useClient(fiche.clientId ?? "");
+  const client = clientState.status === "ready" ? clientState.data : undefined;
   const digits = (fiche.telephone || client?.phone || "").replace(/\s/g, "");
 
   return (

@@ -18,16 +18,20 @@ export class LocalStorageClientRepository implements ClientRepository {
     return useStore.getState().getClient(id);
   }
 
-  add(input: NewClientInput): string {
+  // Mutations asynchrones (corr. R, Phase 7A) — la mutation Zustand
+  // elle-même reste synchrone et immédiatement visible ; seule la forme du
+  // contrat (Promise) change, pour rester compatible avec un futur
+  // Repository réseau sans mentir sur le résultat.
+  async add(input: NewClientInput): Promise<string> {
     const parsed = parseOrThrow(newClientInputSchema, input, "ClientRepository.add");
     return useStore.getState().addClient(parsed);
   }
 
-  remove(id: string): void {
+  async remove(id: string): Promise<void> {
     useStore.getState().deleteClient(id);
   }
 
-  removeMany(ids: string[]): void {
+  async removeMany(ids: string[]): Promise<void> {
     useStore.getState().deleteClients(ids);
   }
 

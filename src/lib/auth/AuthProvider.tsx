@@ -4,32 +4,27 @@
 // la Phase 4, une fois les politiques RLS en place) : ce provider ne fait
 // qu'exposer l'état, `RequireAuth` (composant séparé, non branché ici) porte
 // la logique de garde pour qui voudra protéger une route dès maintenant.
-import { createContext, useCallback, useContext, useEffect, useRef, useState } from "react";
+//
+// Le contexte lui-même (type + `useAuth`/`useOptionalAuth`) vit dans
+// `AuthContext.ts`, séparé de ce fichier : cette implémentation CONCRÈTE
+// importe `SupabasePhoneOtpAuthRepository`, qui importe le client Supabase
+// réel — un module qui LÈVE au chargement si les variables `VITE_SUPABASE_*`
+// sont absentes. `RepositoryProvider` (et ses nombreux tests, montés sans
+// `<AuthProvider>` ni mock Supabase) n'importent donc jamais ce fichier,
+// seulement `AuthContext.ts` (voir corr. R, Phase 7A §12).
+import { useCallback, useEffect, useRef, useState } from "react";
 import type { ReactNode } from "react";
 import { SupabasePhoneOtpAuthRepository } from "./SupabasePhoneOtpAuthRepository";
 import type { AuthSession } from "./AuthRepository";
 import { callProvisionWorkshop, type ProvisionWorkshopResult, type Workshop } from "../workshop/provisionWorkshop";
+import { AuthContext, type AuthContextValue } from "./AuthContext";
 
 const authRepository = new SupabasePhoneOtpAuthRepository();
 
-export interface AuthContextValue {
-  /** true tant que la session n'a pas fini d'être restaurée au démarrage. */
-  initializing: boolean;
-  session: AuthSession | null;
-  user: { id: string; phoneE164: string | null } | null;
-  /** null tant qu'aucun atelier n'a été résolu (nouvel utilisateur, ou pas encore chargé). */
-  workshop: Workshop | null;
-  /**
-   * Sonde (`name: null`) ou crée (`name` non vide) l'atelier de l'utilisateur
-   * courant, et met à jour `workshop` en cas de succès. Ne recrée JAMAIS un
-   * atelier existant — voir `provision_workshop_api` (idempotent côté DB).
-   */
-  provisionWorkshop: (name: string | null) => Promise<ProvisionWorkshopResult>;
-  signOut: () => Promise<void>;
-  signOutAllDevices: () => Promise<void>;
-}
-
-const AuthContext = createContext<AuthContextValue | undefined>(undefined);
+// Ré-exportés pour compatibilité : le reste de l'app importe déjà `useAuth`
+// depuis `./AuthProvider` (ex. `RequireAuth.tsx`) — inchangé après ce split.
+export type { AuthContextValue };
+export { useAuth, useOptionalAuth } from "./AuthContext";
 
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [initializing, setInitializing] = useState(true);
@@ -100,10 +95,4 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   };
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
-}
-
-export function useAuth(): AuthContextValue {
-  const ctx = useContext(AuthContext);
-  if (!ctx) throw new Error("useAuth() doit être utilisé à l'intérieur de <AuthProvider>.");
-  return ctx;
 }
