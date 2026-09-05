@@ -12,6 +12,7 @@ import { CloudCollectionStore } from "./CloudCollectionStore";
 import { IndexedDbCollectionCache } from "./cache/IndexedDbCache";
 import { DOMAIN_STATUS_TO_CLOUD, mapFicheRowToDomain } from "./mappers/fiche";
 import { ficheViewRowSchema, parseRowOrThrow } from "./schemas";
+import { parseOrThrow, storedFicheSchema } from "../schemas";
 import type { SupabaseGateway } from "./gateway";
 import type { SupabaseCarnetRepository } from "./SupabaseCarnetRepository";
 import type { Database, Json } from "../../lib/supabase/database.types";
@@ -61,6 +62,7 @@ export class SupabaseFicheRepository implements FicheRepository {
     this.store = new CloudCollectionStore<Fiche>({
       cache: options.cache ?? new IndexedDbCollectionCache<Fiche>("fiches", options.workshopId),
       getId: (f) => f.id,
+      validateCachedItem: (raw) => parseOrThrow(storedFicheSchema, raw, "SupabaseFicheRepository cache"),
     });
     this.bootstrapped = this.bootstrap();
   }
@@ -73,19 +75,18 @@ export class SupabaseFicheRepository implements FicheRepository {
     await this.store.refresh(() => this.fetchActiveFiches());
   }
 
+  /** Un lot réseau est un SNAPSHOT ATOMIQUE : la moindre ligne invalide fait
+   * échouer le fetch entier — jamais un `console.warn` + `skip` qui
+   * accepterait une collection tronquée comme si elle était complète
+   * (revue post-7A). `CloudCollectionStore.refresh()` conserve alors le
+   * cache existant plutôt que d'appliquer ce résultat partiel. */
   private async fetchActiveFiches(): Promise<Fiche[]> {
     const { data, error } = await this.gateway.listActiveFiches(this.workshopId);
     if (error) throw new Error(error.message);
-    const fiches: Fiche[] = [];
-    for (const raw of data ?? []) {
-      try {
-        const row = parseRowOrThrow(ficheViewRowSchema, raw, "SupabaseFicheRepository");
-        fiches.push(mapFicheRowToDomain(row, (carnetId) => this.carnets.getCarnetNumero(carnetId)));
-      } catch (err) {
-        console.warn("[SupabaseFicheRepository] ligne rejetée :", err);
-      }
-    }
-    return fiches;
+    return (data ?? []).map((raw) => {
+      const row = parseRowOrThrow(ficheViewRowSchema, raw, "SupabaseFicheRepository");
+      return mapFicheRowToDomain(row, (carnetId) => this.carnets.getCarnetNumero(carnetId));
+    });
   }
 
   list(): Fiche[] {
@@ -190,6 +191,11 @@ export class SupabaseFicheRepository implements FicheRepository {
     await this.applyUpdate(id, update);
   }
 
+  /** `tissusDeposes` a deux sources cloud (`measurements.tissusDeposes` ET
+   * la colonne dédiée `fabric_notes`, corr. R §9 — voir `mappers/fiche.ts`)
+   * : toute écriture de ce champ précis met À JOUR LES DEUX dans la MÊME
+   * mutation réseau, jamais l'une sans l'autre (sinon la prochaine lecture
+   * détecterait une divergence et rejetterait la ligne). */
   private buildChampUpdate(id: string, key: FicheChampKey, mutate: (current: FicheChamp) => FicheChamp): FicheUpdate {
     const cached = this.store.get(id);
     if (!cached) {
@@ -197,12 +203,17 @@ export class SupabaseFicheRepository implements FicheRepository {
         `SupabaseFicheRepository: fiche ${id} absente du cache — impossible de fusionner "measurements" sans lire une valeur actuelle fiable.`,
       );
     }
-    const nextChamps = { ...cached.champs, [key]: mutate(cached.champs[key]) };
+    const nextChamp = mutate(cached.champs[key]);
+    const nextChamps = { ...cached.champs, [key]: nextChamp };
     const measurements: Record<string, { valeur: string; historique: string[] }> = {};
     for (const champKey of Object.keys(nextChamps) as FicheChampKey[]) {
       measurements[champKey] = { valeur: nextChamps[champKey].valeur, historique: nextChamps[champKey].historique };
     }
-    return { measurements };
+    const update: FicheUpdate = { measurements };
+    if (key === "tissusDeposes") {
+      update.fabric_notes = nextChamp.valeur.trim() === "" ? null : nextChamp.valeur;
+    }
+    return update;
   }
 
   async setChamp(id: string, key: FicheChampKey, valeur: string): Promise<void> {

@@ -6,28 +6,34 @@
 // `LocalStorageCarnetRepository`) mais n'ont aucun sens métier tant que la
 // création cloud n'existe pas (9A/7B) — elles renvoient une valeur dérivée
 // honnête du cache, jamais un calcul de "prochain numéro" inventé côté client.
+//
+// Cache-first au même titre que les autres Repository cloud (revue post-7A,
+// §5) : `CloudCollectionStore<CarnetRow>` garantit qu'un atelier ayant déjà
+// un carnet réel n°4 en cache continue de l'afficher si le réseau est
+// indisponible — jamais un `carnetNumero: 1`/`nextSlot: 1` inventé faute de
+// mieux.
 import type { CarnetRepository, CarnetSlot } from "../CarnetRepository";
-import { READY_STATUS, LOADING_STATUS, type RepositoryStatus } from "../RepositoryStatus";
+import type { RepositoryStatus } from "../RepositoryStatus";
+import { CloudCollectionStore } from "./CloudCollectionStore";
+import { IndexedDbCollectionCache } from "./cache/IndexedDbCache";
 import type { SupabaseGateway } from "./gateway";
 import { parseRowOrThrow, carnetRowSchema, type CarnetRow } from "./schemas";
 
 export interface SupabaseCarnetRepositoryOptions {
   gateway: SupabaseGateway;
   workshopId: string;
+  /** Injection pour les tests — par défaut un `IndexedDbCollectionCache` réel. */
+  cache?: IndexedDbCollectionCache<CarnetRow>;
 }
 
 export class SupabaseCarnetRepository implements CarnetRepository {
   private readonly gateway: SupabaseGateway;
   private readonly workshopId: string;
-  private carnets: CarnetRow[] = [];
-  private byId = new Map<string, CarnetRow>();
-  private status: RepositoryStatus = LOADING_STATUS;
-  private readonly listeners = new Set<() => void>();
-  private epoch = 0;
-  private disposed = false;
+  private readonly store: CloudCollectionStore<CarnetRow>;
 
-  /** Résout une fois l'hydratation initiale terminée (succès ou échec) —
-   * les tests l'attendent au lieu de sonder `getStatus()` en boucle. */
+  /** Résout une fois le cycle hydratation-cache + premier refresh réseau
+   * terminé (succès ou échec) — les tests l'attendent au lieu de sonder
+   * `getStatus()` en boucle. */
   readonly bootstrapped: Promise<void>;
 
   constructor(options: SupabaseCarnetRepositoryOptions) {
@@ -36,60 +42,53 @@ export class SupabaseCarnetRepository implements CarnetRepository {
     }
     this.gateway = options.gateway;
     this.workshopId = options.workshopId;
-    this.bootstrapped = this.refresh();
+    this.store = new CloudCollectionStore<CarnetRow>({
+      cache: options.cache ?? new IndexedDbCollectionCache<CarnetRow>("carnets", options.workshopId),
+      getId: (c) => c.id,
+      validateCachedItem: (raw) => parseRowOrThrow(carnetRowSchema, raw, "SupabaseCarnetRepository cache"),
+    });
+    this.bootstrapped = this.bootstrap();
   }
 
-  private notify(): void {
-    for (const listener of this.listeners) listener();
+  private async bootstrap(): Promise<void> {
+    await this.store.hydrateFromCache();
+    await this.store.refresh(() => this.fetchCarnets());
+  }
+
+  /** Un lot réseau est un snapshot atomique — la moindre ligne invalide fait
+   * échouer le fetch entier, jamais un résultat partiel silencieusement
+   * accepté (revue post-7A, §2). */
+  private async fetchCarnets(): Promise<CarnetRow[]> {
+    const { data, error } = await this.gateway.listCarnets(this.workshopId);
+    if (error) throw new Error(error.message);
+    return (data ?? []).map((raw) => parseRowOrThrow(carnetRowSchema, raw, "SupabaseCarnetRepository"));
   }
 
   async refresh(): Promise<void> {
-    const myEpoch = (this.epoch += 1);
-    const { data, error } = await this.gateway.listCarnets(this.workshopId);
-    if (this.disposed || myEpoch !== this.epoch) return;
-    if (error) {
-      this.status = { status: "error", error: new Error(error.message) };
-      this.notify();
-      return;
-    }
-    const rows: CarnetRow[] = [];
-    for (const raw of data ?? []) {
-      try {
-        rows.push(parseRowOrThrow(carnetRowSchema, raw, "SupabaseCarnetRepository"));
-      } catch (err) {
-        console.warn("[SupabaseCarnetRepository] ligne rejetée :", err);
-      }
-    }
-    this.carnets = rows;
-    this.byId = new Map(rows.map((r) => [r.id, r]));
-    this.status = READY_STATUS;
-    this.notify();
+    await this.store.refresh(() => this.fetchCarnets());
   }
 
   dispose(): void {
-    this.disposed = true;
-    this.epoch += 1;
-    this.listeners.clear();
+    this.store.dispose();
   }
 
-  getStatus = (): RepositoryStatus => this.status;
+  getStatus = (): RepositoryStatus => this.store.getStatus();
 
   getCarnetNumero(carnetId: string): number | undefined {
-    return this.byId.get(carnetId)?.number;
+    return this.store.get(carnetId)?.number;
   }
 
   getActiveCarnetNumero(): number {
-    return this.carnets.reduce((max, c) => Math.max(max, c.number), 0) || 1;
+    return this.store.list().reduce((max, c) => Math.max(max, c.number), 0) || 1;
   }
 
   getNextSlot(): CarnetSlot {
     const activeNumero = this.getActiveCarnetNumero();
-    const active = this.carnets.find((c) => c.number === activeNumero);
+    const active = this.store.list().find((c) => c.number === activeNumero);
     return { carnetNumero: activeNumero, numero: active?.next_number ?? 1 };
   }
 
   subscribe(listener: () => void): () => void {
-    this.listeners.add(listener);
-    return () => this.listeners.delete(listener);
+    return this.store.subscribe(listener);
   }
 }

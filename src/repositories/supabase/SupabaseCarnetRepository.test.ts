@@ -1,6 +1,18 @@
 import { describe, expect, it, vi } from "vitest";
 import { SupabaseCarnetRepository } from "./SupabaseCarnetRepository";
 import type { SupabaseGateway } from "./gateway";
+import type { IndexedDbCollectionCache } from "./cache/IndexedDbCache";
+import type { CarnetRow } from "./schemas";
+
+function fakeCarnetCache(initial: unknown[] = []): IndexedDbCollectionCache<CarnetRow> {
+  let stored = initial;
+  return {
+    readAll: vi.fn(async () => stored),
+    writeAll: vi.fn(async (items: Array<{ id: string; data: CarnetRow }>) => {
+      stored = items.map((i) => i.data);
+    }),
+  } as unknown as IndexedDbCollectionCache<CarnetRow>;
+}
 
 function fakeGateway(overrides: Partial<SupabaseGateway> = {}): SupabaseGateway {
   return {
@@ -55,5 +67,50 @@ describe("SupabaseCarnetRepository — lecture seule (corr. R §25)", () => {
     expect(repo.getStatus()).toEqual({ status: "loading" });
     await repo.bootstrapped;
     expect(repo.getStatus()).toEqual({ status: "ready" });
+  });
+});
+
+describe("SupabaseCarnetRepository — cache-first (revue post-7A, §5)", () => {
+  it("cache présent : le carnet réel n°4 est visible AVANT même que le réseau réponde", async () => {
+    const cache = fakeCarnetCache([{ id: "carnet-4", workshop_id: "w1", number: 4, status: "active", next_number: 12 }]);
+    const gateway = fakeGateway({ listCarnets: vi.fn(() => new Promise<never>(() => {})) }); // réseau ne répond jamais
+    const repo = new SupabaseCarnetRepository({ gateway, workshopId: "w1", cache });
+    await new Promise((resolve) => setTimeout(resolve, 10)); // laisse hydrateFromCache() s'exécuter
+    expect(repo.getCarnetNumero("carnet-4")).toBe(4);
+    expect(repo.getActiveCarnetNumero()).toBe(4);
+  });
+
+  it("réseau indisponible AVEC cache valide → conserve le vrai numéro de carnet, jamais 1 inventé", async () => {
+    const cache = fakeCarnetCache([{ id: "carnet-4", workshop_id: "w1", number: 4, status: "active", next_number: 12 }]);
+    const gateway = fakeGateway({ listCarnets: vi.fn(async () => ({ data: null, error: { message: "hors ligne" } })) });
+    const repo = new SupabaseCarnetRepository({ gateway, workshopId: "w1", cache });
+    await repo.bootstrapped;
+    expect(repo.getActiveCarnetNumero()).toBe(4); // jamais 1
+    expect(repo.getCarnetNumero("carnet-4")).toBe(4);
+  });
+
+  it("réseau indisponible SANS cache → statut error contrôlé, jamais carnetNumero/nextSlot = 1 inventés en silence", async () => {
+    const gateway = fakeGateway({ listCarnets: vi.fn(async () => ({ data: null, error: { message: "hors ligne" } })) });
+    const repo = new SupabaseCarnetRepository({ gateway, workshopId: "w1", cache: fakeCarnetCache() });
+    await repo.bootstrapped;
+    expect(repo.getStatus()).toEqual({ status: "error", error: expect.any(Error) });
+    // getActiveCarnetNumero()/getNextSlot() renvoient un 1 dérivé d'une
+    // collection VIDE (comportement documenté, comme LocalStorageCarnetRepository
+    // sur un atelier neuf) — la distinction "pas de donnée" vs "vraie donnée
+    // à 1" reste portée par getStatus(), jamais masquée.
+    expect(repo.getActiveCarnetNumero()).toBe(1);
+  });
+
+  it("un lot carnets invalide est rejeté en bloc (revue post-7A, §2) — jamais un carnet fantôme partiellement mappé", async () => {
+    const gateway = fakeGateway({
+      listCarnets: vi.fn(async () => ({
+        data: [{ id: "carnet-1", workshop_id: "w1", number: 1, status: "active", next_number: 2 }, { id: "invalide" }],
+        error: null,
+      })),
+    });
+    const repo = new SupabaseCarnetRepository({ gateway, workshopId: "w1", cache: fakeCarnetCache() });
+    await repo.bootstrapped;
+    expect(repo.getStatus()).toEqual({ status: "error", error: expect.any(Error) });
+    expect(repo.getCarnetNumero("carnet-1")).toBeUndefined();
   });
 });

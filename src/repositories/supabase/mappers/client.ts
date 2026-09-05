@@ -2,7 +2,7 @@
 import type { Client } from "../../../lib/types";
 import { colorSeedFor } from "../../../lib/store";
 import type { NewClientInput } from "../../ClientRepository";
-import { normalizePhoneSenegal } from "../../../lib/phone";
+import { normalizeClientPhoneE164 } from "./clientPhone";
 import type { ClientRow } from "../schemas";
 import type { Database } from "../../../lib/supabase/database.types";
 
@@ -35,7 +35,7 @@ export function mapClientRowToDomain(row: ClientRow): Client {
  * saisie brute reste dans `phone_display` (jamais de valeur inventée). */
 export function mapNewClientInputToInsert(input: NewClientInput, workshopId: string): ClientInsert {
   const trimmedPhone = input.phone.trim();
-  const phoneE164 = trimmedPhone ? normalizePhoneSenegal(trimmedPhone) : null;
+  const phoneE164 = trimmedPhone ? normalizeClientPhoneE164(trimmedPhone) : null;
   return {
     workshop_id: workshopId,
     display_name: input.name, // verbatim — D2, jamais retraité

@@ -107,19 +107,37 @@ describe("SupabaseClientRepository — contrat", () => {
     expect(repo.get("c1")).toBeDefined();
   });
 
-  it("une row invalide est REJETÉE (log) sans faire planter le repository ni corrompre le cache", async () => {
+  it("un lot réseau contenant UNE SEULE ligne invalide est rejeté EN BLOC — jamais un résultat partiel (revue post-7A, §2)", async () => {
     const gateway = fakeGateway({
       listActiveClients: vi.fn(async () => ({
         data: [clientRow(), { id: "invalide" /* champs requis manquants */ }],
         error: null,
       })),
     });
-    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const repo = new SupabaseClientRepository({ gateway, workshopId: "w1", cache: emptyCache() });
+    await repo.bootstrapped;
+    // Aucun cache préalable + lot invalide → statut "error", jamais une
+    // liste partielle contenant seulement la ligne valide "c1".
+    expect(repo.list()).toEqual([]);
+    expect(repo.getStatus()).toEqual({ status: "error", error: expect.any(Error) });
+  });
+
+  it("un lot réseau invalide APRÈS un premier chargement réussi conserve le dernier snapshot valide, jamais un résultat tronqué", async () => {
+    let call = 0;
+    const gateway = fakeGateway({
+      listActiveClients: vi.fn(async () => {
+        call += 1;
+        if (call === 1) return { data: [clientRow()], error: null };
+        return { data: [clientRow(), { id: "invalide" }], error: null };
+      }),
+    });
     const repo = new SupabaseClientRepository({ gateway, workshopId: "w1", cache: emptyCache() });
     await repo.bootstrapped;
     expect(repo.list().map((c) => c.id)).toEqual(["c1"]);
-    expect(warn).toHaveBeenCalled();
-    warn.mockRestore();
+
+    await repo.refresh(); // 2e appel : lot invalide
+    expect(repo.list().map((c) => c.id)).toEqual(["c1"]); // snapshot précédent conservé, pas ["c1"] tronqué à []
+    expect(repo.getStatus()).toEqual({ status: "ready" }); // pas "error" : un cache valide existe déjà
   });
 
   it("les lignes supprimées (deleted_at) sont exclues au niveau de la requête, jamais affichées comme actives", async () => {

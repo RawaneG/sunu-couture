@@ -154,13 +154,87 @@ describe("mapFicheRowToDomain — measurements (champs)", () => {
     expect(fiche.champs.Cou).toEqual({ valeur: "", historique: [] });
   });
 
-  it("une entrée de measurements malformée (pas un objet) ne fait pas planter le mapping — défaut neutre", () => {
-    const fiche = mapFicheRowToDomain(row({ measurements: { E: "48" } }), resolveCarnet);
-    expect(fiche.champs.E).toEqual({ valeur: "", historique: [] });
+  it("une clé métier CONNUE simplement ABSENTE reste acceptée — champ domaine vide (comportement conservé)", () => {
+    const fiche = mapFicheRowToDomain(row({ measurements: { E: { valeur: "48", historique: [] } } }), resolveCarnet);
+    expect(fiche.champs.Cou).toEqual({ valeur: "", historique: [] });
   });
 
-  it("measurements lui-même n'est pas un objet (JSON malformé) → tous les champs neutres, pas d'exception", () => {
-    const fiche = mapFicheRowToDomain(row({ measurements: "invalide" as unknown as Record<string, unknown> }), resolveCarnet);
-    expect(fiche.champs.E).toEqual({ valeur: "", historique: [] });
+  it("une clé inconnue est tolérée sans validation, sans affecter les clés connues (compat future)", () => {
+    const fiche = mapFicheRowToDomain(
+      row({ measurements: { E: { valeur: "48", historique: [] }, cleFuture: { quoiQueCeSoit: true } } }),
+      resolveCarnet,
+    );
+    expect(fiche.champs.E).toEqual({ valeur: "48", historique: [] });
+  });
+
+  it("une entrée de measurements malformée pour une clé CONNUE (pas un objet) est REJETÉE — plus de coercition silencieuse (revue post-7A, §8)", () => {
+    expect(() => mapFicheRowToDomain(row({ measurements: { E: "48" } }), resolveCarnet)).toThrow(/measurements\.E invalide/);
+  });
+
+  it("une entrée de measurements malformée pour une clé CONNUE (valeur non string) est REJETÉE", () => {
+    expect(() =>
+      mapFicheRowToDomain(row({ measurements: { E: { valeur: 48, historique: [] } } }), resolveCarnet),
+    ).toThrow(/measurements\.E\.valeur invalide/);
+  });
+
+  it("une entrée de measurements malformée pour une clé CONNUE (historique non tableau de strings) est REJETÉE", () => {
+    expect(() =>
+      mapFicheRowToDomain(row({ measurements: { E: { valeur: "48", historique: "pas un tableau" } } }), resolveCarnet),
+    ).toThrow(/measurements\.E\.historique invalide/);
+  });
+
+  it("measurements lui-même n'est pas un objet (JSON malformé) → REJETÉ, plus de coercition silencieuse (revue post-7A, §8)", () => {
+    expect(() =>
+      mapFicheRowToDomain(row({ measurements: "invalide" as unknown as Record<string, unknown> }), resolveCarnet),
+    ).toThrow(/measurements : racine non-objet rejetée/);
+  });
+
+  it("measurements = null est REJETÉ (racine non-objet)", () => {
+    expect(() =>
+      mapFicheRowToDomain(row({ measurements: null as unknown as Record<string, unknown> }), resolveCarnet),
+    ).toThrow(/measurements : racine non-objet rejetée/);
+  });
+
+  it("measurements = tableau est REJETÉ (racine non-objet)", () => {
+    expect(() =>
+      mapFicheRowToDomain(row({ measurements: [] as unknown as Record<string, unknown> }), resolveCarnet),
+    ).toThrow(/measurements : racine non-objet rejetée/);
+  });
+});
+
+describe("mapFicheRowToDomain — fabric_notes ↔ tissusDeposes (revue post-7A, §9)", () => {
+  it("fabric_notes fait foi pour la VALEUR courante, l'historique vient de measurements", () => {
+    const fiche = mapFicheRowToDomain(
+      row({ fabric_notes: "Wax bleu", measurements: { tissusDeposes: { valeur: "Wax bleu", historique: ["Bazin"] } } }),
+      resolveCarnet,
+    );
+    expect(fiche.champs.tissusDeposes).toEqual({ valeur: "Wax bleu", historique: ["Bazin"] });
+  });
+
+  it("fabric_notes absent → retombe sur measurements.tissusDeposes.valeur", () => {
+    const fiche = mapFicheRowToDomain(
+      row({ fabric_notes: null, measurements: { tissusDeposes: { valeur: "Bazin riche", historique: [] } } }),
+      resolveCarnet,
+    );
+    expect(fiche.champs.tissusDeposes.valeur).toBe("Bazin riche");
+  });
+
+  it("measurements.tissusDeposes absent → retombe sur fabric_notes, historique vide", () => {
+    const fiche = mapFicheRowToDomain(row({ fabric_notes: "Wax bleu", measurements: {} }), resolveCarnet);
+    expect(fiche.champs.tissusDeposes).toEqual({ valeur: "Wax bleu", historique: [] });
+  });
+
+  it("les deux absents → champ vide, pas d'exception", () => {
+    const fiche = mapFicheRowToDomain(row({ fabric_notes: null, measurements: {} }), resolveCarnet);
+    expect(fiche.champs.tissusDeposes).toEqual({ valeur: "", historique: [] });
+  });
+
+  it("fabric_notes et measurements.tissusDeposes.valeur NON VIDES et DIFFÉRENTS → erreur contrôlée, pas de choix silencieux", () => {
+    expect(() =>
+      mapFicheRowToDomain(
+        row({ fabric_notes: "Wax bleu", measurements: { tissusDeposes: { valeur: "Bazin riche", historique: [] } } }),
+        resolveCarnet,
+      ),
+    ).toThrow(/divergent/);
   });
 });

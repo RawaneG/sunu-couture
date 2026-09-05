@@ -25,8 +25,11 @@ export function resolveBackend(raw: string | undefined): Backend {
   if (value === "" || value === "local") return "local";
   if (value === "supabase") {
     throw new BackendConfigurationError(
-      "VITE_BACKEND=supabase demandé, mais le Repository Supabase n'est pas encore implémenté (Phase 7+). " +
-        "Utilise VITE_BACKEND=local (ou omets la variable) tant que cette implémentation n'existe pas.",
+      'VITE_BACKEND=supabase demandé : l\'infrastructure cloud Phase 7A est disponible ' +
+        "(clients/fiches en lecture-écriture limitée, carnets en lecture seule — voir " +
+        "src/repositories/supabase/), mais l'activation globale reste interdite avant le " +
+        "gate cloud (Phase 7B + 8A + 8B + 11A terminées, voir docs/refonte/03-DECISIONS.md corr. R). " +
+        "Utilise VITE_BACKEND=local (ou omets la variable) en attendant.",
     );
   }
   throw new BackendConfigurationError(

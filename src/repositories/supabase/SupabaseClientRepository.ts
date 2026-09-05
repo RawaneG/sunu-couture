@@ -4,7 +4,7 @@
 import type { Client } from "../../lib/types";
 import type { ClientRepository, NewClientInput } from "../ClientRepository";
 import type { RepositoryStatus } from "../RepositoryStatus";
-import { newClientInputSchema, parseOrThrow } from "../schemas";
+import { newClientInputSchema, parseOrThrow, storedClientSchema } from "../schemas";
 import { CloudCollectionStore } from "./CloudCollectionStore";
 import { IndexedDbCollectionCache } from "./cache/IndexedDbCache";
 import { mapClientRowToDomain, mapNewClientInputToInsert } from "./mappers/client";
@@ -37,6 +37,10 @@ export class SupabaseClientRepository implements ClientRepository {
     this.store = new CloudCollectionStore<Client>({
       cache: options.cache ?? new IndexedDbCollectionCache<Client>("clients", options.workshopId),
       getId: (c) => c.id,
+      // Le cache est une frontière non fiable au même titre que le réseau —
+      // une ligne de cache dont la forme a dérivé (ancien schéma, corruption)
+      // invalide TOUTE l'hydratation cache, jamais un affichage réparé.
+      validateCachedItem: (raw) => parseOrThrow(storedClientSchema, raw, "SupabaseClientRepository cache"),
     });
     this.bootstrapped = this.bootstrap();
   }
@@ -46,20 +50,15 @@ export class SupabaseClientRepository implements ClientRepository {
     await this.store.refresh(() => this.fetchActiveClients());
   }
 
+  /** Un lot réseau est un SNAPSHOT ATOMIQUE : la moindre ligne invalide fait
+   * échouer le fetch entier (l'erreur remonte à `CloudCollectionStore.refresh()`,
+   * qui conserve alors le cache existant plutôt que d'appliquer un résultat
+   * partiel) — jamais un `console.warn` + `skip` qui accepterait une
+   * collection tronquée comme si elle était complète (revue post-7A). */
   private async fetchActiveClients(): Promise<Client[]> {
     const { data, error } = await this.gateway.listActiveClients(this.workshopId);
     if (error) throw new Error(error.message);
-    const clients: Client[] = [];
-    for (const raw of data ?? []) {
-      try {
-        clients.push(mapClientRowToDomain(parseRowOrThrow(clientRowSchema, raw, "SupabaseClientRepository")));
-      } catch (err) {
-        // Une ligne invalide ne corrompt jamais le cache existant — signalée,
-        // pas silencieusement transformée en fausse valeur (corr. R §21).
-        console.warn("[SupabaseClientRepository] ligne rejetée :", err);
-      }
-    }
-    return clients;
+    return (data ?? []).map((raw) => mapClientRowToDomain(parseRowOrThrow(clientRowSchema, raw, "SupabaseClientRepository")));
   }
 
   list(): Client[] {

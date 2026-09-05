@@ -226,6 +226,49 @@ describe("SupabaseFicheRepository — measurements (setChamp/strikeChamp/restore
     );
   });
 
+  it("setChamp('tissusDeposes', …) met À JOUR fabric_notes DANS LA MÊME mutation (corr. R §9)", async () => {
+    const gateway = fakeGateway({
+      listActiveFiches: vi.fn(async () => ({
+        data: [ficheRow({ fabric_notes: null, measurements: { tissusDeposes: { valeur: "", historique: [] } } })],
+        error: null,
+      })),
+    });
+    const { fiches } = await setupRepo(gateway);
+    await fiches.setChamp("f1", "tissusDeposes", "Wax bleu");
+    expect(gateway.updateFiche).toHaveBeenCalledWith(
+      "w1",
+      "f1",
+      expect.objectContaining({
+        measurements: expect.objectContaining({ tissusDeposes: { valeur: "Wax bleu", historique: [] } }),
+        fabric_notes: "Wax bleu",
+      }),
+    );
+  });
+
+  it("strikeChamp('tissusDeposes') vide aussi fabric_notes (null, pas une chaîne vide)", async () => {
+    const gateway = fakeGateway({
+      listActiveFiches: vi.fn(async () => ({
+        data: [ficheRow({ fabric_notes: "Wax bleu", measurements: { tissusDeposes: { valeur: "Wax bleu", historique: [] } } })],
+        error: null,
+      })),
+    });
+    const { fiches } = await setupRepo(gateway);
+    await fiches.strikeChamp("f1", "tissusDeposes");
+    expect(gateway.updateFiche).toHaveBeenCalledWith(
+      "w1",
+      "f1",
+      expect.objectContaining({ fabric_notes: null }),
+    );
+  });
+
+  it("setChamp() sur une AUTRE clé que 'tissusDeposes' ne touche jamais fabric_notes", async () => {
+    const gateway = fakeGateway();
+    const { fiches } = await setupRepo(gateway);
+    await fiches.setChamp("f1", "E", "48");
+    const call = (gateway.updateFiche as ReturnType<typeof vi.fn>).mock.calls[0][2];
+    expect(call).not.toHaveProperty("fabric_notes");
+  });
+
   it("setChamp() avec la même valeur ne modifie pas l'historique", async () => {
     const gateway = fakeGateway();
     const { fiches } = await setupRepo(gateway);

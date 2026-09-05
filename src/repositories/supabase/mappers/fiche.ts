@@ -16,9 +16,18 @@
 // `nom`/`prenom`/`telephone`/`fabricColor` en revanche viennent de données
 // RÉELLEMENT présentes dans `metadata` (D4 `legacy_identity`, D7
 // `fabric_color`) — jamais inventées.
+//
+// `public.fiches.quantity` n'a AUCUN équivalent direct dans `Fiche`
+// aujourd'hui — ni `nbrePagnes` (un champ texte libre façon papier, pas un
+// entier de quantité) ni aucun autre champ ne le représente. Ce n'est pas un
+// oubli : tant qu'une décision produit ne rattache pas explicitement
+// `quantity` à un usage UI, ce mapper se contente de valider sa forme
+// réseau (`ficheViewRowSchema`) sans l'exposer ni le réinventer ailleurs.
 import { FICHE_MESURE_KEYS, FICHE_INFO_KEYS } from "../../../lib/types";
 import type { Fiche, FicheChamp, FicheChampKey, OrderStatus } from "../../../lib/types";
 import type { FicheViewRow } from "../schemas";
+
+const FICHE_CHAMP_KEYS: readonly FicheChampKey[] = [...FICHE_MESURE_KEYS, ...FICHE_INFO_KEYS];
 
 export const CLOUD_STATUS_TO_DOMAIN: Record<FicheViewRow["status"], OrderStatus> = {
   received: "recu",
@@ -42,25 +51,79 @@ export function mapCloudStatusToDomain(status: string): OrderStatus {
   return mapped;
 }
 
-function readMeasurementEntry(raw: unknown): FicheChamp {
-  if (raw && typeof raw === "object" && !Array.isArray(raw)) {
-    const obj = raw as Record<string, unknown>;
-    const valeur = typeof obj.valeur === "string" ? obj.valeur : "";
-    const historique = Array.isArray(obj.historique) ? obj.historique.filter((h): h is string => typeof h === "string") : [];
-    return { valeur, historique };
+function isFicheChampKey(key: string): key is FicheChampKey {
+  return (FICHE_CHAMP_KEYS as readonly string[]).includes(key);
+}
+
+function parseMeasurementEntry(raw: unknown, key: string): FicheChamp {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
+    throw new Error(`measurements.${key} invalide : attendu { valeur: string; historique: string[] }, reçu ${JSON.stringify(raw)}.`);
   }
-  return { valeur: "", historique: [] };
+  const obj = raw as Record<string, unknown>;
+  if (typeof obj.valeur !== "string") {
+    throw new Error(`measurements.${key}.valeur invalide : une chaîne est attendue.`);
+  }
+  if (!Array.isArray(obj.historique) || !obj.historique.every((h) => typeof h === "string")) {
+    throw new Error(`measurements.${key}.historique invalide : un tableau de chaînes est attendu.`);
+  }
+  return { valeur: obj.valeur, historique: obj.historique as string[] };
+}
+
+/** Valide strictement la racine `measurements` (revue post-7A — plus de
+ * coercition silencieuse vers un champ vide pour une donnée MALFORMÉE) :
+ * - une racine qui n'est pas un objet est REJETÉE (lève) ;
+ * - toute clé métier CONNUE (`FICHE_MESURE_KEYS`/`FICHE_INFO_KEYS`) présente
+ *   doit avoir la forme `{valeur: string, historique: string[]}` — une
+ *   forme différente fait REJETER toute la ligne ;
+ * - une clé connue simplement ABSENTE reste acceptée, `buildChamps` la
+ *   complète avec `{valeur: "", historique: []}` ;
+ * - les clés inconnues (compat future) sont tolérées SANS validation —
+ *   elles n'affaiblissent ni ne renforcent la validation des clés connues. */
+function validateMeasurementsRoot(raw: unknown): Partial<Record<FicheChampKey, FicheChamp>> {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
+    throw new Error(`measurements : racine non-objet rejetée (reçu ${JSON.stringify(raw)}).`);
+  }
+  const source = raw as Record<string, unknown>;
+  const validated: Partial<Record<FicheChampKey, FicheChamp>> = {};
+  for (const [key, value] of Object.entries(source)) {
+    if (isFicheChampKey(key)) {
+      validated[key] = parseMeasurementEntry(value, key);
+    }
+  }
+  return validated;
 }
 
 function buildChamps(measurements: unknown): Record<FicheChampKey, FicheChamp> {
-  const source = measurements && typeof measurements === "object" && !Array.isArray(measurements)
-    ? (measurements as Record<string, unknown>)
-    : {};
+  const validated = validateMeasurementsRoot(measurements);
   const champs = {} as Record<FicheChampKey, FicheChamp>;
-  for (const key of [...FICHE_MESURE_KEYS, ...FICHE_INFO_KEYS]) {
-    champs[key] = readMeasurementEntry(source[key]);
+  for (const key of FICHE_CHAMP_KEYS) {
+    champs[key] = validated[key] ?? { valeur: "", historique: [] };
   }
   return champs;
+}
+
+/** `Fiche.champs.tissusDeposes` a deux sources cloud possibles (corr. R §9) :
+ * la colonne dédiée `fiches.fabric_notes` (texte libre, écrite par
+ * `create_fiche_from_draft` et par `SupabaseFicheRepository`) et
+ * `measurements.tissusDeposes` (JSON, pour l'historique façon papier).
+ * Règle retenue, appliquée ICI et documentée pour l'écriture (voir
+ * `SupabaseFicheRepository.buildChampUpdate`) :
+ * - la VALEUR courante fait foi depuis `fabric_notes` quand il est renseigné ;
+ * - à défaut, on retombe sur `measurements.tissusDeposes.valeur` (ex. une
+ *   fiche jamais encore écrite par ce chemin) ;
+ * - l'HISTORIQUE vient toujours de `measurements.tissusDeposes.historique` ;
+ * - si les deux valeurs sont non vides et DIFFÉRENTES → erreur contrôlée
+ *   (ligne rejetée) : une divergence signale une écriture concurrente
+ *   incohérente, jamais un cas à trancher silencieusement. */
+function resolveTissusDeposes(fabricNotes: string | null, measurementsChamp: FicheChamp): FicheChamp {
+  const fromColumn = (fabricNotes ?? "").trim();
+  const fromJson = measurementsChamp.valeur.trim();
+  if (fromColumn && fromJson && fromColumn !== fromJson) {
+    throw new Error(
+      `Fiche : fabric_notes ("${fromColumn}") et measurements.tissusDeposes.valeur ("${fromJson}") divergent — incohérence non résolue automatiquement.`,
+    );
+  }
+  return { valeur: fromColumn || fromJson, historique: measurementsChamp.historique };
 }
 
 function readMetadataString(metadata: Record<string, unknown> | null, path: string[]): string {
@@ -84,6 +147,9 @@ export function mapFicheRowToDomain(row: FicheViewRow, resolveCarnetNumero: (car
     );
   }
 
+  const champs = buildChamps(row.measurements);
+  champs.tissusDeposes = resolveTissusDeposes(row.fabric_notes, champs.tissusDeposes);
+
   return {
     id: row.id,
     carnetNumero,
@@ -92,7 +158,7 @@ export function mapFicheRowToDomain(row: FicheViewRow, resolveCarnetNumero: (car
     prenom: readMetadataString(row.metadata, ["legacy_identity", "prenom"]),
     telephone: readMetadataString(row.metadata, ["legacy_identity", "telephone"]),
     clientId: row.client_id,
-    champs: buildChamps(row.measurements),
+    champs,
     // Non autoritatif avant la Phase 8A — voir commentaire de tête.
     voiceNote: null,
     tissuPhotos: [],

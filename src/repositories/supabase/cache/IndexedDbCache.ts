@@ -1,20 +1,28 @@
 // Cache IndexedDB natif (pas de dépendance `idb` — un wrapper mince suffit
 // ici, corr. R Phase 7A §16) : un magasin par collection ("clients",
-// "fiches"), clé composite `(workshopId, id)` — un atelier ne peut
+// "fiches", "carnets"), clé composite `(workshopId, id)` — un atelier ne peut
 // structurellement pas voir les lignes d'un autre (corr. R §17).
 //
 // Le cache n'est JAMAIS l'autorité : `CloudCollectionStore` (voir
 // `CloudCollectionStore.ts`) ne l'utilise que pour un affichage immédiat au
-// démarrage, toujours corrigé par le réseau ensuite.
+// démarrage, toujours corrigé par le réseau ensuite. `readAll()` renvoie
+// délibérément `unknown[]` — le cache est une frontière NON FIABLE au même
+// titre que le réseau (revue post-implémentation Phase 7A) : une page
+// stockée par une version antérieure du schéma, ou corrompue, doit être
+// validée par l'appelant (`CloudCollectionStore`) avant tout affichage.
+//
+// DB_VERSION 1 → 2 (ajout de "carnets") : le upgrade n'ajoute QUE les
+// magasins manquants (`if (!contains(storeName))`) — les données déjà
+// présentes dans "clients"/"fiches" ne sont jamais touchées ni supprimées.
 const DB_NAME = "tayoo-cloud-cache";
-const DB_VERSION = 1;
-export const CACHE_STORE_NAMES = ["clients", "fiches"] as const;
+const DB_VERSION = 2;
+export const CACHE_STORE_NAMES = ["clients", "fiches", "carnets"] as const;
 export type CacheStoreName = (typeof CACHE_STORE_NAMES)[number];
 
-interface StoredRow<T> {
+interface StoredRow {
   workshopId: string;
   id: string;
-  data: T;
+  data: unknown;
 }
 
 function openDb(): Promise<IDBDatabase> {
@@ -39,7 +47,9 @@ function openDb(): Promise<IDBDatabase> {
 }
 
 /** Cache d'UNE collection, scopé à UN atelier — jamais deux ateliers dans la
- * même instance (corr. R §17 : "atelier A != atelier B sans ambiguïté"). */
+ * même instance (corr. R §17 : "atelier A != atelier B sans ambiguïté").
+ * `T` ne sert qu'à typer `writeAll()` (ce que CE process vient d'écrire, donc
+ * de confiance) — `readAll()` reste `unknown[]`, voir commentaire de tête. */
 export class IndexedDbCollectionCache<T> {
   private readonly storeName: CacheStoreName;
   private readonly workshopId: string;
@@ -49,19 +59,19 @@ export class IndexedDbCollectionCache<T> {
     this.workshopId = workshopId;
   }
 
-  async readAll(): Promise<T[]> {
+  async readAll(): Promise<unknown[]> {
     const db = await openDb();
     try {
-      return await new Promise<T[]>((resolve, reject) => {
+      return await new Promise<unknown[]>((resolve, reject) => {
         const tx = db.transaction(this.storeName, "readonly");
         const index = tx.objectStore(this.storeName).index("workshopId");
         const range = IDBKeyRange.only(this.workshopId);
-        const rows: T[] = [];
+        const rows: unknown[] = [];
         const cursorRequest = index.openCursor(range);
         cursorRequest.onsuccess = () => {
           const cursor = cursorRequest.result;
           if (cursor) {
-            rows.push((cursor.value as StoredRow<T>).data);
+            rows.push((cursor.value as StoredRow).data);
             cursor.continue();
           } else {
             resolve(rows);
