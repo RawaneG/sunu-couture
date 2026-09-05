@@ -71,7 +71,7 @@ supabase/
                                       #   [db.seed].enabled = false ; [api].schemas = public, graphql_public
   seeds/
     draft_subscription_plans.sql       # BROUILLON is_active=false — NON câblé dans config.toml
-  migrations/                          # format horodaté, 11 fichiers (Phase 2 : 9 ; Phase 3B : 2 ; Phase 4 : 1)
+  migrations/                          # format horodaté, 12 fichiers (Phase 2 : 9 ; Phase 3B : 2 ; Phase 4 : 1 ; Phase 9A : 1)
     20260829120000_enable_extensions_and_enums.sql     pgcrypto, schéma privé app_hidden, 10 enums
     20260829120100_create_core_schema.sql              15 tables ; UNIQUE(workshop_id,id) + FK composites
     20260829120200_create_subscription_schema.sql      tables abonnement, AUCUN seed
@@ -84,10 +84,14 @@ supabase/
     20260830160310_provision_workshop_api.sql           wrapper public SECURITY INVOKER → app_hidden.provision_workshop (Phase 3A)
     20260830212932_grant_provision_workshop_service_role_select.sql   GRANT SELECT ciblé service_role sur workshops (Phase 3B)
     20260830231638_grants_and_rls_policies.sql          REVOKE normalisé + GRANT colonne par colonne + 27 politiques RLS (Phase 4)
+    20260905144612_create_fiche_from_draft_api.sql      wrapper public SECURITY INVOKER → app_hidden.create_fiche_from_draft (Phase 9A)
   migrations_down/                     # <ts>_<nom>.down.sql — rollback manuel (le CLI est forward-only)
+  functions/
+    provision-workshop/                # Edge Function Phase 3A — voir index.ts pour le contrat de sécurité complet
+    create-fiche-from-draft/           # Edge Function Phase 9A — voir index.ts pour le contrat de sécurité complet
   tests/
     00_local_auth_shim.sql             # auth.users + auth.uid() + rôles + default privileges — POSTGRES NU SEULEMENT
-    10_schema_tests.sql                # 55 groupes d'assertions, tx + ROLLBACK (35 Phase 2 + 5 Phase 3A/3B + 15 Phase 4)
+    10_schema_tests.sql                # 57 groupes d'assertions, tx + ROLLBACK (35 Phase 2 + 5 Phase 3A/3B + 15 Phase 4 + 2 Phase 9A)
     run.sh / run.ps1                   # orchestrateurs base jetable (voie COMPLÉMENTAIRE)
 ```
 
@@ -125,6 +129,25 @@ inter-ateliers est **impossible au niveau du moteur**, en plus de la RLS.
 - `revoke all … from public` explicite **dans la même transaction** que chaque `create function` + blanket `revoke all on all functions in schema app_hidden from public` (`20260829120700`).
 - **`anon` n'a PAS `USAGE`** sur `app_hidden` → ne peut appeler aucune fonction.
 - **PAS d'`ALTER DEFAULT PRIVILEGES`** (passe statique, point 6) : la forme schema-scoped est un no-op PG sur les fonctions ; la forme globale n'est pas appliquée sans analyse. **Toute nouvelle fonction `app_hidden` doit porter son propre `revoke all … from public`.** Test **T30** : aucune fonction sensible exécutable par `PUBLIC` / `anon` / `authenticated`.
+
+## Wrappers PostgREST `public` (pont vers `app_hidden`)
+
+`app_hidden` n'étant pas listé dans `[api].schemas` (`config.toml`), PostgREST
+renvoie `PGRST106` sur tout appel direct `.schema('app_hidden').rpc(...)` — y
+compris depuis une Edge Function (le SDK serveur passe, comme le client, par
+PostgREST). Deux wrappers minimaux dans `public` servent de SEULE porte :
+
+| Wrapper | Relaie | Sécurité | `EXECUTE` accordé à |
+|---|---|---|---|
+| `provision_workshop_api(uuid, text)` | `app_hidden.provision_workshop` | INVOKER, `search_path=''` | `service_role` |
+| `create_fiche_from_draft_api(uuid, uuid, jsonb)` | `app_hidden.create_fiche_from_draft` | INVOKER, `search_path=''` | `service_role` |
+
+Chacun est `SECURITY INVOKER` (jamais `DEFINER` — il ne fait que relayer un
+appel vers une fonction déjà `SECURITY DEFINER`), n'ajoute **aucun** `GRANT`
+ni politique RLS, et ne duplique **aucune** règle métier de la fonction
+`app_hidden` sous-jacente. Ce ne sont **pas** des API navigateur : la
+frontière de sécurité réelle reste l'Edge Function qui les appelle (JWT
+vérifié + appartenance/rôle vérifiés **avant** l'appel — voir ci-dessous).
 
 ### Frontière `service_role` (corr. Q — exigences bloquantes Phases 3–4)
 
@@ -182,10 +205,28 @@ npx supabase db lint --local
 npx supabase db advisors --local --type all --level info
 
 DBURL="$(npx supabase status -o env | sed -n 's/^DB_URL=//p')"
-psql "$DBURL" -v ON_ERROR_STOP=1 -f supabase/tests/10_schema_tests.sql   # 35 groupes, vrais rôles Supabase
+psql "$DBURL" -v ON_ERROR_STOP=1 -f supabase/tests/10_schema_tests.sql   # 57 groupes, vrais rôles Supabase
 
 npx supabase stop
 ```
+
+### Edge Functions (Phase 3A / 9A) — validation locale
+
+```bash
+npx supabase start
+npx supabase functions serve            # terminal séparé, laissé ouvert
+
+npm run test:edge:provision-workshop    # 17/17 — provision-workshop
+npm run test:edge:fiche-draft           # 22/22 — create-fiche-from-draft (2 numéros [auth.sms.test_otp])
+npm run test:edge                       # les deux suites, séquentiellement
+```
+Comme `provision-workshop`, `create-fiche-from-draft` construit ses fixtures
+(ateliers/memberships/clients de test) **directement via la clé secrète**
+(REST), jamais via l'Edge Function elle-même, et nettoie après coup. Même
+limite locale documentée pour le CORS : Kong réécrit
+`Access-Control-Allow-Origin` sur la stack Docker locale — seuls les codes de
+statut sont vérifiables ici, les valeurs d'en-tête restent à vérifier une fois
+déployé (voir le commentaire de tête de chaque `index.ts`).
 `auth.uid()` réel de Supabase lit `request.jwt.claim.sub` **avant** `request.jwt.claims`
 (`coalesce`) — les tests (`set_config('request.jwt.claim.sub', …)`) s'exécutent donc
 sans adaptation, aussi bien sur la stack Docker que sur le shim de repli.

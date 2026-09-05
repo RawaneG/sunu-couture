@@ -598,10 +598,33 @@ L'ordre reprend celui du cahier des charges (§ « Ordre d'implémentation »).
     reste **exclusivement** la porte de la **création métier normale** — elle
     ne sera **jamais** utilisée pour l'import legacy (Phase 6B0/6B, raison
     détaillée dans la section 6B0).
-- **Migrations SQL** : aucune — `create_fiche_from_draft()` créée en Phase 2
-  (`…120400`). `fiche_state` n'a **pas** de valeur `'draft'` (corr. L) : les
-  brouillons sont purement locaux et n'existent en base qu'une fois promus
-  `'active'`.
+- **Migrations SQL — corrigé lors de l'implémentation** : `app_hidden.
+  create_fiche_from_draft()` elle-même reste inchangée, créée en Phase 2
+  (`…120400`) ; MAIS un **unique wrapper technique** a dû être ajouté,
+  `public.create_fiche_from_draft_api(p_workshop_id, p_client_id, p_fiche)`
+  (migration `20260905144612_create_fiche_from_draft_api.sql`), pour la même
+  raison déjà documentée pour `provision_workshop_api` (Phase 3A) :
+  `app_hidden` n'est **pas** dans `[api].schemas`
+  (`supabase/config.toml`) — PostgREST renvoie `PGRST106` sur tout appel
+  `.schema('app_hidden').rpc(...)`, y compris depuis l'Edge Function (le SDK
+  serveur passe, comme le client, par PostgREST). Ce wrapper :
+  - vit dans `public` (seul schéma exposé), `SECURITY INVOKER` (jamais
+    `DEFINER` — il ne fait que relayer un appel vers une fonction déjà
+    `SECURITY DEFINER`, sans privilège propre), `search_path = ''`, noms
+    entièrement qualifiés ;
+  - n'affaiblit **aucun** `GRANT`/`RLS` existant : `EXECUTE` révoqué de
+    `PUBLIC`/`anon`/`authenticated`, accordé **uniquement** à `service_role` ;
+    aucun `GRANT INSERT` ajouté sur `fiches`/`carnets`, aucune politique RLS
+    supplémentaire (vérifié T56/T57, `supabase/tests/10_schema_tests.sql`) ;
+  - ne duplique **aucune** règle métier : il relaie intégralement
+    `app_hidden.create_fiche_from_draft()` (anti-fiche-vide, numérotation,
+    page/slot — déjà testées T32/T33) ;
+  - n'est **pas** la frontière de sécurité à lui seul : ce n'est toujours
+    l'Edge Function `create-fiche-from-draft` qui vérifie JWT + appartenance +
+    rôle + client-dans-l'atelier **avant** de l'appeler en `service_role`
+    (points 1 à 5 ci-dessus, inchangés).
+  `fiche_state` n'a **pas** de valeur `'draft'` (corr. L) : les brouillons
+  sont purement locaux et n'existent en base qu'une fois promus `'active'`.
 - **Tests** : « ouvrir puis abandonner le brouillon → 0 fiche, 0 carnet, 0
   numéro consommé » ; « brouillon significatif validé → exactement 1 fiche,
   numéro serveur attribué » ; l'Edge Function refuse un appel sans JWT valide

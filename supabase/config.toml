@@ -43,6 +43,13 @@ enable_confirmations = true
 # (à retirer avant tout déploiement distant — cf. supabase/README.md « Phase 3A »).
 [auth.sms.test_otp]
 "221770000099" = "123456"
+# Second numéro de TEST — Phase 9A : nécessaire pour simuler un DEUXIÈME
+# utilisateur réel (ex. un assistant d'un autre atelier) dans
+# scripts/test-create-fiche-from-draft.mjs, sans quoi les scénarios
+# "atelier A vs atelier B" ne peuvent pas être vérifiés avec de vrais JWT.
+# Même statut que le numéro ci-dessus : jamais un vrai numéro, jamais de SMS
+# envoyé, à retirer avant tout déploiement distant.
+"221770000098" = "123456"
 
 # Stub INERTE requis par GoTrue pour activer le code path "phone auth" du tout
 # (sinon `phone_provider_disabled`, testé) — AUCUN compte Twilio, AUCUNE
@@ -78,3 +85,12 @@ entrypoint = "./functions/provision-workshop/index.ts"
 # Specifies static files to be bundled with the function. Supports glob patterns.
 # For example, if you want to serve static HTML pages in your function:
 # static_files = [ "./functions/provision-workshop/*.html" ]
+
+[functions.create-fiche-from-draft]
+enabled = true
+# Même choix que provision-workshop (voir ci-dessus) : vérification du JWT
+# faite explicitement dans le code via `auth.getClaims()`, pas déléguée à Kong.
+# Voir supabase/functions/create-fiche-from-draft/index.ts et supabase/README.md.
+verify_jwt = false
+import_map = "./functions/create-fiche-from-draft/deno.json"
+entrypoint = "./functions/create-fiche-from-draft/index.ts"

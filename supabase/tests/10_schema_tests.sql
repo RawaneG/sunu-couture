@@ -1594,6 +1594,85 @@ exception
 end;
 $$;
 
-do $$ begin raise notice '════════  SCHÉMA PHASE 2 + WRAPPER PHASE 3A + CORRECTIFS GRANT + PHASE 4 GRANT/RLS : 55 groupes de tests OK  ════════'; end; $$;
+-- ══════════════════════════════════════════════════════════════════════════
+-- Phase 9A — wrapper PostgREST `public.create_fiche_from_draft_api` (migration
+-- 20260905144612…). Même raison d'être que `provision_workshop_api` (T36) :
+-- `app_hidden` n'étant pas dans [api].schemas, ce wrapper SECURITY INVOKER
+-- est la SEULE porte PostgREST vers app_hidden.create_fiche_from_draft().
+-- p_workshop_id/p_client_id doivent provenir exclusivement de l'Edge
+-- Function (JWT vérifié + contrôle appartenance/rôle), jamais du JSON client.
+-- ══════════════════════════════════════════════════════════════════════════
+
+-- ── T56 — privilèges : PUBLIC/anon/authenticated refusés, service_role seul ─
+do $$
+declare
+  v_sig constant text := 'public.create_fiche_from_draft_api(uuid, uuid, jsonb)';
+  v_bad text;
+begin
+  -- PUBLIC : aucune entrée `=X/` (grant PUBLIC) dans proacl
+  select p.proacl::text into v_bad
+  from pg_proc p join pg_namespace n on n.oid = p.pronamespace
+  where n.nspname = 'public' and p.proname = 'create_fiche_from_draft_api';
+  if v_bad is not null and v_bad ~ '(^|,)=[^/]*/' then
+    raise exception 'T56 FAIL: PUBLIC a EXECUTE sur %  (proacl=%)', v_sig, v_bad;
+  end if;
+  if has_function_privilege('anon', v_sig, 'execute') then
+    raise exception 'T56 FAIL: anon a EXECUTE sur %', v_sig;
+  end if;
+  if has_function_privilege('authenticated', v_sig, 'execute') then
+    raise exception 'T56 FAIL: authenticated a EXECUTE sur %', v_sig;
+  end if;
+  if not has_function_privilege('service_role', v_sig, 'execute') then
+    raise exception 'T56 FAIL: service_role SANS EXECUTE sur %', v_sig;
+  end if;
+  -- app_hidden reste non accessible à anon/authenticated (déjà couvert T17/T30,
+  -- re-vérifié ici au cas où cette migration l'aurait régressé)
+  if has_schema_privilege('anon', 'app_hidden', 'usage') then
+    raise exception 'T56 FAIL: anon a USAGE sur app_hidden (régression)';
+  end if;
+  if has_function_privilege('anon', 'app_hidden.create_fiche_from_draft(uuid, uuid, jsonb)', 'execute')
+  or has_function_privilege('authenticated', 'app_hidden.create_fiche_from_draft(uuid, uuid, jsonb)', 'execute') then
+    raise exception 'T56 FAIL: anon/authenticated a EXECUTE sur app_hidden.create_fiche_from_draft (régression)';
+  end if;
+  -- security invoker, jamais definer, search_path verrouillé
+  if exists (
+    select 1 from pg_proc p join pg_namespace n on n.oid = p.pronamespace
+    where n.nspname = 'public' and p.proname = 'create_fiche_from_draft_api' and p.prosecdef
+  ) then
+    raise exception 'T56 FAIL: create_fiche_from_draft_api est SECURITY DEFINER (attendu INVOKER)';
+  end if;
+  if not exists (
+    select 1 from pg_proc p join pg_namespace n on n.oid = p.pronamespace
+    where n.nspname = 'public' and p.proname = 'create_fiche_from_draft_api'
+      and p.proconfig is not null and array_to_string(p.proconfig, ',') like '%search_path=%'
+  ) then
+    raise exception 'T56 FAIL: create_fiche_from_draft_api sans search_path verrouillé';
+  end if;
+  raise notice 'T56 OK — create_fiche_from_draft_api : PUBLIC/anon/authenticated refusés, service_role seul, INVOKER, search_path verrouillé, app_hidden toujours non exposé';
+end;
+$$;
+
+-- ── T57 — aucun GRANT INSERT / aucune politique INSERT sur fiches pour
+-- authenticated : le wrapper Phase 9A ne doit RIEN ouvrir en écriture directe,
+-- `create_fiche_from_draft_api` (via service_role) reste la SEULE porte ──
+do $$
+begin
+  if has_table_privilege('authenticated', 'public.fiches', 'insert') then
+    raise exception 'T57 FAIL: authenticated a INSERT sur public.fiches (devrait rester impossible — seule porte : create_fiche_from_draft_api)';
+  end if;
+  if has_table_privilege('anon', 'public.fiches', 'insert') then
+    raise exception 'T57 FAIL: anon a INSERT sur public.fiches';
+  end if;
+  if exists (
+    select 1 from pg_policies
+    where schemaname = 'public' and tablename = 'fiches' and cmd = 'INSERT'
+  ) then
+    raise exception 'T57 FAIL: une politique RLS INSERT existe sur public.fiches (attendu : aucune)';
+  end if;
+  raise notice 'T57 OK — aucun GRANT/politique INSERT sur public.fiches pour anon/authenticated (Phase 9A n''ouvre aucune écriture directe)';
+end;
+$$;
+
+do $$ begin raise notice '════════  SCHÉMA PHASE 2 + WRAPPER PHASE 3A + CORRECTIFS GRANT + PHASE 4 GRANT/RLS + WRAPPER PHASE 9A : 57 groupes de tests OK  ════════'; end; $$;
 
 rollback;
