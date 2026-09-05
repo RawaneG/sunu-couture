@@ -610,10 +610,19 @@ Function d'import ne peut donc pas faire de simples `INSERT` bruts. 6B0 livre :
 - une Edge Function `import-legacy-data` (JWT vérifié, appartenance/rôle owner
   vérifiés, jamais de `workshop_id` accepté aveuglément) ;
 - des fonctions **`app_hidden.import_legacy_*`** (`carnet`/`fiche`/`client`/
-  `modele`/`payment`) `SECURITY DEFINER`, `EXECUTE` → `service_role` seul,
-  symétriques à `create_fiche_from_draft`/`provision_workshop` ;
+  `modele`/`payment`/**`media_asset`**/**`modele_media`**) `SECURITY DEFINER`,
+  `EXECUTE` → `service_role` seul, `search_path` sécurisé, symétriques à
+  `create_fiche_from_draft`/`provision_workshop` ;
 - préservation stricte des numéros/carnets legacy (numéro fourni explicitement,
   `next_number = MAX(legacy) + 1` calculé en une fois, pas incrémentalement) ;
+- **écriture table vs upload fichier, jamais confondus** : `service_role` n'a
+  (voir plus haut) aucun `INSERT` brut sur les tables métier — un média importé
+  suit donc deux étapes distinctes, jamais l'une sans l'autre : l'Edge Function
+  uploade le fichier dans Storage privé (chemin déterministe, point 9) **via
+  l'API Storage**, puis appelle `app_hidden.import_legacy_media_asset(...)`
+  (médias fiche → `public.media_assets`) ou `app_hidden.import_legacy_modele_media(...)`
+  (médias modèle → `public.modele_medias`) pour créer/retrouver la ligne DB —
+  jamais un `INSERT` brut `service_role` dans l'une ou l'autre table ;
 - une **migration SQL de durcissement de l'idempotence** (seule migration de
   tout ce graphe, justifiée par un manque réel, pas créée par défaut) — voir
   point 9.
@@ -651,7 +660,11 @@ cas. Vérifié sur le schéma réel :
     **déterministe**, dérivé d'un segment sûr (id legacy de l'entité + type de
     média + index ordinal), **jamais** une chaîne legacy brute non assainie ni
     un id aléatoire régénéré à chaque tentative. Aucune migration nécessaire
-    pour les médias.
+    pour les médias — `import_legacy_media_asset`/`import_legacy_modele_media`
+    doivent être écrites en conséquence (`storage_path` absent → créer la
+    ligne ; déjà présent pour cette donnée importée → retrouver/retourner la
+    ligne existante ; jamais une seconde ligne avec un nouveau chemin lors
+    d'un retry) — signatures SQL détaillées non fixées au-delà de ce contrat.
 
 **10. Aucune implémentation dans ce gel** — cette correction R est purement
 documentaire. Aucun code, aucune migration SQL, aucune Edge Function n'a été
@@ -683,7 +696,7 @@ Schéma privé **`app_hidden`** (hors `[api].schemas`) — **6 fonctions** (`all
 - `current_workshop_ids()` — `security definer`, `stable`, `search_path=''` ; UNION owner_id ∪ membres ; `EXECUTE` → `authenticated`
 - `create_fiche_from_draft(uuid, uuid, jsonb)` — `security definer` ; **SEULE porte de la création métier NORMALE** (jamais l'import legacy — corr. R, Phase 6B0) — attribution de numéro + création de fiche ; règle métier anti-fiche-vide ; `EXECUTE` → `service_role`, appelée par l'Edge Function `create-fiche-from-draft` (corr. L, Q, R)
 - `provision_workshop(uuid, text)` — `security definer` ; `EXECUTE` → `service_role` (corr. O)
-- *(Phase 6B0, à venir)* `import_legacy_carnet`/`import_legacy_fiche`/`import_legacy_client`/`import_legacy_modele`/`import_legacy_payment` — `security definer`, `EXECUTE` → `service_role` seul, chemin distinct pour l'import legacy avec numéros explicites (corr. R) — **non créées à ce jour**, documentées ici par anticipation.
+- *(Phase 6B0, à venir)* `import_legacy_carnet`/`import_legacy_fiche`/`import_legacy_client`/`import_legacy_modele`/`import_legacy_payment`/**`import_legacy_media_asset`**/**`import_legacy_modele_media`** — `security definer`, `EXECUTE` → `service_role` seul, `search_path` sécurisé, chemin distinct pour l'import legacy avec numéros explicites (corr. R). Les deux dernières créent/retrouvent une ligne `media_assets`/`modele_medias` après qu'un fichier a été **uploadé séparément par l'Edge Function dans Storage privé** (chemin déterministe) — l'upload Storage n'est jamais une écriture PostgreSQL, et ces fonctions n'insèrent jamais en double lors d'un retry (idempotentes sur `storage_path`). **Non créées à ce jour**, documentées ici par anticipation.
 - `COMMENT ON FUNCTION` sur `create_fiche_from_draft` et `provision_workshop` : frontière `service_role` (corr. Q).
 
 RLS **activée** (sans `GRANT` ni politique) sur les 15 tables en Phase 2 ; `GRANT` explicites + politiques en Phase 4 (même migration — voir corr. E).

@@ -383,14 +383,38 @@ L'ordre reprend celui du cahier des charges (§ « Ordre d'implémentation »).
   - `app_hidden.import_legacy_payment(...)` — idempotent par construction : au
     plus un versement importé par fiche (D6), protégé par une contrainte
     `UNIQUE(fiche_id) WHERE metadata->>'source' = 'legacy_import'`.
-  - Médias (`media_assets`/`modele_medias`) : le chemin `storage_path` de
-    l'upload doit être **déterministe**, dérivé d'un segment sûr et stable
-    (identifiant legacy de l'entité + type de média + index ordinal dans le
-    tableau — jamais une chaîne legacy brute non assainie, jamais un id
-    aléatoire régénéré à chaque tentative). Un retry produit alors **exactement
-    le même `storage_path`** — les contraintes `UNIQUE(storage_path)` déjà
-    existantes (Phase 2) suffisent comme garantie serveur, sans migration
-    supplémentaire pour les médias.
+  - **Médias — deux étapes distinctes, jamais confondues** : l'upload d'un
+    fichier dans Storage **n'est pas** une écriture PostgreSQL, et
+    `service_role` n'a par ailleurs aucun `INSERT` brut sur les tables
+    métier (voir plus haut) — la ligne DB correspondante passe donc, comme
+    tout le reste de 6B0, par une fonction `app_hidden` dédiée :
+    ```
+    médias fiche  : Edge Function → upload Storage (storage_path déterministe)
+                    → app_hidden.import_legacy_media_asset(...) → public.media_assets
+    médias modèle : Edge Function → upload Storage (storage_path déterministe)
+                    → app_hidden.import_legacy_modele_media(...) → public.modele_medias
+    ```
+    - `app_hidden.import_legacy_media_asset(...)` / `app_hidden.import_legacy_modele_media(...)`
+      — même schéma que les fonctions ci-dessus (`security definer`, `EXECUTE`
+      → `service_role` seul, `search_path=''`) ; **non créées à ce jour**,
+      contrat documenté par anticipation pour la future Phase 6B0. L'Edge
+      Function `import-legacy-data` orchestre le fichier (upload Storage) et
+      la transaction métier (appel de ces fonctions) — elle ne fait **jamais**
+      d'`INSERT` brut `service_role` dans `public.media_assets` ni
+      `public.modele_medias`.
+    - Idempotence : le `storage_path` de l'upload doit être **déterministe**,
+      dérivé d'un segment sûr et stable (identifiant legacy de l'entité + type
+      de média + index ordinal dans le tableau — jamais une chaîne legacy
+      brute non assainie, jamais un id aléatoire régénéré à chaque tentative).
+      Un retry produit alors **exactement le même `storage_path`** — les
+      contraintes `UNIQUE(storage_path)` déjà existantes (Phase 2) sont la
+      garantie serveur : `import_legacy_media_asset`/`import_legacy_modele_media`
+      doivent être écrites en conséquence (si le `storage_path` n'existe pas
+      → créer la ligne ; s'il existe déjà pour cette donnée importée →
+      retrouver/retourner la ligne existante ; jamais une seconde ligne avec
+      un nouveau chemin lors d'un retry). Aucune migration supplémentaire
+      requise pour les médias — signatures SQL détaillées non fixées ici, au-delà
+      de ce contrat.
 - **Migrations SQL nécessaires** (nouvelle migration horodatée `…_harden_legacy_import_idempotency.sql`,
   la seule migration de tout ce graphe cloud, justifiée par un manque réel du
   schéma actuel, pas créée par défaut) :
@@ -408,10 +432,10 @@ L'ordre reprend celui du cahier des charges (§ « Ordre d'implémentation »).
     `client_payments` — défense en profondeur **obligatoire** (corr. R), pas
     optionnelle : protège un retry après crash, une reprise sur un second
     appareil, ou un appel concurrent.
-  - `database.types.ts` sera régénéré à ce moment (nouvelle colonne `modeles.metadata`).
-  - **`database.types.ts` régénéré**, `GRANT EXECUTE` des nouvelles fonctions
-    `app_hidden.import_legacy_*` réservé à `service_role` (même schéma que les
-    fonctions existantes).
+  - `database.types.ts` régénéré à ce moment (nouvelle colonne `modeles.metadata`) ;
+    `GRANT EXECUTE` de **toutes** les fonctions `app_hidden.import_legacy_*`
+    (y compris `import_legacy_media_asset`/`import_legacy_modele_media`)
+    réservé à `service_role` — même schéma que les fonctions existantes.
 - **Principe d'idempotence, acté définitivement (corr. R)** : `migrationMap`
   (IndexedDB) est un **accélérateur et un état de reprise local** — jamais
   l'autorité. **Le serveur (contraintes `UNIQUE` + fonctions idempotentes sous
@@ -454,9 +478,16 @@ L'ordre reprend celui du cahier des charges (§ « Ordre d'implémentation »).
     → `media_assets`** (Storage privé, chemin déterministe) → **`modeles`** →
     **médias modèles/patrons → `modele_medias`** (Storage privé, chemin
     déterministe, `kind` ∈ `photo`/`patron`).
-  - Chaque étape appelle exclusivement les fonctions `app_hidden.import_legacy_*`
-    de la Phase 6B0 — **jamais** `app_hidden.create_fiche_from_draft()`
-    (voir Phase 6B0 pour la raison : perte des numéros legacy).
+  - **Toutes les écritures dans les tables métier `public.*` de l'import**
+    passent par les fonctions `app_hidden.import_legacy_*` de la Phase 6B0 —
+    **jamais** `app_hidden.create_fiche_from_draft()` (voir Phase 6B0 pour la
+    raison : perte des numéros legacy). **Précision médias (corr. R)** : un
+    upload Storage n'est pas une écriture PostgreSQL — les blobs sont
+    uploadés par l'Edge Function dans Storage privé avec des `storage_path`
+    déterministes ; la ligne DB correspondante est ensuite créée ou
+    retrouvée via `app_hidden.import_legacy_media_asset` (fiches) ou
+    `app_hidden.import_legacy_modele_media` (modèles) — jamais un `INSERT`
+    brut `service_role`.
   - Vérification post-import : recomptage serveur vs prévisualisation (y
     compris `count(modeles)`), rapport affiché.
   - `localStorage["tayoo-migration-v1"] = { done, at, counts }`.
