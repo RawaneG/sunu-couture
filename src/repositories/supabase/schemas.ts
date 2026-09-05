@@ -92,3 +92,27 @@ export type FicheViewRow = z.infer<typeof ficheViewRowSchema>;
 export const createFicheFromDraftResponseSchema = z.object({
   fiche: z.object({ id: z.string(), workshop_id: z.string() }).loose(),
 });
+
+// ── media_assets (Phase 8A — médias FICHE uniquement) ───────────────────
+// `type` EXCLUT délibérément `'model_photo'` : `media_assets` ne porte que
+// des médias de fiche (`fabric_photo`/`voice_note`/`signature`, corr. R) —
+// les médias de modèle vivent dans `modele_medias` (Phase 8B), jamais ici.
+// Une ligne `type='model_photo'` (ne devrait jamais exister ici) échoue donc
+// cette validation et fait échouer tout le lot (atomique, corr. R §14/§15) —
+// jamais mappée silencieusement.
+export const ficheMediaTypeSchema = z.enum(["fabric_photo", "voice_note", "signature"]);
+export type FicheMediaType = z.infer<typeof ficheMediaTypeSchema>;
+
+export const mediaAssetRowSchema = z.object({
+  id: z.string(),
+  workshop_id: z.string(),
+  fiche_id: z.string(),
+  type: ficheMediaTypeSchema,
+  storage_path: z.string(),
+  mime_type: z.string(),
+  size_bytes: z.number().int().nonnegative(),
+  metadata: z.record(z.string(), z.unknown()).nullable(),
+  created_at: z.string(),
+  deleted_at: z.string().nullable(),
+});
+export type MediaAssetRow = z.infer<typeof mediaAssetRowSchema>;

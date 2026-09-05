@@ -1,16 +1,19 @@
 // DB row (`fiches_view`) ↔ domaine `Fiche` — respecte D4/D8 et corr. R.
 //
-// IMPORTANT (corr. R §31, preflight Phase 7) : `Fiche` porte encore des
-// champs qui n'ont PAS de source cloud avant des phases ultérieures :
-// `voiceNote`/`tissuPhotos`/`signature` → `media_assets`, Phase 8A ;
-// `avance` → `client_payments` (ledger), Phase 11A. Tant que ces phases
-// n'existent pas, AUCUNE fiche cloud ne peut légitimement en avoir — ce
-// mapper les renvoie donc à leur valeur neutre (`null`/`[]`/`0`), documentée
-// ici comme NON AUTORITATIVE : elle ne doit jamais être lue comme "cette
-// fiche n'a pas de photo/vocal/avance", seulement comme "cette information
-// n'est pas encore rapportée par cette version du Repository". C'est
-// précisément pour cette raison que `VITE_BACKEND=supabase` reste bloqué
-// globalement tant que 8A/11A ne sont pas terminées (voir
+// IMPORTANT (corr. R §31, preflight Phase 7 ; mis à jour Phase 8A) : `Fiche`
+// porte encore des champs sans source d'écriture ICI :
+// `voiceNote`/`tissuPhotos`/`signature` → `media_assets`, DÉSORMAIS
+// implémenté par `SupabaseMediaRepository` (Phase 8A) — jamais par ce
+// mapper ni par `SupabaseFicheRepository` ; `avance` → `client_payments`
+// (ledger), toujours Phase 11A. Ce mapper continue de renvoyer
+// `voiceNote`/`tissuPhotos`/`signature` à leur valeur neutre (`null`/`[]`)
+// et `avance` à `0` : à partir de la Phase 8A, ces trois champs deviennent
+// VOLONTAIREMENT NON AUTORITATIFS sur `Fiche` — la source de vérité cloud
+// est `MediaRepository` (`useFicheMedia()`, `FicheDetail.tsx`), jamais un
+// join artificiel ajouté ici ou dans `fiches_view`. `avance` reste non
+// autoritatif jusqu'à la Phase 11A. C'est précisément pour cette raison que
+// `VITE_BACKEND=supabase` reste bloqué globalement tant que 8A (médias) et
+// 11A (paiements) ne sont pas *toutes deux* terminées (voir
 // `RepositoryContainer.test.ts` et `SupabaseFicheRepository.test.ts`).
 //
 // `nom`/`prenom`/`telephone`/`fabricColor` en revanche viennent de données

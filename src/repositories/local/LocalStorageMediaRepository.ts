@@ -1,9 +1,14 @@
 import { useStore } from "../../lib/store";
+import type { VoiceNote } from "../../lib/types";
 import type { MediaRepository } from "../MediaRepository";
 import { dataUrlSchema, parseOrThrow } from "../schemas";
 import { subscribeToSlice } from "./subscribeToSlice";
 
 export class LocalStorageMediaRepository implements MediaRepository {
+  // Aucune hydratation réseau — `getStatus()` volontairement absente
+  // (contrat `ObservableRepositoryStatus` : absence ⇒ "ready" immédiat,
+  // voir `useFicheMedia`/`hooks.ts`).
+
   listFichePhotos(ficheId: string) {
     return useStore.getState().fiches.find((f) => f.id === ficheId)?.tissuPhotos ?? [];
   }
@@ -14,6 +19,23 @@ export class LocalStorageMediaRepository implements MediaRepository {
   }
   async removeFichePhoto(ficheId: string, photoId: string): Promise<void> {
     useStore.getState().removeFicheTissuPhoto(ficheId, photoId);
+  }
+
+  // Phase 8A — déplacés depuis `FicheDetail`/`FicheRepository.setInfo()` :
+  // même stockage local (`fiches[].voiceNote`/`signature`), aucun changement
+  // de format `localStorage`, aucune migration legacy (§7).
+  getFicheVoiceNote(ficheId: string): VoiceNote | null {
+    return useStore.getState().fiches.find((f) => f.id === ficheId)?.voiceNote ?? null;
+  }
+  async setFicheVoiceNote(ficheId: string, value: VoiceNote | null): Promise<void> {
+    useStore.getState().setFicheInfo(ficheId, { voiceNote: value });
+  }
+
+  getFicheSignature(ficheId: string): string | null {
+    return useStore.getState().fiches.find((f) => f.id === ficheId)?.signature ?? null;
+  }
+  async setFicheSignature(ficheId: string, dataUrl: string | null): Promise<void> {
+    useStore.getState().setFicheInfo(ficheId, { signature: dataUrl });
   }
 
   listModelePhotos(modeleId: string) {

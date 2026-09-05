@@ -1,5 +1,5 @@
-import { useCallback, useSyncExternalStore } from "react";
-import type { Client, Fiche } from "../lib/types";
+import { useCallback, useRef, useSyncExternalStore } from "react";
+import type { Client, Fiche, TissuPhoto, VoiceNote } from "../lib/types";
 import type { CarnetSlot } from "./CarnetRepository";
 import type { Payment } from "./PaymentRepository";
 import { READY_STATUS } from "./RepositoryStatus";
@@ -102,4 +102,67 @@ export function useModele(id: string) {
     useCallback((onStoreChange) => modeles.subscribe(onStoreChange), [modeles]),
     () => modeles.get(id),
   );
+}
+
+// ── Médias fiche (Phase 8A) — photos/vocal/signature deviennent NON
+// autoritatifs sur `Fiche` dès qu'un Repository média existe ; cette
+// combinaison devient la seule source de vérité UI (voir `MediaRepository.ts`
+// et `FicheDetail.tsx`). ───────────────────────────────────────────────────
+export interface FicheMediaSnapshot {
+  photos: TissuPhoto[];
+  voiceNote: VoiceNote | null;
+  signature: string | null;
+}
+
+/** Contrairement à `EntityLoadState<T>`, `data` n'est jamais `undefined` à
+ * l'état `ready` : `getFicheVoiceNote`/`getFicheSignature`/`listFichePhotos`
+ * renvoient toujours une valeur (éventuellement vide/null), jamais
+ * `undefined` — il n'existe pas de distinction "pas encore hydraté" au
+ * niveau d'UNE fiche ici (elle vient de `getStatus()`, global au
+ * Repository). */
+export type FicheMediaState =
+  | { status: "loading" }
+  | { status: "ready"; data: FicheMediaSnapshot }
+  | { status: "error"; error: Error; data: FicheMediaSnapshot };
+
+/** Combine 3 lectures indépendantes (`listFichePhotos`/`getFicheVoiceNote`/
+ * `getFicheSignature`) en UN SEUL snapshot `useSyncExternalStore` — sans
+ * jamais renvoyer une référence fraîche à chaque appel de `getSnapshot()` si
+ * rien n'a changé (contrat de stabilité, voir `CloudCollectionStore.list()`
+ * pour la même exigence). Chaque Repository garantit déjà que
+ * `listFichePhotos`/`getFicheVoiceNote`/`getFicheSignature` renvoient une
+ * référence STABLE pour une fiche donnée tant que ses médias n'ont pas
+ * changé (local : Zustand préserve les sous-objets non touchés par un
+ * `set()` immutable ; cloud : voir `SupabaseMediaRepository`) — ce hook se
+ * contente de mémoïser la COMBINAISON des trois, via une comparaison par
+ * référence sur chacune, pour ne produire un nouvel objet composite que si
+ * l'une des trois a réellement changé. */
+export function useFicheMedia(ficheId: string): FicheMediaState {
+  const { media } = useRepositories();
+  const cacheRef = useRef<{ photos: TissuPhoto[]; voiceNote: VoiceNote | null; signature: string | null; snapshot: FicheMediaSnapshot } | null>(null);
+
+  const getSnapshot = useCallback((): FicheMediaSnapshot => {
+    const photos = media.listFichePhotos(ficheId);
+    const voiceNote = media.getFicheVoiceNote(ficheId);
+    const signature = media.getFicheSignature(ficheId);
+    const cached = cacheRef.current;
+    if (cached && cached.photos === photos && cached.voiceNote === voiceNote && cached.signature === signature) {
+      return cached.snapshot;
+    }
+    const snapshot: FicheMediaSnapshot = { photos, voiceNote, signature };
+    cacheRef.current = { photos, voiceNote, signature, snapshot };
+    return snapshot;
+  }, [media, ficheId]);
+
+  const data = useSyncExternalStore(
+    useCallback((onStoreChange) => media.subscribe(onStoreChange), [media]),
+    getSnapshot,
+  );
+  const repoStatus = useSyncExternalStore(
+    useCallback((onStoreChange) => media.subscribe(onStoreChange), [media]),
+    () => media.getStatus?.() ?? READY_STATUS,
+  );
+  if (repoStatus.status === "loading") return { status: "loading" };
+  if (repoStatus.status === "error") return { status: "error", error: repoStatus.error, data };
+  return { status: "ready", data };
 }

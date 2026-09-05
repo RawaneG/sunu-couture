@@ -12,6 +12,10 @@ function fakeClient(invoke: ReturnType<typeof vi.fn>): SupabaseClient<Database> 
   return { functions: { invoke } } as unknown as SupabaseClient<Database>;
 }
 
+function fakeStorageClient(bucketMethods: Record<string, ReturnType<typeof vi.fn>>): SupabaseClient<Database> {
+  return { storage: { from: vi.fn(() => bucketMethods) } } as unknown as SupabaseClient<Database>;
+}
+
 function jsonResponse(status: number, body: unknown): Response {
   return new Response(JSON.stringify(body), { status, headers: { "Content-Type": "application/json" } });
 }
@@ -105,5 +109,50 @@ describe("createSupabaseGateway().createFicheFromDraft — normalisation d'erreu
     const result = await gateway.createFicheFromDraft("w1", "c1", payload);
 
     expect(result.error).toEqual({ message: "Edge Function returned a non-2xx status code" });
+  });
+});
+
+describe("createSupabaseGateway() — Storage média (Phase 8A)", () => {
+  it("uploadMediaObject relaie bucket='media', path, blob et contentType vers storage.upload", async () => {
+    const upload = vi.fn(async () => ({ data: { path: "workshops/w1/fiches/f1/id1" }, error: null }));
+    const client = fakeStorageClient({ upload });
+    const gateway = createSupabaseGateway(client);
+    const blob = new Blob(["x"]);
+
+    const result = await gateway.uploadMediaObject("workshops/w1/fiches/f1/id1", blob, "image/png");
+
+    expect(client.storage.from).toHaveBeenCalledWith("media");
+    expect(upload).toHaveBeenCalledWith("workshops/w1/fiches/f1/id1", blob, { contentType: "image/png" });
+    expect(result).toEqual({ data: null, error: null });
+  });
+
+  it("uploadMediaObject : erreur Storage -> GatewayError, jamais un throw", async () => {
+    const upload = vi.fn(async () => ({ data: null, error: { message: "quota dépassé" } }));
+    const gateway = createSupabaseGateway(fakeStorageClient({ upload }));
+
+    const result = await gateway.uploadMediaObject("workshops/w1/fiches/f1/id1", new Blob(["x"]), "image/png");
+
+    expect(result).toEqual({ data: null, error: { message: "quota dépassé" } });
+  });
+
+  it("createSignedMediaUrl relaie path/TTL et renvoie l'URL signée (jamais getPublicUrl)", async () => {
+    const createSignedUrl = vi.fn(async () => ({ data: { signedUrl: "https://signed.example/x" }, error: null }));
+    const client = fakeStorageClient({ createSignedUrl });
+    const gateway = createSupabaseGateway(client);
+
+    const result = await gateway.createSignedMediaUrl("workshops/w1/fiches/f1/id1", 300);
+
+    expect(client.storage.from).toHaveBeenCalledWith("media");
+    expect(createSignedUrl).toHaveBeenCalledWith("workshops/w1/fiches/f1/id1", 300);
+    expect(result).toEqual({ data: "https://signed.example/x", error: null });
+  });
+
+  it("createSignedMediaUrl : erreur Storage -> GatewayError", async () => {
+    const createSignedUrl = vi.fn(async () => ({ data: null, error: { message: "objet introuvable" } }));
+    const gateway = createSupabaseGateway(fakeStorageClient({ createSignedUrl }));
+
+    const result = await gateway.createSignedMediaUrl("workshops/w1/fiches/f1/id-inconnu", 300);
+
+    expect(result).toEqual({ data: null, error: { message: "objet introuvable" } });
   });
 });
