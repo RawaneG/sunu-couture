@@ -5,9 +5,17 @@
 // `SupabaseGateway`, injectable et testable sans `any` (corr. R §14).
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { Database } from "../../lib/supabase/database.types";
+import type { CreateFicheDraftPayload } from "../../lib/ficheDraft";
 
 export interface GatewayError {
   message: string;
+  /** Code métier structuré (`"unauthorized"`, `"forbidden"`, `"invalid_client"`,
+   * `"empty_draft"`, ...) extrait du corps JSON `{error, message}` renvoyé par
+   * une Edge Function (Phase 9A) — absent pour une erreur PostgREST classique
+   * (`.from(...)`), qui n'a pas ce contrat. Permet au Repository appelant de
+   * distinguer les cas sans coupler tout le code à `FunctionsHttpError`
+   * (interne à `@supabase/supabase-js`, Phase 7B §11). */
+  code?: string;
 }
 
 export interface GatewayResult<T> {
@@ -33,10 +41,45 @@ export interface SupabaseGateway {
    * Repository, qui seul connaît la sémantique métier de chaque champ. */
   updateFiche(workshopId: string, id: string, patch: FicheUpdate): Promise<GatewayResult<unknown>>;
   softDeleteFiches(workshopId: string, ids: string[]): Promise<GatewayResult<null>>;
+
+  /** SEULE porte de création de fiche cloud (Phase 7B/9A) — appelle l'Edge
+   * Function `create-fiche-from-draft`, jamais un `.from("fiches").insert(...)`
+   * (Phase 4 n'accorde aucun GRANT INSERT au navigateur). `workshopId`/
+   * `clientId`/`fiche` sont les SEULS champs envoyés — jamais `ownerId`/
+   * `userId`/`role`/un JWT explicite : le SDK Supabase joint la session
+   * courante lui-même, l'identité reste dérivée côté serveur du JWT vérifié
+   * (voir `supabase/functions/create-fiche-from-draft/index.ts`). */
+  createFicheFromDraft(workshopId: string, clientId: string | null, fiche: CreateFicheDraftPayload): Promise<GatewayResult<unknown>>;
 }
 
 function toGatewayError(error: { message: string } | null): GatewayError | null {
   return error ? { message: error.message } : null;
+}
+
+/** Les Edge Functions Phase 9A renvoient un corps JSON structuré
+ * `{error: string, message: string}` sur toute réponse non-2xx — mais
+ * `supabase-js` ne l'extrait pas lui-même (`error.message` reste un message
+ * générique de type "Edge Function returned a non-2xx status code"). Ce
+ * helper relit le `Response` brut (exposé par `functions.invoke()` via son
+ * 3ᵉ champ `response`, y compris en cas d'erreur — pas besoin de `instanceof
+ * FunctionsHttpError`) pour préserver le message métier réel. Une erreur
+ * réseau/relais (pas de `response`, ou corps non-JSON) retombe sur
+ * `error.message` brut, jamais un plantage de cette normalisation elle-même. */
+async function toFunctionGatewayError(error: { message: string }, response?: Response): Promise<GatewayError> {
+  if (response) {
+    try {
+      const body: unknown = await response.json();
+      if (body && typeof body === "object") {
+        const record = body as Record<string, unknown>;
+        const code = typeof record.error === "string" ? record.error : undefined;
+        const message = typeof record.message === "string" ? record.message : undefined;
+        if (code || message) return { code, message: message ?? error.message };
+      }
+    } catch {
+      // Corps non-JSON, vide, ou déjà consommé — repli sur error.message.
+    }
+  }
+  return { message: error.message };
 }
 
 /** Seule fonction de ce module qui touche `@supabase/supabase-js` — un
@@ -109,6 +152,14 @@ export function createSupabaseGateway(client: SupabaseClient<Database>): Supabas
         .eq("workshop_id", workshopId)
         .in("id", ids);
       return { data: null, error: toGatewayError(error) };
+    },
+
+    async createFicheFromDraft(workshopId, clientId, fiche) {
+      const { data, error, response } = await client.functions.invoke("create-fiche-from-draft", {
+        body: { workshopId, clientId, fiche },
+      });
+      if (error) return { data: null, error: await toFunctionGatewayError(error, response) };
+      return { data, error: null };
     },
   };
 }

@@ -68,6 +68,17 @@ export class SupabaseCarnetRepository implements CarnetRepository {
     await this.store.refresh(() => this.fetchCarnets());
   }
 
+  /** Phase 7B — permet à `SupabaseFicheRepository.add()` de détecter un
+   * `refresh()` qui a échoué SANS que la promesse rejette (le contrat de
+   * `CloudCollectionStore.refresh()` avale l'erreur réseau et conserve le
+   * cache existant, voir son commentaire de tête) : après création serveur
+   * réussie d'une fiche, `add()` doit savoir si le carnet vient réellement
+   * d'être synchronisé avant de tenter de résoudre `carnetNumero`, jamais
+   * rejouer la création pour autant. */
+  getLastRefreshError(): Error | null {
+    return this.store.getLastRefreshError();
+  }
+
   dispose(): void {
     this.store.dispose();
   }
