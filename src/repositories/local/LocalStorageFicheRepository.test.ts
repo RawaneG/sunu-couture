@@ -15,6 +15,18 @@ describe("LocalStorageFicheRepository — contrat", () => {
     expect(fiche?.carnetNumero).toBe(1);
     expect(fiche?.numero).toBe(1);
     expect(fiche?.status).toBe("recu");
+    // Comportement historique conservé : sans garment/description fournis,
+    // la fiche garde ses valeurs neutres (jamais null/"" inversés).
+    expect(fiche?.garment).toBe("");
+    expect(fiche?.description).toBeNull();
+  });
+
+  it("add() avec garment/description (Phase 9A) les reporte exactement sur la nouvelle fiche — passe réellement par newFicheInputSchema", async () => {
+    const repo = new LocalStorageFicheRepository();
+    const id = await repo.add({ garment: "Boubou", description: "Manches longues" });
+    const fiche = repo.get(id);
+    expect(fiche?.garment).toBe("Boubou");
+    expect(fiche?.description).toBe("Manches longues");
   });
 
   it("add() avec des champs pré-remplis les reporte tels quels sur la nouvelle fiche", async () => {
