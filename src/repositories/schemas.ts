@@ -47,6 +47,11 @@ export const newFicheInputSchema = z
     prenom: z.string().optional(),
     telephone: z.string().optional(),
     prefillChamps: z.partialRecord(ficheChampKeySchema, z.string()).optional(),
+    // Phase 9A — sans ces deux lignes, `garment`/`description` étaient
+    // silencieusement perdus par ce schéma avant d'atteindre `store.addFiche()`,
+    // qui pourtant sait déjà les appliquer (`input?.garment`/`input?.description`).
+    garment: z.string().optional(),
+    description: z.string().optional(),
   })
   .optional();
 export type NewFicheInputParsed = z.infer<typeof newFicheInputSchema>;
