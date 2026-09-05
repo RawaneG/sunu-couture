@@ -39,18 +39,33 @@ export class CreateFicheFromDraftError extends Error {
 
 /** La fiche a été créée avec succès côté serveur (un numéro a été consommé,
  * un `id` existe réellement en base) mais une étape locale POST-création a
- * échoué (refresh carnet, relecture `fiches_view`) — jamais rejouer
- * `create-fiche-from-draft` dans ce cas : un doublon serait pire qu'une
- * synchronisation locale incomplète (corr. R §16/§18/§19, Phase 7B).
- * `ficheId` reste disponible pour un futur refresh ciblé ou un message UI
- * plus précis, sans élargir `FicheRepository.add()` au-delà de
- * `Promise<string>`. */
+ * échoué (refresh carnet, relecture `fiches_view`, incohérence d'atelier
+ * dans la réponse) — jamais rejouer `create-fiche-from-draft` dans ce cas :
+ * un doublon serait pire qu'une synchronisation locale incomplète (corr. R
+ * §16/§18/§19, Phase 7B). `ficheId` reste disponible pour un futur refresh
+ * ciblé ou un message UI plus précis, sans élargir `FicheRepository.add()`
+ * au-delà de `Promise<string>`. */
 export class FicheCreatedButSyncIncompleteError extends Error {
   readonly ficheId: string;
   constructor(ficheId: string, message: string, cause?: unknown) {
     super(message, cause !== undefined ? { cause } : undefined);
     this.name = "FicheCreatedButSyncIncompleteError";
     this.ficheId = ficheId;
+  }
+}
+
+/** `createFicheFromDraft()` a renvoyé `error === null` — l'Edge Function a
+ * donc emprunté son chemin SUCCESS, la création serveur a déjà eu lieu —
+ * mais le corps de la réponse est trop malformé pour même en extraire un
+ * `id` fiable (`null`, `{}`, `{fiche: null}`, `fiche` sans `id`/
+ * `workshop_id`...). Contrairement à `FicheCreatedButSyncIncompleteError`,
+ * cette erreur ne prétend PAS connaître `ficheId` — l'inventer serait pire
+ * que ne pas le fournir. Jamais un retry : la fiche existe probablement déjà
+ * côté serveur (corr. R §4, Phase 7B). */
+export class FicheCreatedButResponseInvalidError extends Error {
+  constructor(message: string, cause?: unknown) {
+    super(message, cause !== undefined ? { cause } : undefined);
+    this.name = "FicheCreatedButResponseInvalidError";
   }
 }
 
@@ -174,16 +189,31 @@ export class SupabaseFicheRepository implements FicheRepository {
     const { data, error } = await this.gateway.createFicheFromDraft(this.workshopId, draft.clientId, payload);
     if (error) throw new CreateFicheFromDraftError(error);
 
-    const { fiche: created } = parseRowOrThrow(createFicheFromDraftResponseSchema, data, "SupabaseFicheRepository.add");
-    if (created.workshop_id !== this.workshopId) {
-      throw new Error(
-        `SupabaseFicheRepository.add: la fiche créée (${created.id}) appartient à un autre atelier que ` +
-          "celui attendu — réponse serveur incohérente, jamais ignorée silencieusement.",
+    // À partir d'ici, la fiche EXISTE côté serveur — `error === null` signifie
+    // que l'Edge Function a emprunté son chemin SUCCESS, donc que la création
+    // a déjà eu lieu (un numéro a potentiellement été consommé). Plus AUCUN
+    // échec ci-dessous — corps de réponse malformé, atelier incohérent,
+    // refresh carnet, relecture — ne doit jamais réappeler
+    // createFicheFromDraft ni laisser croire que rien n'a été créé (§16).
+    let created: { id: string; workshop_id: string };
+    try {
+      ({ fiche: created } = parseRowOrThrow(createFicheFromDraftResponseSchema, data, "SupabaseFicheRepository.add"));
+    } catch (parseError) {
+      throw new FicheCreatedButResponseInvalidError(
+        "Le serveur a confirmé la création, mais la réponse reçue est invalide. " +
+          "La fiche peut déjà exister. Rafraîchis les données avant de réessayer.",
+        parseError,
       );
     }
 
-    // À partir d'ici, la fiche EXISTE côté serveur — plus aucun chemin
-    // ci-dessous ne doit jamais réappeler createFicheFromDraft (§16).
+    if (created.workshop_id !== this.workshopId) {
+      throw new FicheCreatedButSyncIncompleteError(
+        created.id,
+        "La fiche a été créée, mais la réponse serveur indique un atelier incohérent. " +
+          "Rafraîchis les données avant de réessayer.",
+      );
+    }
+
     await this.carnets.refresh();
     const carnetRefreshError = this.carnets.getLastRefreshError();
     if (carnetRefreshError) {

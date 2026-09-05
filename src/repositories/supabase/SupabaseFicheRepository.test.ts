@@ -296,12 +296,56 @@ describe("SupabaseFicheRepository — création réussie mais synchronisation lo
     expect(gateway.getFicheById).not.toHaveBeenCalled();
   });
 
-  it("la fiche créée pour un autre atelier que celui attendu est rejetée explicitement (réponse serveur incohérente)", async () => {
+  it("la fiche créée pour un autre atelier que celui attendu est une création confirmée mal synchronisée, PAS une simple erreur générique", async () => {
     const gateway = fakeGateway({
-      createFicheFromDraft: vi.fn(async () => ({ data: { fiche: createdFicheRow({ workshop_id: "w-autre" }) }, error: null })),
+      createFicheFromDraft: vi.fn(async () => ({ data: { fiche: createdFicheRow({ id: "f-new", workshop_id: "w-autre" }) }, error: null })),
     });
     const { fiches } = await setupRepo(gateway);
-    await expect(fiches.add({ garment: "Boubou" })).rejects.toThrow(/autre atelier/);
+
+    const rejection = fiches.add({ garment: "Boubou" });
+    await expect(rejection).rejects.toThrow(/atelier incohérent/);
+    await rejection.catch((err: unknown) => {
+      expect(err).toMatchObject({ name: "FicheCreatedButSyncIncompleteError", ficheId: "f-new" });
+    });
+    expect(gateway.createFicheFromDraft).toHaveBeenCalledTimes(1);
+    expect(gateway.getFicheById).not.toHaveBeenCalled();
+    expect(gateway.listCarnets).toHaveBeenCalledTimes(1); // uniquement le bootstrap — pas de refresh post-incohérence
+  });
+
+  it.each([
+    ["objet vide", {}],
+    ["fiche null", { fiche: null }],
+    ["fiche sans id", { fiche: { workshop_id: "w1" } }],
+    ["fiche sans workshop_id", { fiche: { id: "f-new" } }],
+  ])("réponse Edge SUCCESS malformée (%s) : rejet post-création explicite, aucun retry, aucune étape suivante", async (_label, malformed) => {
+    const gateway = fakeGateway({
+      createFicheFromDraft: vi.fn(async () => ({ data: malformed, error: null })),
+    });
+    const { fiches } = await setupRepo(gateway);
+
+    const rejection = fiches.add({ garment: "Boubou" });
+    await expect(rejection).rejects.toThrow(/peut déjà exister/);
+    await rejection.catch((err: unknown) => {
+      expect(err).toMatchObject({ name: "FicheCreatedButResponseInvalidError" });
+    });
+    expect(gateway.createFicheFromDraft).toHaveBeenCalledTimes(1);
+    expect(gateway.listCarnets).toHaveBeenCalledTimes(1); // uniquement le bootstrap
+    expect(gateway.getFicheById).not.toHaveBeenCalled();
+  });
+
+  it("data === null (réponse Edge SUCCESS sans corps) : même traitement, aucun ficheId inventé", async () => {
+    const gateway = fakeGateway({
+      createFicheFromDraft: vi.fn(async () => ({ data: null, error: null })),
+    });
+    const { fiches } = await setupRepo(gateway);
+
+    const rejection = fiches.add({ garment: "Boubou" });
+    await expect(rejection).rejects.toThrow(/peut déjà exister/);
+    await rejection.catch((err: unknown) => {
+      expect(err).toMatchObject({ name: "FicheCreatedButResponseInvalidError" });
+      expect((err as { ficheId?: unknown }).ficheId).toBeUndefined();
+    });
+    expect(gateway.createFicheFromDraft).toHaveBeenCalledTimes(1);
     expect(gateway.getFicheById).not.toHaveBeenCalled();
   });
 });
