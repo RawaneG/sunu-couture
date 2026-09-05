@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from "vitest";
+import { describe, expect, it, vi, beforeEach } from "vitest";
 import { render, screen, act } from "@testing-library/react";
 import type { Client, TissuPhoto, VoiceNote } from "../lib/types";
 import type { ClientRepository, NewClientInput } from "./ClientRepository";
@@ -6,6 +6,7 @@ import type { MediaRepository } from "./MediaRepository";
 import type { RepositoryStatus } from "./RepositoryStatus";
 import { createRepositoryContainerFor } from "./RepositoryContainer";
 import { RepositoryProvider } from "./RepositoryProvider";
+import { useStore } from "../lib/store";
 import { useClients, useClient, useFicheMedia } from "./hooks";
 
 /** Faux ClientRepository — preuve que `RepositoryProvider` accepte
@@ -405,5 +406,38 @@ describe("useFicheMedia() — Phase 8A", () => {
     unmount();
 
     await expect(media.addFichePhoto("f1", "data:image/jpeg;base64,AAA")).resolves.toBeUndefined();
+  });
+});
+
+describe("useFicheMedia() — régression réelle (backend local) : supprimer la fiche affichée ne provoque pas de page blanche", () => {
+  beforeEach(() => {
+    useStore.setState({ clients: [], fiches: [], modeles: [] });
+  });
+
+  it("après suppression de la fiche, aucune boucle de rendu infinie ('Maximum update depth exceeded') — reproduit puis corrige le bug signalé", async () => {
+    const container = createRepositoryContainerFor("local");
+    const id = await container.fiches.add();
+    await container.media.addFichePhoto(id, "data:image/jpeg;base64,AAAA");
+
+    const consoleErrorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+
+    render(
+      <RepositoryProvider repositories={container}>
+        <MediaProbe ficheId={id} />
+      </RepositoryProvider>,
+    );
+    expect(screen.getByText(/1 photo\(s\)/)).toBeInTheDocument();
+
+    await act(async () => {
+      await container.fiches.remove(id);
+    });
+
+    const sawMaxUpdateDepthError = consoleErrorSpy.mock.calls.some((args) =>
+      args.some((a) => typeof a === "string" && a.includes("Maximum update depth exceeded")),
+    );
+    expect(sawMaxUpdateDepthError).toBe(false);
+    expect(screen.getByText(/0 photo\(s\)/)).toBeInTheDocument();
+
+    consoleErrorSpy.mockRestore();
   });
 });

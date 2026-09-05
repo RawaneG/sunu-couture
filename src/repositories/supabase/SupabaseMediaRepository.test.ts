@@ -390,3 +390,51 @@ describe("SupabaseMediaRepository — médias modèle (Phase 8B, non implément�
     await expect(media.addModelePhoto("m1", JPEG_DATA_URL)).rejects.toThrow(/Phase 8B/);
   });
 });
+
+describe("SupabaseMediaRepository — stabilité référentielle (régression : boucle infinie useSyncExternalStore)", () => {
+  it("listFichePhotos()/getFicheVoiceNote()/getFicheSignature() renvoient la MÊME référence entre deux appels sans mutation", async () => {
+    const gateway = fakeGateway({
+      listActiveMediaAssets: vi.fn(async () => ({
+        data: [
+          mediaRow({ id: "p1", type: "fabric_photo" }),
+          mediaRow({ id: "v1", type: "voice_note", storage_path: "path-v1", metadata: { duration_seconds: 8 } }),
+          mediaRow({ id: "s1", type: "signature", storage_path: "path-s1" }),
+        ],
+        error: null,
+      })),
+    });
+    const media = new SupabaseMediaRepository({ gateway, workshopId: "w1" });
+    await media.bootstrapped;
+
+    // Avant le correctif, chaque appel reconstruisait un nouveau tableau
+    // (`.filter().map()`) et un nouvel objet VoiceNote — `useFicheMedia()`
+    // (useSyncExternalStore) voyait alors un snapshot "différent" à chaque
+    // vérification, ce qui déclenche "Maximum update depth exceeded" côté
+    // React (observé réellement après suppression d'une fiche, mais latent
+    // pour TOUTE fiche cloud, pas seulement après suppression).
+    expect(media.listFichePhotos("f1")).toBe(media.listFichePhotos("f1"));
+    expect(media.getFicheVoiceNote("f1")).toBe(media.getFicheVoiceNote("f1"));
+    expect(media.getFicheSignature("f1")).toBe(media.getFicheSignature("f1"));
+  });
+
+  it("une fiche inconnue/sans média renvoie aussi une référence stable", async () => {
+    const media = new SupabaseMediaRepository({ gateway: fakeGateway(), workshopId: "w1" });
+    await media.bootstrapped;
+
+    expect(media.listFichePhotos("f-inconnue")).toBe(media.listFichePhotos("f-inconnue"));
+  });
+
+  it("une mutation invalide bien le cache : la référence change après ajout d'une photo", async () => {
+    const gateway = fakeGateway();
+    const media = new SupabaseMediaRepository({ gateway, workshopId: "w1" });
+    await media.bootstrapped;
+
+    const before = media.listFichePhotos("f1");
+    await media.addFichePhoto("f1", JPEG_DATA_URL);
+    const after = media.listFichePhotos("f1");
+
+    expect(after).not.toBe(before);
+    // Mais redemander deux fois de suite APRÈS la mutation reste stable.
+    expect(media.listFichePhotos("f1")).toBe(after);
+  });
+});

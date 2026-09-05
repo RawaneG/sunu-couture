@@ -1,16 +1,27 @@
 import { useStore } from "../../lib/store";
-import type { VoiceNote } from "../../lib/types";
+import type { TissuPhoto, VoiceNote } from "../../lib/types";
 import type { MediaRepository } from "../MediaRepository";
 import { dataUrlSchema, parseOrThrow } from "../schemas";
 import { subscribeToSlice } from "./subscribeToSlice";
+
+/** Référence STABLE (jamais un `[]` littéral recréé à chaque appel) —
+ * `useFicheMedia()` (Phase 8A, `hooks.ts`) compare les résultats de
+ * `listFichePhotos()` PAR RÉFÉRENCE pour décider si le snapshot
+ * `useSyncExternalStore` a changé. Une fiche/un modèle introuvable (ex.
+ * juste supprimé) doit renvoyer TOUJOURS la même référence vide, sinon
+ * chaque appel de `getSnapshot()` verrait une collection "différente" et
+ * déclencherait une boucle de rendu infinie (React : "Maximum update depth
+ * exceeded") — observé réellement en supprimant une fiche depuis
+ * `FicheDetail` avant ce correctif. */
+const EMPTY_PHOTOS: TissuPhoto[] = [];
 
 export class LocalStorageMediaRepository implements MediaRepository {
   // Aucune hydratation réseau — `getStatus()` volontairement absente
   // (contrat `ObservableRepositoryStatus` : absence ⇒ "ready" immédiat,
   // voir `useFicheMedia`/`hooks.ts`).
 
-  listFichePhotos(ficheId: string) {
-    return useStore.getState().fiches.find((f) => f.id === ficheId)?.tissuPhotos ?? [];
+  listFichePhotos(ficheId: string): TissuPhoto[] {
+    return useStore.getState().fiches.find((f) => f.id === ficheId)?.tissuPhotos ?? EMPTY_PHOTOS;
   }
   // Mutations asynchrones (corr. R, Phase 7A) — voir LocalStorageClientRepository.
   async addFichePhoto(ficheId: string, dataUrl: string): Promise<void> {
@@ -38,8 +49,8 @@ export class LocalStorageMediaRepository implements MediaRepository {
     useStore.getState().setFicheInfo(ficheId, { signature: dataUrl });
   }
 
-  listModelePhotos(modeleId: string) {
-    return useStore.getState().modeles.find((m) => m.id === modeleId)?.photos ?? [];
+  listModelePhotos(modeleId: string): TissuPhoto[] {
+    return useStore.getState().modeles.find((m) => m.id === modeleId)?.photos ?? EMPTY_PHOTOS;
   }
   async addModelePhoto(modeleId: string, dataUrl: string): Promise<void> {
     const parsed = parseOrThrow(dataUrlSchema, dataUrl, "MediaRepository.addModelePhoto");
@@ -49,8 +60,8 @@ export class LocalStorageMediaRepository implements MediaRepository {
     useStore.getState().removeModelePhoto(modeleId, photoId);
   }
 
-  listModelePatronPhotos(modeleId: string) {
-    return useStore.getState().modeles.find((m) => m.id === modeleId)?.patronPhotos ?? [];
+  listModelePatronPhotos(modeleId: string): TissuPhoto[] {
+    return useStore.getState().modeles.find((m) => m.id === modeleId)?.patronPhotos ?? EMPTY_PHOTOS;
   }
   async addModelePatronPhoto(modeleId: string, dataUrl: string): Promise<void> {
     const parsed = parseOrThrow(dataUrlSchema, dataUrl, "MediaRepository.addModelePatronPhoto");

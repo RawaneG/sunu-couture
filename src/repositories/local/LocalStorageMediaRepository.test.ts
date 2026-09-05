@@ -100,6 +100,40 @@ describe("LocalStorageMediaRepository — signature (Phase 8A, déplacé depuis 
   });
 });
 
+describe("LocalStorageMediaRepository — stabilité référentielle (régression : page blanche après suppression)", () => {
+  it("listFichePhotos() sur une fiche INEXISTANTE renvoie TOUJOURS la même référence — jamais un [] recréé à chaque appel", () => {
+    const media = new LocalStorageMediaRepository();
+    const first = media.listFichePhotos("fiche-jamais-creee");
+    const second = media.listFichePhotos("fiche-jamais-creee");
+    expect(first).toBe(second); // égalité PAR RÉFÉRENCE, pas juste toEqual
+    expect(first).toEqual([]);
+  });
+
+  it("listFichePhotos() reste stable pour une fiche qui vient d'être SUPPRIMÉE — reproduit le bug réel (suppression -> page blanche)", async () => {
+    const fiches = new LocalStorageFicheRepository();
+    const media = new LocalStorageMediaRepository();
+    const id = await fiches.add();
+    await media.addFichePhoto(id, "data:image/jpeg;base64,AAAA");
+
+    await fiches.remove(id);
+
+    // Avant le correctif, `?? []` recréait un tableau vide à CHAQUE appel
+    // pour une fiche introuvable — `useFicheMedia()` (useSyncExternalStore)
+    // voyait alors un snapshot "différent" en permanence et React levait
+    // "Maximum update depth exceeded" (boucle de rendu infinie), laissant
+    // une page blanche après la navigation post-suppression.
+    const first = media.listFichePhotos(id);
+    const second = media.listFichePhotos(id);
+    expect(first).toBe(second);
+  });
+
+  it("listModelePhotos()/listModelePatronPhotos() : même stabilité pour un modèle introuvable", () => {
+    const media = new LocalStorageMediaRepository();
+    expect(media.listModelePhotos("m-inconnu")).toBe(media.listModelePhotos("m-inconnu"));
+    expect(media.listModelePatronPhotos("m-inconnu")).toBe(media.listModelePatronPhotos("m-inconnu"));
+  });
+});
+
 describe("LocalStorageMediaRepository — getStatus() absente (Phase 8A §6)", () => {
   it("n'implémente pas getStatus() — le contrat 'ready immédiat' vient de son absence, pas d'une valeur renvoyée", () => {
     const media = new LocalStorageMediaRepository();

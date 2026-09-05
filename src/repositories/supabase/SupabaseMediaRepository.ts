@@ -216,20 +216,45 @@ export class SupabaseMediaRepository implements MediaRepository {
     return rows;
   }
 
+  /** `listFichePhotos`/`getFicheVoiceNote`/`getFicheSignature` DOIVENT
+   * renvoyer une référence STABLE tant que les médias d'une fiche donnée
+   * n'ont pas réellement changé — sans quoi `useSyncExternalStore`
+   * (`useFicheMedia`, `hooks.ts`) verrait un snapshot "différent" à CHAQUE
+   * appel (un `.map()`/objet littéral reconstruit sans condition produit une
+   * nouvelle référence à chaque fois, même quand rien n'a changé) et
+   * provoquerait une boucle de rendu infinie — exactement le bug déjà
+   * rencontré ailleurs dans ce projet (`EMPTY_FICHES`, `EMPTY_PHOTOS`).
+   * Mémoïsé par fiche, invalidé uniquement quand `epoch` avance (bootstrap,
+   * upload, suppression, remplacement, refresh d'URL signée — tous les
+   * points qui l'incrémentent déjà). */
+  private derivedCache = new Map<string, { epoch: number; photos: TissuPhoto[]; voiceNote: VoiceNote | null; signature: string | null }>();
+
+  private getDerived(ficheId: string): { photos: TissuPhoto[]; voiceNote: VoiceNote | null; signature: string | null } {
+    const cached = this.derivedCache.get(ficheId);
+    if (cached && cached.epoch === this.epoch) return cached;
+
+    const rows = this.rowsForFiche(ficheId);
+    const photos = rows.filter((r) => r.type === "fabric_photo").map((r) => mapFabricPhotoRowToDomain(r, this.resolveDisplayUrl(r)));
+    const voiceRow = rows.find((r) => r.type === "voice_note");
+    const signatureRow = rows.find((r) => r.type === "signature");
+    const voiceNote = voiceRow ? mapVoiceNoteRowToDomain(voiceRow, this.resolveDisplayUrl(voiceRow)) : null;
+    const signature = signatureRow ? mapSignatureRowToDomain(signatureRow, this.resolveDisplayUrl(signatureRow)) : null;
+
+    const derived = { epoch: this.epoch, photos, voiceNote, signature };
+    this.derivedCache.set(ficheId, derived);
+    return derived;
+  }
+
   listFichePhotos(ficheId: string): TissuPhoto[] {
-    return this.rowsForFiche(ficheId)
-      .filter((r) => r.type === "fabric_photo")
-      .map((r) => mapFabricPhotoRowToDomain(r, this.resolveDisplayUrl(r)));
+    return this.getDerived(ficheId).photos;
   }
 
   getFicheVoiceNote(ficheId: string): VoiceNote | null {
-    const row = this.rowsForFiche(ficheId).find((r) => r.type === "voice_note");
-    return row ? mapVoiceNoteRowToDomain(row, this.resolveDisplayUrl(row)) : null;
+    return this.getDerived(ficheId).voiceNote;
   }
 
   getFicheSignature(ficheId: string): string | null {
-    const row = this.rowsForFiche(ficheId).find((r) => r.type === "signature");
-    return row ? mapSignatureRowToDomain(row, this.resolveDisplayUrl(row)) : null;
+    return this.getDerived(ficheId).signature;
   }
 
   /** §33 : une fiche inaccessible (inexistante, hors atelier, supprimée)

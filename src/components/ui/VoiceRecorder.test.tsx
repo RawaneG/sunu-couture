@@ -5,7 +5,7 @@
 // DÉLIBÉRÉMENT différent d'`audio/webm` pour prouver que le MIME n'est
 // jamais forcé.
 import { describe, expect, it, vi, afterEach } from "vitest";
-import { render, screen } from "@testing-library/react";
+import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import VoiceRecorder from "./VoiceRecorder";
 import type { VoiceNote } from "../../lib/types";
@@ -31,18 +31,28 @@ class FakeMediaRecorder {
   }
 }
 
+// Remplacer `navigator` en entier (`vi.stubGlobal("navigator", {...})`)
+// s'est révélé non fiable ici (jsdom : `navigator` est un getter sur
+// `window`, pas une propriété réinscriptible comme une autre) — utiliser
+// `Object.defineProperty` directement sur `navigator.mediaDevices`
+// (existant ou non selon l'environnement) est l'approche robuste standard.
+let originalMediaDevicesDescriptor: PropertyDescriptor | undefined;
+
 function stubMediaRecorderEnvironment() {
   vi.stubGlobal("MediaRecorder", FakeMediaRecorder);
-  vi.stubGlobal("navigator", {
-    ...globalThis.navigator,
-    mediaDevices: {
-      getUserMedia: vi.fn(async () => ({ getTracks: () => [{ stop: vi.fn() }] })),
-    },
+  originalMediaDevicesDescriptor = Object.getOwnPropertyDescriptor(window.navigator, "mediaDevices");
+  Object.defineProperty(window.navigator, "mediaDevices", {
+    configurable: true,
+    value: { getUserMedia: vi.fn(async () => ({ getTracks: () => [{ stop: vi.fn() }] })) },
   });
 }
 
 afterEach(() => {
   vi.unstubAllGlobals();
+  if (originalMediaDevicesDescriptor) {
+    Object.defineProperty(window.navigator, "mediaDevices", originalMediaDevicesDescriptor);
+  }
+  originalMediaDevicesDescriptor = undefined;
 });
 
 describe("VoiceRecorder — MIME réel (corr. R §25)", () => {
@@ -57,9 +67,24 @@ describe("VoiceRecorder — MIME réel (corr. R §25)", () => {
     render(<VoiceRecorder value={null} onChange={onChange} persist />);
 
     await user.click(screen.getByRole("button", { name: /enregistrer/i }));
+
+    // Attend que la vue "enregistrement en cours" soit réellement montée
+    // (le bouton "Enregistrer" disparaît, remplacé par le bouton d'arrêt
+    // sans nom accessible) avant de cliquer dessus — `startRecording()`
+    // attend `getUserMedia()` de façon asynchrone ; sous charge (suite
+    // complète), un simple enchaînement de deux `user.click()` peut cliquer
+    // avant que la transition d'état soit retombée, laissant `onChange`
+    // jamais appelé.
+    await waitFor(() => {
+      expect(screen.queryByRole("button", { name: /enregistrer/i })).not.toBeInTheDocument();
+    });
     await user.click(screen.getByRole("button")); // stop
 
-    expect(onChange).toHaveBeenCalledTimes(1);
+    // `onstop` est asynchrone dans le vrai composant (`await blobToDataUrl`,
+    // un VRAI FileReader même en jsdom — pas garanti retombé au moment où
+    // `user.click()` se résout) : attendre `onChange` plutôt que l'affirmer
+    // immédiatement après le clic, sous peine de flakiness sous charge.
+    await waitFor(() => expect(onChange).toHaveBeenCalledTimes(1));
     expect(captured).not.toBeNull();
     // `persist` => data URL — son préfixe doit refléter le MIME réel
     // (audio/mp4 dans ce test), jamais "data:audio/webm" codé en dur.
