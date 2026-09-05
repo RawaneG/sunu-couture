@@ -8,6 +8,8 @@ import { createRepositoryContainerFor } from "./RepositoryContainer";
 import { RepositoryProvider } from "./RepositoryProvider";
 import { useStore } from "../lib/store";
 import { useClients, useClient, useFicheMedia } from "./hooks";
+import { SupabaseMediaRepository } from "./supabase/SupabaseMediaRepository";
+import type { SupabaseGateway } from "./supabase/gateway";
 
 /** Faux ClientRepository — preuve que `RepositoryProvider` accepte
  * l'injection d'un Repository de test (aucun localStorage, aucun Zustand). */
@@ -439,5 +441,79 @@ describe("useFicheMedia() — régression réelle (backend local) : supprimer la
     expect(screen.getByText(/0 photo\(s\)/)).toBeInTheDocument();
 
     consoleErrorSpy.mockRestore();
+  });
+});
+
+/** Gateway minimal — juste assez pour que `SupabaseMediaRepository`
+ * bootstrap et réponde ; seule sa forme structurelle importe ici, pas son
+ * comportement métier (déjà couvert par `SupabaseMediaRepository.test.ts`). */
+function fakeGatewayForMediaIntegration(overrides: Partial<SupabaseGateway> = {}): SupabaseGateway {
+  return {
+    listActiveClients: vi.fn(async () => ({ data: [], error: null })),
+    insertClient: vi.fn(async () => ({ data: null, error: null })),
+    softDeleteClients: vi.fn(async () => ({ data: null, error: null })),
+    listCarnets: vi.fn(async () => ({ data: [], error: null })),
+    listActiveFiches: vi.fn(async () => ({ data: [], error: null })),
+    getFicheById: vi.fn(async () => ({ data: null, error: null })),
+    updateFiche: vi.fn(async () => ({ data: null, error: null })),
+    softDeleteFiches: vi.fn(async () => ({ data: null, error: null })),
+    createFicheFromDraft: vi.fn(async () => ({ data: null, error: null })),
+    listActiveMediaAssets: vi.fn(async () => ({
+      data: [
+        {
+          id: "p1",
+          workshop_id: "w1",
+          fiche_id: "f1",
+          type: "fabric_photo",
+          storage_path: "workshops/w1/fiches/f1/p1",
+          mime_type: "image/jpeg",
+          size_bytes: 10,
+          metadata: {},
+          created_at: "2026-01-01T00:00:00.000Z",
+          deleted_at: null,
+        },
+      ],
+      error: null,
+    })),
+    insertMediaAsset: vi.fn(async () => ({ data: null, error: null })),
+    softDeleteMediaAsset: vi.fn(async () => ({ data: null, error: null })),
+    restoreMediaAsset: vi.fn(async () => ({ data: null, error: null })),
+    uploadMediaObject: vi.fn(async () => ({ data: null, error: null })),
+    createSignedMediaUrl: vi.fn(async () => ({ data: "https://signed.example/p1", error: null })),
+    ...overrides,
+  };
+}
+
+describe("useFicheMedia() — intégration avec le VRAI SupabaseMediaRepository (pas un double)", () => {
+  it("une fois bootstrapped, un rerender sans mutation renvoie un snapshot stable — pas de boucle infinie", async () => {
+    const gateway = fakeGatewayForMediaIntegration();
+    const media = new SupabaseMediaRepository({ gateway, workshopId: "w1" });
+    await media.bootstrapped;
+    expect(media.getStatus()).toEqual({ status: "ready" });
+
+    const container = { ...createRepositoryContainerFor("local"), media };
+    const { rerender } = render(
+      <RepositoryProvider repositories={container}>
+        <MediaProbe ficheId="f1" />
+      </RepositoryProvider>,
+    );
+    expect(screen.getByText(/1 photo\(s\)/)).toBeInTheDocument();
+
+    const firstSnapshot = media.listFichePhotos("f1");
+
+    // Un rerender du parent SANS mutation du Repository ne doit jamais faire
+    // paniquer `useSyncExternalStore` — la preuve directe est que le
+    // Repository lui-même renvoie la MÊME référence tant que rien n'a changé
+    // (§3-§6 du correctif) ; la preuve indirecte est que ce test se termine
+    // sans "Maximum update depth exceeded".
+    rerender(
+      <RepositoryProvider repositories={container}>
+        <MediaProbe ficheId="f1" />
+      </RepositoryProvider>,
+    );
+    expect(screen.getByText(/1 photo\(s\)/)).toBeInTheDocument();
+    expect(media.listFichePhotos("f1")).toBe(firstSnapshot);
+
+    media.dispose();
   });
 });
