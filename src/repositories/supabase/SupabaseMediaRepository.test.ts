@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from "vitest";
+import { describe, expect, it, vi, beforeEach, afterEach } from "vitest";
 import { SupabaseMediaRepository } from "./SupabaseMediaRepository";
 import type { SupabaseGateway } from "./gateway";
 
@@ -161,6 +161,35 @@ describe("SupabaseMediaRepository — hydratation (bootstrap)", () => {
     expect(media.getFicheVoiceNote("f1")).toBeNull();
     expect(media.getFicheSignature("f1")).toBeNull();
   });
+
+  it("un refresh complet REMPLACE le cache signé (pas un merge) : un média disparu du snapshot serveur n'est plus listé ni resignable", async () => {
+    let call = 0;
+    const gateway = fakeGateway({
+      listActiveMediaAssets: vi.fn(async () => {
+        call += 1;
+        if (call === 1) {
+          return {
+            data: [mediaRow({ id: "p1", storage_path: "path-p1" }), mediaRow({ id: "p2", storage_path: "path-p2" })],
+            error: null,
+          };
+        }
+        // Snapshot serveur suivant : p2 a disparu (supprimé/remplacé ailleurs).
+        return { data: [mediaRow({ id: "p1", storage_path: "path-p1" })], error: null };
+      }),
+    });
+    const media = new SupabaseMediaRepository({ gateway, workshopId: "w1" });
+    await media.bootstrapped;
+    expect(media.listFichePhotos("f1").map((p) => p.id).sort()).toEqual(["p1", "p2"]);
+
+    await media.refresh();
+
+    // p2 n'existe plus dans le snapshot mémoire : aucune méthode publique ne
+    // peut plus jamais exposer son ancienne URL signée. La seule façon dont
+    // une entrée orpheline pourrait autrement fuiter est le cache interne
+    // `signedUrls` — remplacé (jamais fusionné) par ce correctif, voir le
+    // commentaire de tête de `refresh()`.
+    expect(media.listFichePhotos("f1").map((p) => p.id)).toEqual(["p1"]);
+  });
 });
 
 describe("SupabaseMediaRepository — addFichePhoto (upload)", () => {
@@ -289,18 +318,27 @@ describe("SupabaseMediaRepository — setFicheVoiceNote (création + remplacemen
     expect(media.getFicheVoiceNote("f1")?.duration).toBe(9);
   });
 
-  it("remplacement : INSERT échoué après soft-delete -> restauration best-effort de l'ancien", async () => {
+  it("remplacement : INSERT échoué après soft-delete -> restauration best-effort de l'ancien, qui reste UTILISABLE (URL signée conservée)", async () => {
     const gateway = fakeGateway({
       listActiveMediaAssets: vi.fn(async () => ({ data: [mediaRow({ id: "v-old", type: "voice_note", storage_path: "old-path", metadata: { duration_seconds: 3 } })], error: null })),
       insertMediaAsset: vi.fn(async () => ({ data: null, error: { message: "insert failed" } })),
+      createSignedMediaUrl: vi.fn(async () => ({ data: "https://signed.example/old-path", error: null })),
     });
     const media = new SupabaseMediaRepository({ gateway, workshopId: "w1" });
     await media.bootstrapped;
+    const before = media.getFicheVoiceNote("f1");
 
     await expect(media.setFicheVoiceNote("f1", { url: WEBM_DATA_URL, duration: 9, recordedAt: "2026-01-03T00:00:00.000Z" })).rejects.toThrow(
       /remplacement échoué/,
     );
     expect(gateway.restoreMediaAsset).toHaveBeenCalledWith("w1", "v-old");
+
+    // La compensation ayant réussi côté serveur, l'ancien média n'a JAMAIS
+    // été retiré du snapshot mémoire ni de son URL signée (nettoyage
+    // seulement APRÈS un INSERT confirmé, jamais avant) — il reste donc
+    // exactement utilisable, avec sa MÊME URL, sans nouvel appel de signature.
+    expect(media.getFicheVoiceNote("f1")).toEqual(before);
+    expect(gateway.createSignedMediaUrl).toHaveBeenCalledTimes(1); // uniquement le bootstrap
   });
 
   it("remplacement : INSERT ET restauration échouent -> erreur factuelle explicite", async () => {
@@ -436,5 +474,81 @@ describe("SupabaseMediaRepository — stabilité référentielle (régression : 
     expect(after).not.toBe(before);
     // Mais redemander deux fois de suite APRÈS la mutation reste stable.
     expect(media.listFichePhotos("f1")).toBe(after);
+  });
+});
+
+describe("SupabaseMediaRepository — retry court après échec du rafraîchissement d'URL signée (§8/§9)", () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it("échec du refresh signé à la cadence nominale (240s) -> retry à 30s (pas 240s) -> succès -> retour à la cadence nominale", async () => {
+    let signCall = 0;
+    const gateway = fakeGateway({
+      listActiveMediaAssets: vi.fn(async () => ({ data: [mediaRow({ id: "p1" })], error: null })),
+      createSignedMediaUrl: vi.fn(async () => {
+        signCall += 1;
+        if (signCall === 1) return { data: "https://signed.example/initial", error: null }; // bootstrap
+        if (signCall === 2) return { data: null, error: { message: "signing down" } }; // cycle nominal (240s) — échoue
+        return { data: "https://signed.example/renewed", error: null }; // retry (30s après l'échec) — réussit
+      }),
+    });
+    const media = new SupabaseMediaRepository({ gateway, workshopId: "w1" });
+    await media.bootstrapped;
+    expect(media.listFichePhotos("f1")[0].dataUrl).toBe("https://signed.example/initial");
+
+    // Cycle nominal : 240s (SIGNED_URL_TTL_SECONDS - REFRESH_MARGIN_SECONDS).
+    await vi.advanceTimersByTimeAsync(240_000);
+    expect(signCall).toBe(2);
+    expect(media.getLastRefreshError()).not.toBeNull();
+    // Ancienne URL conservée — jamais supprimée sur un échec de refresh (§29).
+    expect(media.listFichePhotos("f1")[0].dataUrl).toBe("https://signed.example/initial");
+
+    // 29s après l'échec : encore aucune nouvelle tentative.
+    await vi.advanceTimersByTimeAsync(29_000);
+    expect(signCall).toBe(2);
+
+    // +1s (30s pile après l'échec) : nouvelle tentative de signature.
+    await vi.advanceTimersByTimeAsync(1_000);
+    expect(signCall).toBe(3);
+    expect(media.getLastRefreshError()).toBeNull();
+    expect(media.listFichePhotos("f1")[0].dataUrl).toBe("https://signed.example/renewed");
+
+    // Retour à la cadence nominale : rien avant encore 239s (240s - 1s déjà écoulée).
+    await vi.advanceTimersByTimeAsync(239_000);
+    expect(signCall).toBe(3);
+    await vi.advanceTimersByTimeAsync(1_000);
+    expect(signCall).toBe(4);
+
+    media.dispose();
+  });
+
+  it("un seul timer actif à la fois — dispose() annule tout retry programmé", async () => {
+    // Bootstrap RÉUSSI (au moins une ligne signée) pour que le refresh
+    // périodique soit réellement programmé, puis échec du cycle suivant.
+    let signCall = 0;
+    const gateway = fakeGateway({
+      listActiveMediaAssets: vi.fn(async () => ({ data: [mediaRow({ id: "p1" })], error: null })),
+      createSignedMediaUrl: vi.fn(async () => {
+        signCall += 1;
+        if (signCall === 1) return { data: "https://signed.example/x", error: null };
+        return { data: null, error: { message: "down" } };
+      }),
+    });
+    const media = new SupabaseMediaRepository({ gateway, workshopId: "w1" });
+    await media.bootstrapped;
+
+    await vi.advanceTimersByTimeAsync(240_000); // échoue, programme un retry à 30s
+    expect(signCall).toBe(2);
+
+    media.dispose();
+
+    // Après dispose(), aucun retry ne doit plus jamais se déclencher, même
+    // après le délai de retry ET plusieurs cycles nominaux.
+    await vi.advanceTimersByTimeAsync(10 * 60_000);
+    expect(signCall).toBe(2);
   });
 });

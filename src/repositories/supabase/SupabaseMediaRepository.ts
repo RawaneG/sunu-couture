@@ -31,6 +31,13 @@ export const SIGNED_URL_TTL_SECONDS = 300;
 /** Rafraîchit avant expiration plutôt que de laisser un média inutilisable
  * en cours de consultation d'une fiche (§29). */
 const REFRESH_MARGIN_SECONDS = 60;
+const NOMINAL_REFRESH_DELAY_MS = (SIGNED_URL_TTL_SECONDS - REFRESH_MARGIN_SECONDS) * 1000;
+/** Cadence de retry après un ÉCHEC du rafraîchissement PÉRIODIQUE des URLs
+ * signées uniquement — jamais un retry d'upload/insert/soft-delete (§21,
+ * inchangé). Sans ce retry court, un échec unique à t=240s laisserait
+ * l'ancienne URL expirer à t=300s puis attendre le cycle nominal suivant
+ * (t=480s) avant une nouvelle tentative — ~180s avec un média inutilisable. */
+const SIGNED_URL_RETRY_SECONDS = 30;
 
 interface SignedUrlEntry {
   signedUrl: string;
@@ -147,7 +154,12 @@ export class SupabaseMediaRepository implements MediaRepository {
       const signed = await this.signAll(rows);
 
       this.mediaMap = new Map(rows.map((r) => [r.id, r]));
-      for (const [path, entry] of signed) this.signedUrls.set(path, entry);
+      // REMPLACE le cache signé (pas un merge) : un refresh complet réussi
+      // reflète le snapshot serveur COURANT — une entrée pour un média
+      // absent de ce snapshot (supprimé/remplacé entre-temps) ne doit jamais
+      // survivre, sinon `signedUrls` grossit indéfiniment et cesse d'être un
+      // miroir fidèle de `mediaMap`.
+      this.signedUrls = signed;
       // Un média resynchronisé n'a plus besoin de son repli de session.
       for (const row of rows) if (this.signedUrls.has(row.storage_path)) this.sessionFallback.delete(row.id);
       this.epoch += 1;
@@ -171,20 +183,27 @@ export class SupabaseMediaRepository implements MediaRepository {
     return this.lastRefreshError;
   }
 
-  private scheduleUrlRefresh(): void {
+  /** `delayMs` par défaut = cadence nominale. Un échec de
+   * `refreshSignedUrls()` reprogramme volontairement avec un délai COURT
+   * (`SIGNED_URL_RETRY_SECONDS`) plutôt que d'attendre le prochain cycle
+   * nominal (§8/§9) — toujours un seul timer actif (`clearTimeout` avant
+   * tout nouvel armement). */
+  private scheduleUrlRefresh(delayMs: number = NOMINAL_REFRESH_DELAY_MS): void {
     if (this.disposed) return;
     if (this.refreshTimerId !== null) clearTimeout(this.refreshTimerId);
-    const delayMs = Math.max(0, (SIGNED_URL_TTL_SECONDS - REFRESH_MARGIN_SECONDS) * 1000);
     this.refreshTimerId = setTimeout(() => {
       void this.refreshSignedUrls();
-    }, delayMs);
+    }, Math.max(0, delayMs));
   }
 
   /** Rafraîchissement PÉRIODIQUE des URLs (pas un refresh complet du
    * catalogue) — un échec ne doit jamais faire disparaître un média déjà
    * connu : l'ancienne URL (potentiellement expirée) reste en mémoire,
    * `getLastRefreshError()` porte l'erreur, jamais une suppression
-   * silencieuse (§29). */
+   * silencieuse (§29). Ce retry concerne UNIQUEMENT `createSignedMediaUrl` —
+   * jamais `uploadMediaObject`/`insertMediaAsset`/`softDeleteMediaAsset`/
+   * `restoreMediaAsset`, qui ne sont jamais rejoués automatiquement (§13,
+   * §21 inchangés). */
   private async refreshSignedUrls(): Promise<void> {
     if (this.disposed) return;
     const rows = [...this.mediaMap.values()];
@@ -192,17 +211,21 @@ export class SupabaseMediaRepository implements MediaRepository {
       this.scheduleUrlRefresh();
       return;
     }
+    let nextDelayMs = NOMINAL_REFRESH_DELAY_MS;
     try {
       const signed = await this.signAll(rows);
-      for (const [path, entry] of signed) this.signedUrls.set(path, entry);
+      // REMPLACE (pas un merge) — même raison que dans `refresh()` : aucune
+      // entrée pour une row absente de `mediaMap` ne doit survivre.
+      this.signedUrls = signed;
       for (const row of rows) if (this.signedUrls.has(row.storage_path)) this.sessionFallback.delete(row.id);
       this.lastRefreshError = null;
       this.epoch += 1;
       this.notify();
     } catch (err) {
       this.lastRefreshError = err instanceof Error ? err : new Error(String(err));
+      nextDelayMs = SIGNED_URL_RETRY_SECONDS * 1000;
     } finally {
-      this.scheduleUrlRefresh();
+      this.scheduleUrlRefresh(nextDelayMs);
     }
   }
 
@@ -356,6 +379,7 @@ export class SupabaseMediaRepository implements MediaRepository {
     if (error) throw new Error(`SupabaseMediaRepository: suppression de la photo échouée : ${error.message}`);
     this.mediaMap.delete(photoId);
     this.sessionFallback.delete(photoId);
+    this.signedUrls.delete(row.storage_path);
     this.epoch += 1;
     this.notify();
   }
@@ -380,6 +404,7 @@ export class SupabaseMediaRepository implements MediaRepository {
       if (error) throw new Error(`SupabaseMediaRepository: suppression échouée : ${error.message}`);
       this.mediaMap.delete(existing.id);
       this.sessionFallback.delete(existing.id);
+      this.signedUrls.delete(existing.storage_path);
       this.epoch += 1;
       this.notify();
       return;
@@ -436,7 +461,16 @@ export class SupabaseMediaRepository implements MediaRepository {
     const row = parseRowOrThrow(mediaAssetRowSchema, data, "SupabaseMediaRepository.replace");
     if (row.type === "voice_note") mapVoiceNoteRowToDomain(row, "");
 
-    if (existing) this.mediaMap.delete(existing.id);
+    // L'ancienne entrée `signedUrls`/`sessionFallback` n'est nettoyée
+    // QU'ICI, une fois l'INSERT du nouveau média confirmé — jamais avant
+    // (voir le commentaire de tête) : si l'INSERT avait échoué et que la
+    // restauration best-effort ci-dessus avait réussi, l'ancien média
+    // redevient actif et son URL signée doit rester exploitable.
+    if (existing) {
+      this.mediaMap.delete(existing.id);
+      this.sessionFallback.delete(existing.id);
+      this.signedUrls.delete(existing.storage_path);
+    }
     await this.commitRow(row, input.dataUrl);
   }
 
