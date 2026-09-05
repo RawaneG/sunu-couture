@@ -6,6 +6,7 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { Database } from "../../lib/supabase/database.types";
 import type { CreateFicheDraftPayload } from "../../lib/ficheDraft";
+import { MEDIA_BUCKET } from "./mediaPath";
 
 export interface GatewayError {
   message: string;
@@ -25,6 +26,7 @@ export interface GatewayResult<T> {
 
 type ClientInsert = Database["public"]["Tables"]["clients"]["Insert"];
 type FicheUpdate = Database["public"]["Tables"]["fiches"]["Update"];
+type MediaAssetInsert = Database["public"]["Tables"]["media_assets"]["Insert"];
 
 export interface SupabaseGateway {
   listActiveClients(workshopId: string): Promise<GatewayResult<unknown[]>>;
@@ -50,6 +52,26 @@ export interface SupabaseGateway {
    * courante lui-même, l'identité reste dérivée côté serveur du JWT vérifié
    * (voir `supabase/functions/create-fiche-from-draft/index.ts`). */
   createFicheFromDraft(workshopId: string, clientId: string | null, fiche: CreateFicheDraftPayload): Promise<GatewayResult<unknown>>;
+
+  // ── Médias FICHE (Phase 8A) — CRUD PostgREST normal, Phase 4 accorde déjà
+  // SELECT/INSERT/UPDATE(metadata, deleted_at) à `authenticated` sur
+  // `media_assets`, contrairement à `fiches` : aucune Edge Function requise
+  // ici (§57). Storage : upload/signature UNIQUEMENT — jamais de
+  // `storage.remove()` normal (§19), jamais `getPublicUrl()` (§28, bucket
+  // privé). ─────────────────────────────────────────────────────────────
+  listActiveMediaAssets(workshopId: string): Promise<GatewayResult<unknown[]>>;
+  insertMediaAsset(payload: MediaAssetInsert): Promise<GatewayResult<unknown>>;
+  /** `deleted_at = now()` — jamais de suppression Storage physique (§19). */
+  softDeleteMediaAsset(workshopId: string, id: string): Promise<GatewayResult<null>>;
+  /** Compensation best-effort d'un remplacement vocal/signature dont
+   * l'INSERT de la nouvelle ligne a échoué après le soft-delete de
+   * l'ancienne (§31) — `deleted_at = null`. */
+  restoreMediaAsset(workshopId: string, id: string): Promise<GatewayResult<null>>;
+
+  uploadMediaObject(path: string, blob: Blob, contentType: string): Promise<GatewayResult<null>>;
+  /** URL signée, bucket privé — jamais `getPublicUrl()`. `expiresInSeconds`
+   * ≤ 300 (§28). */
+  createSignedMediaUrl(path: string, expiresInSeconds: number): Promise<GatewayResult<string>>;
 }
 
 function toGatewayError(error: { message: string } | null): GatewayError | null {
@@ -160,6 +182,49 @@ export function createSupabaseGateway(client: SupabaseClient<Database>): Supabas
       });
       if (error) return { data: null, error: await toFunctionGatewayError(error, response) };
       return { data, error: null };
+    },
+
+    async listActiveMediaAssets(workshopId) {
+      const { data, error } = await client
+        .from("media_assets")
+        .select("*")
+        .eq("workshop_id", workshopId)
+        .is("deleted_at", null);
+      return { data, error: toGatewayError(error) };
+    },
+
+    async insertMediaAsset(payload) {
+      const { data, error } = await client.from("media_assets").insert(payload).select().single();
+      return { data, error: toGatewayError(error) };
+    },
+
+    async softDeleteMediaAsset(workshopId, id) {
+      const { error } = await client
+        .from("media_assets")
+        .update({ deleted_at: new Date().toISOString() })
+        .eq("workshop_id", workshopId)
+        .eq("id", id);
+      return { data: null, error: toGatewayError(error) };
+    },
+
+    async restoreMediaAsset(workshopId, id) {
+      const { error } = await client
+        .from("media_assets")
+        .update({ deleted_at: null })
+        .eq("workshop_id", workshopId)
+        .eq("id", id);
+      return { data: null, error: toGatewayError(error) };
+    },
+
+    async uploadMediaObject(path, blob, contentType) {
+      const { error } = await client.storage.from(MEDIA_BUCKET).upload(path, blob, { contentType });
+      return { data: null, error: toGatewayError(error) };
+    },
+
+    async createSignedMediaUrl(path, expiresInSeconds) {
+      const { data, error } = await client.storage.from(MEDIA_BUCKET).createSignedUrl(path, expiresInSeconds);
+      if (error) return { data: null, error: toGatewayError(error) };
+      return { data: data.signedUrl, error: null };
     },
   };
 }

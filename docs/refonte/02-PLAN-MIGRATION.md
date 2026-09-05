@@ -662,8 +662,20 @@ L'ordre reprend celui du cahier des charges (§ « Ordre d'implémentation »).
     (60–300 s), cache mémoire.
   - `MediaRepository` local : garde les blobs en IndexedDB pour l'offline (Phase 12).
   - Compression avant upload (réutilise `image.ts`) ; détection du type MIME audio réellement supporté.
-- **Migrations SQL** : aucune (colonne `metadata jsonb` de `media_assets` créée en Phase 2).
-- **Tests** : upload/lecture d'une photo ; URL signée expirée → 403 ; politique Storage : atelier A ne lit pas le chemin de B ; suppression logique (`deleted_at`) n'efface pas le fichier immédiatement.
+- **Migrations SQL — corrigé lors de l'implémentation** : le schéma métier
+  `public.media_assets` (colonne `metadata jsonb` incluse) était déjà complet
+  depuis la Phase 2 et n'est **pas** modifié ici. MAIS **une migration
+  technique Storage était bien nécessaire** (`storage.buckets` = 0 bucket,
+  `storage.objects` = 0 policy avant cette phase) :
+  `20260905184439_phase_8a_media_storage.sql` — crée uniquement le bucket
+  privé `media` (`public = false`, `allowed_mime_types` restreint aux 5
+  formats Phase 8A) et deux policies `storage.objects`
+  (`SELECT`/`INSERT to authenticated`, aucune `UPDATE`/`DELETE`, aucune
+  `anon`). L'isolation par atelier passe par une vérification d'existence
+  d'une vraie fiche (`public.fiches`, sous RLS `fiches_select_member`)
+  correspondant exactement au `(workshop_id, fiche_id)` encodé dans le path
+  — jamais une simple comparaison du segment fourni par le navigateur.
+- **Tests** : upload/lecture d'une photo ; URL signée expirée → code HTTP réel observé (jamais présumé 403) ; politique Storage : atelier A ne lit pas le chemin de B ; suppression logique (`deleted_at`) n'efface pas le fichier immédiatement.
 - **Rollback** : build `local` (médias base64 conservés dans le backup Phase 6A).
 
 ---

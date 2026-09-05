@@ -1673,6 +1673,97 @@ begin
 end;
 $$;
 
-do $$ begin raise notice '════════  SCHÉMA PHASE 2 + WRAPPER PHASE 3A + CORRECTIFS GRANT + PHASE 4 GRANT/RLS + WRAPPER PHASE 9A : 57 groupes de tests OK  ════════'; end; $$;
+-- ══════════════════════════════════════════════════════════════════════════
+-- Phase 8A — bucket Storage privé `media` + policies (migration
+-- 20260905184439_phase_8a_media_storage.sql). `storage.objects` a RLS active
+-- par défaut (plateforme Supabase) — seules 2 policies existent ici,
+-- SELECT/INSERT `authenticated`. `public.media_assets` (schéma métier,
+-- Phase 2/4) n'est PAS modifiée par cette migration.
+-- ══════════════════════════════════════════════════════════════════════════
+
+-- ── T58 — bucket "media" : existe, privé, MIME restreints ─────────────────
+do $$
+declare
+  v_bucket record;
+begin
+  select id, public, allowed_mime_types into v_bucket from storage.buckets where id = 'media';
+  if not found then
+    raise exception 'T58 FAIL: bucket "media" absent';
+  end if;
+  if v_bucket.public is distinct from false then
+    raise exception 'T58 FAIL: bucket "media" doit être privé (public=false)';
+  end if;
+  if v_bucket.allowed_mime_types is null
+     or v_bucket.allowed_mime_types::text[] <> array['image/jpeg', 'image/png', 'audio/webm', 'audio/mp4', 'audio/ogg']
+  then
+    raise exception 'T58 FAIL: allowed_mime_types inattendu : %', v_bucket.allowed_mime_types;
+  end if;
+  raise notice 'T58 OK — bucket "media" existe, privé, MIME restreints aux formats Phase 8A';
+end;
+$$;
+
+-- ── T59 — storage.objects : SELECT/INSERT authenticated uniquement ────────
+do $$
+declare v_count int;
+begin
+  select count(*) into v_count from pg_policies
+  where schemaname = 'storage' and tablename = 'objects'
+    and policyname in ('media_objects_select_member', 'media_objects_insert_member');
+  if v_count <> 2 then
+    raise exception 'T59 FAIL: attendu exactement 2 policies media_objects_*, trouvé %', v_count;
+  end if;
+
+  if exists (
+    select 1 from pg_policies
+    where schemaname = 'storage' and tablename = 'objects'
+      and policyname in ('media_objects_select_member', 'media_objects_insert_member')
+      and roles <> array['authenticated']::name[]
+  ) then
+    raise exception 'T59 FAIL: une policy media_objects_* n''est pas restreinte exactement à authenticated';
+  end if;
+
+  raise notice 'T59 OK — storage.objects : SELECT/INSERT authenticated uniquement (2 policies)';
+end;
+$$;
+
+-- ── T60 — storage.objects : aucune policy UPDATE/DELETE/anon Phase 8A ─────
+do $$
+begin
+  if exists (
+    select 1 from pg_policies
+    where schemaname = 'storage' and tablename = 'objects'
+      and policyname like 'media_objects_%' and cmd in ('UPDATE', 'DELETE')
+  ) then
+    raise exception 'T60 FAIL: une policy media_objects_* UPDATE/DELETE existe (interdit Phase 8A — suppression physique non navigateur)';
+  end if;
+  if exists (
+    select 1 from pg_policies
+    where schemaname = 'storage' and tablename = 'objects'
+      and policyname like 'media_objects_%' and 'anon' = any(roles)
+  ) then
+    raise exception 'T60 FAIL: une policy media_objects_* accorde un rôle anon';
+  end if;
+  raise notice 'T60 OK — aucune policy media_objects_* UPDATE/DELETE/anon';
+end;
+$$;
+
+-- ── T61 — media_assets : grants Phase 4 inchangés par cette migration ─────
+do $$
+begin
+  if not has_table_privilege('authenticated', 'public.media_assets', 'select') then
+    raise exception 'T61 FAIL: authenticated a perdu SELECT sur media_assets (régression)';
+  end if;
+  if not has_table_privilege('authenticated', 'public.media_assets', 'insert') then
+    raise exception 'T61 FAIL: authenticated a perdu INSERT sur media_assets (régression)';
+  end if;
+  if has_table_privilege('anon', 'public.media_assets', 'select')
+     or has_table_privilege('anon', 'public.media_assets', 'insert') then
+    raise exception 'T61 FAIL: anon a un accès sur media_assets (régression)';
+  end if;
+  raise notice 'T61 OK — media_assets : grants Phase 4 inchangés (authenticated select/insert, anon aucun accès)';
+end;
+$$;
+
+do $$ begin raise notice '════════  SCHÉMA PHASE 2 + WRAPPER PHASE 3A + CORRECTIFS GRANT + PHASE 4 GRANT/RLS + WRAPPER PHASE 9A + STORAGE PHASE 8A : 61 groupes de tests OK  ════════'; end; $$;
 
 rollback;

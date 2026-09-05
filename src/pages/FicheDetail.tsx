@@ -2,7 +2,7 @@ import { useState } from "react";
 import { Navigate, useNavigate, useParams } from "react-router-dom";
 import { motion } from "framer-motion";
 import clsx from "clsx";
-import { useFiche, useClient } from "../repositories/hooks";
+import { useFiche, useClient, useFicheMedia } from "../repositories/hooks";
 import { useRepositories } from "../repositories/RepositoryProvider";
 import PageHeader from "../components/ui/PageHeader";
 import VoiceRecorder from "../components/ui/VoiceRecorder";
@@ -17,7 +17,7 @@ import { haptic } from "../lib/haptics";
 import { formatFullDateWithYear, toDateInputValue, fromDateInputValue, sanitizePhone } from "../lib/format";
 import { detectDominantColor } from "../lib/color";
 import { FICHE_MESURE_KEYS, FICHE_MESURE_LABELS, FICHE_INFO_KEYS, FICHE_INFO_LABELS } from "../lib/types";
-import type { Modele, FicheChampKey } from "../lib/types";
+import type { Modele, FicheChampKey, VoiceNote } from "../lib/types";
 import type { FicheInfoPatch } from "../repositories/FicheRepository";
 
 export default function FicheDetail() {
@@ -37,6 +37,13 @@ export default function FicheDetail() {
   // et seulement une fois l'hydratation terminée (voir plus bas).
   const clientState = useClient(ficheState.status === "ready" ? (ficheState.data?.clientId ?? "") : "");
   const client = clientState.status === "ready" ? clientState.data : undefined;
+  // Phase 8A — `MediaRepository` devient la source de vérité pour photos
+  // tissu/vocal/signature ; `Fiche.tissuPhotos`/`voiceNote`/`signature`
+  // restent dans le modèle domaine (compat locale/legacy) mais ne sont plus
+  // lus ici. `mediaState.status` distingue "pas encore chargé" de "chargé et
+  // vide" — jamais confondus (§10) : tant que `loading`/`error`, aucun
+  // contrôle d'écriture média n'est rendu.
+  const mediaState = useFicheMedia(ficheState.status === "ready" ? (ficheState.data?.id ?? "") : "");
 
   if (ficheState.status === "loading") {
     return (
@@ -98,7 +105,11 @@ export default function FicheDetail() {
   };
 
   const handleAddPhoto = async (dataUrl: string) => {
-    const isFirstPhoto = fiche.tissuPhotos.length === 0;
+    // §11 : la première photo se détecte via le Repository média, jamais
+    // `fiche.tissuPhotos` (non autoritatif dès qu'un Repository média
+    // existe). `handleAddPhoto` n'est de toute façon exposé que lorsque
+    // `mediaState.status === "ready"` (voir le rendu plus bas).
+    const isFirstPhoto = mediaState.status === "ready" ? mediaState.data.photos.length === 0 : true;
     try {
       await mediaRepository.addFichePhoto(fiche.id, dataUrl);
     } catch {
@@ -118,6 +129,21 @@ export default function FicheDetail() {
   const handleRemovePhoto = (photoId: string) => {
     mediaRepository.removeFichePhoto(fiche.id, photoId).catch(() => {
       setWriteError("La suppression de la photo a échoué. Réessaie.");
+    });
+  };
+
+  // Phase 8A — remplace `writeFicheInfo({ voiceNote })`/`{ signature }` :
+  // ces deux champs s'écrivent désormais exclusivement via `MediaRepository`
+  // (`public.media_assets` côté cloud), jamais via `FicheRepository.setInfo`.
+  const handleVoiceChange = (value: VoiceNote | null) => {
+    mediaRepository.setFicheVoiceNote(fiche.id, value).catch(() => {
+      setWriteError("La note vocale n'a pas pu être enregistrée. Réessaie.");
+    });
+  };
+
+  const handleSignatureChange = (dataUrl: string | null) => {
+    mediaRepository.setFicheSignature(fiche.id, dataUrl).catch(() => {
+      setWriteError("La signature n'a pas pu être enregistrée. Réessaie.");
     });
   };
 
@@ -200,12 +226,11 @@ export default function FicheDetail() {
 
           <div className="mt-4">
             <p className="mb-2 text-[13px] font-bold text-ink-soft">Note vocale</p>
-            <VoiceRecorder
-              value={fiche.voiceNote}
-              onChange={(v) => writeFicheInfo({ voiceNote: v })}
-              label="cette fiche"
-              persist
-            />
+            {mediaState.status === "ready" ? (
+              <VoiceRecorder value={mediaState.data.voiceNote} onChange={handleVoiceChange} label="cette fiche" persist />
+            ) : (
+              <MediaSectionStatus status={mediaState.status} />
+            )}
           </div>
 
           <div className="mt-4 grid gap-x-8 sm:grid-cols-2">
@@ -243,17 +268,25 @@ export default function FicheDetail() {
 
               <div className="mt-4">
                 <p className="mb-2 text-[13px] font-bold text-ink-soft">Photos du tissu</p>
-                <FabricPhotos
-                  photos={fiche.tissuPhotos}
-                  onAdd={handleAddPhoto}
-                  onRemove={handleRemovePhoto}
-                  onPickCatalogue={() => setCatalogueOpen(true)}
-                />
+                {mediaState.status === "ready" ? (
+                  <FabricPhotos
+                    photos={mediaState.data.photos}
+                    onAdd={handleAddPhoto}
+                    onRemove={handleRemovePhoto}
+                    onPickCatalogue={() => setCatalogueOpen(true)}
+                  />
+                ) : (
+                  <MediaSectionStatus status={mediaState.status} />
+                )}
               </div>
 
               <div className="mt-4">
                 <p className="mb-2 text-[13px] font-bold text-ink-soft">Signature client</p>
-                <SignaturePad value={fiche.signature} onChange={(dataUrl) => writeFicheInfo({ signature: dataUrl })} />
+                {mediaState.status === "ready" ? (
+                  <SignaturePad value={mediaState.data.signature} onChange={handleSignatureChange} />
+                ) : (
+                  <MediaSectionStatus status={mediaState.status} />
+                )}
               </div>
             </section>
           </div>
@@ -263,6 +296,25 @@ export default function FicheDetail() {
 
       {catalogueOpen && <ModelePickerSheet onSelect={handlePickModele} onClose={() => setCatalogueOpen(false)} />}
     </div>
+  );
+}
+
+/** §10 : pendant `loading`, ne jamais rendre les contrôles média comme s'ils
+ * étaient vides (risque de remplacement d'un média distant pas encore
+ * chargé) ; pendant `error`, ne jamais transformer une panne réseau en
+ * "aucune photo/vocal/signature". */
+function MediaSectionStatus({ status }: { status: "loading" | "error" }) {
+  if (status === "loading") {
+    return (
+      <p role="status" aria-live="polite" className="text-[13px] font-semibold text-ink-faint">
+        Chargement des médias…
+      </p>
+    );
+  }
+  return (
+    <p role="alert" className="text-[13px] font-semibold text-terracotta">
+      Les médias n'ont pas pu être chargés.
+    </p>
   );
 }
 

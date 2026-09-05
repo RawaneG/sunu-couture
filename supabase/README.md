@@ -71,7 +71,7 @@ supabase/
                                       #   [db.seed].enabled = false ; [api].schemas = public, graphql_public
   seeds/
     draft_subscription_plans.sql       # BROUILLON is_active=false — NON câblé dans config.toml
-  migrations/                          # format horodaté, 12 fichiers (Phase 2 : 9 ; Phase 3B : 2 ; Phase 4 : 1 ; Phase 9A : 1)
+  migrations/                          # format horodaté, 14 fichiers (Phase 2 : 9 ; Phase 3B : 2 ; Phase 4 : 1 ; Phase 9A : 1 ; Phase 8A : 1)
     20260829120000_enable_extensions_and_enums.sql     pgcrypto, schéma privé app_hidden, 10 enums
     20260829120100_create_core_schema.sql              15 tables ; UNIQUE(workshop_id,id) + FK composites
     20260829120200_create_subscription_schema.sql      tables abonnement, AUCUN seed
@@ -85,13 +85,14 @@ supabase/
     20260830212932_grant_provision_workshop_service_role_select.sql   GRANT SELECT ciblé service_role sur workshops (Phase 3B)
     20260830231638_grants_and_rls_policies.sql          REVOKE normalisé + GRANT colonne par colonne + 27 politiques RLS (Phase 4)
     20260905144612_create_fiche_from_draft_api.sql      wrapper public SECURITY INVOKER → app_hidden.create_fiche_from_draft (Phase 9A)
+    20260905184439_phase_8a_media_storage.sql           bucket privé "media" + policies storage.objects SELECT/INSERT authenticated (Phase 8A)
   migrations_down/                     # <ts>_<nom>.down.sql — rollback manuel (le CLI est forward-only)
   functions/
     provision-workshop/                # Edge Function Phase 3A — voir index.ts pour le contrat de sécurité complet
     create-fiche-from-draft/           # Edge Function Phase 9A — voir index.ts pour le contrat de sécurité complet
   tests/
     00_local_auth_shim.sql             # auth.users + auth.uid() + rôles + default privileges — POSTGRES NU SEULEMENT
-    10_schema_tests.sql                # 57 groupes d'assertions, tx + ROLLBACK (35 Phase 2 + 5 Phase 3A/3B + 15 Phase 4 + 2 Phase 9A)
+    10_schema_tests.sql                # 61 groupes d'assertions, tx + ROLLBACK (35 Phase 2 + 5 Phase 3A/3B + 15 Phase 4 + 2 Phase 9A + 4 Phase 8A)
     run.sh / run.ps1                   # orchestrateurs base jetable (voie COMPLÉMENTAIRE)
 ```
 
@@ -205,7 +206,7 @@ npx supabase db lint --local
 npx supabase db advisors --local --type all --level info
 
 DBURL="$(npx supabase status -o env | sed -n 's/^DB_URL=//p')"
-psql "$DBURL" -v ON_ERROR_STOP=1 -f supabase/tests/10_schema_tests.sql   # 57 groupes, vrais rôles Supabase
+psql "$DBURL" -v ON_ERROR_STOP=1 -f supabase/tests/10_schema_tests.sql   # 61 groupes, vrais rôles Supabase
 
 npx supabase stop
 ```
@@ -227,6 +228,25 @@ limite locale documentée pour le CORS : Kong réécrit
 `Access-Control-Allow-Origin` sur la stack Docker locale — seuls les codes de
 statut sont vérifiables ici, les valeurs d'en-tête restent à vérifier une fois
 déployé (voir le commentaire de tête de chaque `index.ts`).
+
+### Storage média (Phase 8A) — validation locale
+
+Aucune Edge Function ici : `create-fiche-from-draft`/`provision-workshop`
+n'ont pas besoin de tourner pour ce script (§57 — CRUD `media_assets` en
+PostgREST direct, Storage en upload/signature uniquement).
+
+```bash
+npx supabase start
+node scripts/test-phase-8a-media.mjs    # 14/14 — isolation bucket "media"
+```
+Construit deux ateliers/fiches de test (mêmes deux numéros
+`[auth.sms.test_otp]` que `test-create-fiche-from-draft.mjs`) directement via
+la clé secrète, puis vérifie avec de vrais clients `supabase-js` par
+utilisateur : upload/lecture dans sa propre fiche, refus d'upload/lecture
+inter-ateliers, refus `anon`, persistance du fichier Storage après un
+soft-delete de la ligne `media_assets`, et le code HTTP réel d'une URL signée
+expirée (jamais présumé `403` — observé `400` en local). Nettoyage des
+ateliers de test après coup.
 `auth.uid()` réel de Supabase lit `request.jwt.claim.sub` **avant** `request.jwt.claims`
 (`coalesce`) — les tests (`set_config('request.jwt.claim.sub', …)`) s'exécutent donc
 sans adaptation, aussi bien sur la stack Docker que sur le shim de repli.

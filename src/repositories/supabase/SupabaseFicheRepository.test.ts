@@ -58,6 +58,12 @@ function fakeGateway(overrides: Partial<SupabaseGateway> = {}): SupabaseGateway 
       data: { fiche: createdFicheRow() },
       error: null,
     })),
+    listActiveMediaAssets: vi.fn(async () => ({ data: [], error: null })),
+    insertMediaAsset: vi.fn(async () => ({ data: null, error: null })),
+    softDeleteMediaAsset: vi.fn(async () => ({ data: null, error: null })),
+    restoreMediaAsset: vi.fn(async () => ({ data: null, error: null })),
+    uploadMediaObject: vi.fn(async () => ({ data: null, error: null })),
+    createSignedMediaUrl: vi.fn(async () => ({ data: "https://example.test/signed", error: null })),
     ...overrides,
   };
 }

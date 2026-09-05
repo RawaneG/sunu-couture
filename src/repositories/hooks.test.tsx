@@ -1,11 +1,15 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi, beforeEach } from "vitest";
 import { render, screen, act } from "@testing-library/react";
-import type { Client } from "../lib/types";
+import type { Client, TissuPhoto, VoiceNote } from "../lib/types";
 import type { ClientRepository, NewClientInput } from "./ClientRepository";
+import type { MediaRepository } from "./MediaRepository";
 import type { RepositoryStatus } from "./RepositoryStatus";
 import { createRepositoryContainerFor } from "./RepositoryContainer";
 import { RepositoryProvider } from "./RepositoryProvider";
-import { useClients, useClient } from "./hooks";
+import { useStore } from "../lib/store";
+import { useClients, useClient, useFicheMedia } from "./hooks";
+import { SupabaseMediaRepository } from "./supabase/SupabaseMediaRepository";
+import type { SupabaseGateway } from "./supabase/gateway";
 
 /** Faux ClientRepository — preuve que `RepositoryProvider` accepte
  * l'injection d'un Repository de test (aucun localStorage, aucun Zustand). */
@@ -221,5 +225,295 @@ describe("useClient() — état loading distinct de 'introuvable' (corr. R, Phas
     // Jamais "Chargement…" pour un Repository local — toujours prêt immédiatement.
     expect(screen.queryByText("Chargement…")).not.toBeInTheDocument();
     expect(screen.getByText("Introuvable")).toBeInTheDocument();
+  });
+});
+
+// Référence STABLE — voir la remarque `EMPTY_FICHES` ailleurs dans le code
+// pour la même exigence de stabilité `useSyncExternalStore`.
+const EMPTY_PHOTOS: TissuPhoto[] = [];
+
+/** Variante SANS `getStatus()` — reproduit un backend local (Phase 8A §6 :
+ * absence ⇒ "ready" immédiat), distincte de `FakeCloudMediaRepository`
+ * ci-dessous (qui, elle, implémente `getStatus()`). */
+class FakeLocalMediaRepository implements MediaRepository {
+  private listeners = new Set<() => void>();
+  private photos: TissuPhoto[] = [];
+  private voiceNote: VoiceNote | null = null;
+  private signature: string | null = null;
+
+  listFichePhotos(): TissuPhoto[] {
+    return this.photos.length ? this.photos : EMPTY_PHOTOS;
+  }
+  async addFichePhoto(_ficheId: string, dataUrl: string): Promise<void> {
+    this.photos = [...this.photos, { id: `p${this.photos.length + 1}`, dataUrl }];
+    this.notify();
+  }
+  async removeFichePhoto(): Promise<void> {}
+  getFicheVoiceNote(): VoiceNote | null {
+    return this.voiceNote;
+  }
+  async setFicheVoiceNote(_ficheId: string, value: VoiceNote | null): Promise<void> {
+    this.voiceNote = value;
+    this.notify();
+  }
+  getFicheSignature(): string | null {
+    return this.signature;
+  }
+  async setFicheSignature(_ficheId: string, dataUrl: string | null): Promise<void> {
+    this.signature = dataUrl;
+    this.notify();
+  }
+  listModelePhotos(): TissuPhoto[] {
+    return EMPTY_PHOTOS;
+  }
+  async addModelePhoto(): Promise<void> {}
+  async removeModelePhoto(): Promise<void> {}
+  listModelePatronPhotos(): TissuPhoto[] {
+    return EMPTY_PHOTOS;
+  }
+  async addModelePatronPhoto(): Promise<void> {}
+  async removeModelePatronPhoto(): Promise<void> {}
+  subscribe(listener: () => void): () => void {
+    this.listeners.add(listener);
+    return () => this.listeners.delete(listener);
+  }
+  protected notify() {
+    for (const listener of this.listeners) listener();
+  }
+}
+
+/** Variante AVEC `getStatus()` contrôlé manuellement — reproduit
+ * `SupabaseMediaRepository` (Phase 8A) : loading → ready/error. */
+class FakeCloudMediaRepository extends FakeLocalMediaRepository {
+  private status: RepositoryStatus = { status: "loading" };
+  getStatus(): RepositoryStatus {
+    return this.status;
+  }
+  markReady() {
+    this.status = { status: "ready" };
+    this.notify();
+  }
+  markError(error: Error) {
+    this.status = { status: "error", error };
+    this.notify();
+  }
+}
+
+function MediaProbe({ ficheId }: { ficheId: string }) {
+  const state = useFicheMedia(ficheId);
+  if (state.status === "loading") return <p>Chargement médias…</p>;
+  if (state.status === "error") return <p>Erreur médias</p>;
+  return (
+    <p>
+      {state.data.photos.length} photo(s) — voix {state.data.voiceNote ? "oui" : "non"} — signature{" "}
+      {state.data.signature ? "oui" : "non"}
+    </p>
+  );
+}
+
+describe("useFicheMedia() — Phase 8A", () => {
+  it("backend local (sans getStatus) : toujours 'ready' immédiatement", () => {
+    const media = new FakeLocalMediaRepository();
+    const container = { ...createRepositoryContainerFor("local"), media };
+    render(
+      <RepositoryProvider repositories={container}>
+        <MediaProbe ficheId="f1" />
+      </RepositoryProvider>,
+    );
+    expect(screen.getByText(/0 photo\(s\)/)).toBeInTheDocument();
+  });
+
+  it("backend cloud : 'loading' puis 'ready' une fois hydraté", () => {
+    const media = new FakeCloudMediaRepository();
+    const container = { ...createRepositoryContainerFor("local"), media };
+    render(
+      <RepositoryProvider repositories={container}>
+        <MediaProbe ficheId="f1" />
+      </RepositoryProvider>,
+    );
+    expect(screen.getByText("Chargement médias…")).toBeInTheDocument();
+
+    act(() => media.markReady());
+    expect(screen.getByText(/0 photo\(s\)/)).toBeInTheDocument();
+  });
+
+  it("backend cloud : 'error' affiché explicitement, jamais confondu avec une collection vide", () => {
+    const media = new FakeCloudMediaRepository();
+    const container = { ...createRepositoryContainerFor("local"), media };
+    render(
+      <RepositoryProvider repositories={container}>
+        <MediaProbe ficheId="f1" />
+      </RepositoryProvider>,
+    );
+    act(() => media.markError(new Error("réseau indisponible")));
+    expect(screen.getByText("Erreur médias")).toBeInTheDocument();
+  });
+
+  it("réagit à une mutation (ajout photo) via subscribe", async () => {
+    const media = new FakeCloudMediaRepository();
+    const container = { ...createRepositoryContainerFor("local"), media };
+    render(
+      <RepositoryProvider repositories={container}>
+        <MediaProbe ficheId="f1" />
+      </RepositoryProvider>,
+    );
+    act(() => media.markReady());
+    expect(screen.getByText(/0 photo\(s\)/)).toBeInTheDocument();
+
+    await act(async () => {
+      await media.addFichePhoto("f1", "data:image/jpeg;base64,AAA");
+    });
+    expect(screen.getByText(/1 photo\(s\)/)).toBeInTheDocument();
+  });
+
+  it("snapshot stable : pas de re-rendu si rien n'a changé (getSnapshot mémoïsé)", () => {
+    const media = new FakeCloudMediaRepository();
+    const container = { ...createRepositoryContainerFor("local"), media };
+    const renderSpy = vi.fn();
+    function SpyingProbe({ ficheId }: { ficheId: string }) {
+      renderSpy();
+      const state = useFicheMedia(ficheId);
+      return <p>{state.status}</p>;
+    }
+    const { rerender } = render(
+      <RepositoryProvider repositories={container}>
+        <SpyingProbe ficheId="f1" />
+      </RepositoryProvider>,
+    );
+    act(() => media.markReady());
+    const rendersAfterReady = renderSpy.mock.calls.length;
+
+    // Un re-rendu du parent SANS mutation du Repository ne doit pas faire
+    // paniquer `useSyncExternalStore` (getSnapshot instable ⇒ boucle
+    // infinie détectée par React) — la stabilité est prouvée par le fait
+    // que ce test se termine du tout, et que le compteur de rendus reste
+    // borné (pas une explosion).
+    rerender(
+      <RepositoryProvider repositories={container}>
+        <SpyingProbe ficheId="f1" />
+      </RepositoryProvider>,
+    );
+    expect(renderSpy.mock.calls.length).toBeLessThanOrEqual(rendersAfterReady + 1);
+  });
+
+  it("unsubscribe au démontage : une mutation après unmount ne fait pas planter", async () => {
+    const media = new FakeCloudMediaRepository();
+    const container = { ...createRepositoryContainerFor("local"), media };
+    const { unmount } = render(
+      <RepositoryProvider repositories={container}>
+        <MediaProbe ficheId="f1" />
+      </RepositoryProvider>,
+    );
+    act(() => media.markReady());
+    unmount();
+
+    await expect(media.addFichePhoto("f1", "data:image/jpeg;base64,AAA")).resolves.toBeUndefined();
+  });
+});
+
+describe("useFicheMedia() — régression réelle (backend local) : supprimer la fiche affichée ne provoque pas de page blanche", () => {
+  beforeEach(() => {
+    useStore.setState({ clients: [], fiches: [], modeles: [] });
+  });
+
+  it("après suppression de la fiche, aucune boucle de rendu infinie ('Maximum update depth exceeded') — reproduit puis corrige le bug signalé", async () => {
+    const container = createRepositoryContainerFor("local");
+    const id = await container.fiches.add();
+    await container.media.addFichePhoto(id, "data:image/jpeg;base64,AAAA");
+
+    const consoleErrorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+
+    render(
+      <RepositoryProvider repositories={container}>
+        <MediaProbe ficheId={id} />
+      </RepositoryProvider>,
+    );
+    expect(screen.getByText(/1 photo\(s\)/)).toBeInTheDocument();
+
+    await act(async () => {
+      await container.fiches.remove(id);
+    });
+
+    const sawMaxUpdateDepthError = consoleErrorSpy.mock.calls.some((args) =>
+      args.some((a) => typeof a === "string" && a.includes("Maximum update depth exceeded")),
+    );
+    expect(sawMaxUpdateDepthError).toBe(false);
+    expect(screen.getByText(/0 photo\(s\)/)).toBeInTheDocument();
+
+    consoleErrorSpy.mockRestore();
+  });
+});
+
+/** Gateway minimal — juste assez pour que `SupabaseMediaRepository`
+ * bootstrap et réponde ; seule sa forme structurelle importe ici, pas son
+ * comportement métier (déjà couvert par `SupabaseMediaRepository.test.ts`). */
+function fakeGatewayForMediaIntegration(overrides: Partial<SupabaseGateway> = {}): SupabaseGateway {
+  return {
+    listActiveClients: vi.fn(async () => ({ data: [], error: null })),
+    insertClient: vi.fn(async () => ({ data: null, error: null })),
+    softDeleteClients: vi.fn(async () => ({ data: null, error: null })),
+    listCarnets: vi.fn(async () => ({ data: [], error: null })),
+    listActiveFiches: vi.fn(async () => ({ data: [], error: null })),
+    getFicheById: vi.fn(async () => ({ data: null, error: null })),
+    updateFiche: vi.fn(async () => ({ data: null, error: null })),
+    softDeleteFiches: vi.fn(async () => ({ data: null, error: null })),
+    createFicheFromDraft: vi.fn(async () => ({ data: null, error: null })),
+    listActiveMediaAssets: vi.fn(async () => ({
+      data: [
+        {
+          id: "p1",
+          workshop_id: "w1",
+          fiche_id: "f1",
+          type: "fabric_photo",
+          storage_path: "workshops/w1/fiches/f1/p1",
+          mime_type: "image/jpeg",
+          size_bytes: 10,
+          metadata: {},
+          created_at: "2026-01-01T00:00:00.000Z",
+          deleted_at: null,
+        },
+      ],
+      error: null,
+    })),
+    insertMediaAsset: vi.fn(async () => ({ data: null, error: null })),
+    softDeleteMediaAsset: vi.fn(async () => ({ data: null, error: null })),
+    restoreMediaAsset: vi.fn(async () => ({ data: null, error: null })),
+    uploadMediaObject: vi.fn(async () => ({ data: null, error: null })),
+    createSignedMediaUrl: vi.fn(async () => ({ data: "https://signed.example/p1", error: null })),
+    ...overrides,
+  };
+}
+
+describe("useFicheMedia() — intégration avec le VRAI SupabaseMediaRepository (pas un double)", () => {
+  it("une fois bootstrapped, un rerender sans mutation renvoie un snapshot stable — pas de boucle infinie", async () => {
+    const gateway = fakeGatewayForMediaIntegration();
+    const media = new SupabaseMediaRepository({ gateway, workshopId: "w1" });
+    await media.bootstrapped;
+    expect(media.getStatus()).toEqual({ status: "ready" });
+
+    const container = { ...createRepositoryContainerFor("local"), media };
+    const { rerender } = render(
+      <RepositoryProvider repositories={container}>
+        <MediaProbe ficheId="f1" />
+      </RepositoryProvider>,
+    );
+    expect(screen.getByText(/1 photo\(s\)/)).toBeInTheDocument();
+
+    const firstSnapshot = media.listFichePhotos("f1");
+
+    // Un rerender du parent SANS mutation du Repository ne doit jamais faire
+    // paniquer `useSyncExternalStore` — la preuve directe est que le
+    // Repository lui-même renvoie la MÊME référence tant que rien n'a changé
+    // (§3-§6 du correctif) ; la preuve indirecte est que ce test se termine
+    // sans "Maximum update depth exceeded".
+    rerender(
+      <RepositoryProvider repositories={container}>
+        <MediaProbe ficheId="f1" />
+      </RepositoryProvider>,
+    );
+    expect(screen.getByText(/1 photo\(s\)/)).toBeInTheDocument();
+    expect(media.listFichePhotos("f1")).toBe(firstSnapshot);
+
+    media.dispose();
   });
 });

@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import clsx from "clsx";
 import { IconMic, IconPlay, IconPause, IconStop, IconTrash, IconRotateCcw } from "../../lib/icons";
 import { formatDuration } from "../../lib/format";
+import { pickSupportedAudioMimeType } from "../../lib/audioRecording";
 import type { VoiceNote } from "../../lib/types";
 
 const BAR_HEIGHTS = [5, 12, 8, 16, 6, 11, 4, 14, 7, 10, 5, 13];
@@ -47,12 +48,18 @@ export default function VoiceRecorder({
     setError(null);
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      const recorder = new MediaRecorder(stream);
+      const preferredMimeType = pickSupportedAudioMimeType();
+      const recorder = preferredMimeType ? new MediaRecorder(stream, { mimeType: preferredMimeType }) : new MediaRecorder(stream);
       chunksRef.current = [];
       recorder.ondataavailable = (e) => chunksRef.current.push(e.data);
       recorder.onstop = async () => {
         stream.getTracks().forEach((t) => t.stop());
-        const blob = new Blob(chunksRef.current, { type: "audio/webm" });
+        // Jamais un MIME supposé : `recorder.mimeType` reflète le format
+        // RÉELLEMENT négocié par le navigateur (peut différer de
+        // `preferredMimeType` si aucun des formats testés n'était supporté,
+        // ou du chunk lui-même sur certains navigateurs — voir corr. R §25).
+        const actualMimeType = recorder.mimeType || chunksRef.current[0]?.type || "audio/webm";
+        const blob = new Blob(chunksRef.current, { type: actualMimeType });
         const url = persist ? await blobToDataUrl(blob) : URL.createObjectURL(blob);
         onChange({ url, duration: elapsedRef.current, recordedAt: new Date().toISOString() });
       };
