@@ -46,6 +46,34 @@
 > accepter aussi `insufficient_privilege` (le distant n'a pas de `GRANT` pour
 > `authenticated` — refus encore plus strict, cohérent Phase 4). **Statut :
 > « Phase 2 clôturée — schéma déployé et vérifié sur sunu-couture-dev ».**
+>
+> **Gel du graphe cloud post-preflight Phase 7 (trois audits architecturaux,
+> CAS C confirmé — 2026-09-05)** : avant tout code Phase 7, un preflight
+> obligatoire (revue exhaustive de l'architecture réellement mergée : Phase 4
+> `GRANT`+RLS, `AuthProvider`/`RepositoryProvider`, contrats Repository
+> synchrones, mapping `Fiche`↔`public.fiches`, schéma réel `media_assets`/
+> `modele_medias`, corps exact de `create_fiche_from_draft`) a révélé que la
+> séquence **Phase 7 → Phase 8 → Phase 6B** telle que décrite ci-dessous ne
+> peut PAS être exécutée sans soit violer la Phase 4 (GRANT/RLS déjà mergée),
+> soit commencer silencieusement une autre phase, soit produire des données
+> cloud fausses (solde à 0 F, catalogue invisible, numérotation legacy
+> écrasée). **Le graphe d'exécution est donc désormais figé** comme suit —
+> il remplace, partout dans ce document, toute mention contraire de
+> « Phase 7 puis Phase 8 puis Phase 6B » :
+>
+> ```
+> 7A → 9A → 7B → 8A → 8B → 11A → [Gate VITE_BACKEND=supabase] → 6B0 → 6B
+> ```
+>
+> La **numérotation officielle des phases** (héritée du cahier des charges,
+> §4 ci-dessous) ne change pas — Phase 6B reste « Phase 6B », Phase 9 reste
+> « Phase 9 », etc. Ce qui change est (a) l'**ordre d'exécution réel**, déjà
+> différent de la numérotation avant ce gel (Phase 6B s'exécutait déjà avant
+> Phase 9 — voir §7), et (b) l'introduction de **sous-phases** (7A/7B, 8A/8B,
+> 9A, 11A) et d'une **nouvelle phase 6B0** entre 11A et 6B. Détail complet :
+> §4 (chaque phase), §7 (nouveau diagramme d'ordre), `03-DECISIONS.md`
+> correction **R**. **Aucun code, aucune migration SQL, aucune Edge Function
+> n'a été créé pour ce gel — uniquement une mise à jour documentaire.**
 
 ---
 
@@ -116,11 +144,12 @@ Projet réel : **`sunu-couture-dev`** — `https://nffcdygtqzlivsresuuk.supabase
 | `clients` | `Client` | `name` → **`display_name` (obligatoire, verbatim)** + `first_name`/`last_name`/`nickname` facultatifs (D2) ; `name` d'origine → `metadata.legacy_name` ; `phone` → **`phone_e164`** (E.164) + `phone_display` + `metadata.legacy_phone` (D3) ; `photo` **ignorée** (jamais persistée) ; `colorSeed` → `metadata.color_seed` |
 | `fiches` | `Fiche` | voir table détaillée §3.1 |
 | `client_payments` | `Fiche.avance` (nombre) | si `avance > 0` : 1 versement `{ amount: avance, paid_at: null, recorded_at: fiche.createdAt, method: null, note: "Reprise du carnet — date du versement inconnue", metadata.source: "legacy_import" }` (D6) |
-| `media_assets` | `Fiche.tissuPhotos[]`, `Fiche.signature`, `Fiche.voiceNote`, `Modele.photos[]`, `Modele.patronPhotos[]` | **import effectif en Phase 6B**, après les buckets privés (correction B). Chaque base64 → upload Storage → 1 ligne `media_assets` (`type` ∈ `fabric_photo`/`signature`/`voice_note`/`model_photo`) ; durée/dimensions/codec/checksum → `metadata jsonb` (D7) |
+| `media_assets` | `Fiche.tissuPhotos[]`, `Fiche.signature`, `Fiche.voiceNote` | **FICHES UNIQUEMENT** — `media_assets.fiche_id` est `not null` avec FK composite vers `fiches` : aucun média de modèle ne peut y transiter (voir ligne `modele_medias` ci-dessous). **Import effectif en Phase 6B**, après la Phase 8A (buckets privés — correction B). Chaque base64 → upload Storage → 1 ligne `media_assets` (`type` ∈ `fabric_photo`/`signature`/`voice_note` — la valeur d'enum `model_photo` reste **inutilisée par ce chemin**, voir ligne `modele_medias`) ; durée/dimensions/codec/checksum → `metadata jsonb` (D7) |
 | `subscriptions` | `entitlements.ts` (stub) | **aucune souscription ni offre active créée en Phase 2** — les offres, limites et tarifs (dont `plan_code = 'decouverte'` / 20 fiches) restent **expérimentaux** ; migration + activation reportées à la **Phase 14**, après validation métier (corr. I) |
 | `subscription_transactions` | *n'existe pas* | vide au départ |
 | `sync_conflicts` | *n'existe pas* | vide au départ ; matérialise un conflit de synchro **sans** créer de fiche visible/numérotée (correction F) |
-| *(catalogue)* `modeles` + `modele_medias` | `Modele` | table équivalente scoping `workshop_id` (non détaillée dans le cahier des charges mais nécessaire) |
+| `modeles` | `Modele.nom` | table équivalente scoping `workshop_id`, `nom` non vide (corr. M) ; **import effectif en Phase 6B** (aucune exclusion — corr. R) ; `metadata jsonb` (avec `legacy_id`) **ajoutée par une migration dédiée de la Phase 6B0**, la colonne n'existe pas dans le schéma actuel |
+| *(catalogue)* `modele_medias` | `Modele.photos[]`, `Modele.patronPhotos[]` | **MODÈLES UNIQUEMENT** — table dédiée déjà créée en Phase 2 (`kind` ∈ `photo`/`patron`, `position`, `storage_path` unique), indépendante de `media_assets`. Import effectif en Phase 6B, après la Phase 8B (buckets privés catalogue — corr. R) |
 
 ### 3.1 `fiches` — correspondance champ à champ
 
@@ -307,35 +336,276 @@ L'ordre reprend celui du cahier des charges (§ « Ordre d'implémentation »).
   - Prévisualisation chiffrée (« X clients, Y fiches, Z modèles importés ; N éléments démo ignorés »).
 - **Rollback** : sans objet (lecture seule + fichier exporté).
 
+### Phase 6B0 — Infrastructure d'import legacy sécurisé *(nouvelle phase — corr. R)*
+> Exécutée après **11A** et avant **6B** (voir §7, nouveau diagramme). Distincte et
+> indispensable : `app_hidden.create_fiche_from_draft()` alloue **elle-même** le
+> numéro suivant depuis `carnets.next_number` — elle n'accepte aucun numéro en
+> paramètre. Rejouer un carnet legacy `1, 2, 5` via 3 appels produirait `1, 2, 3`
+> (numéros perdus), pas `1, 2, 5` : **cette fonction est donc interdite pour
+> l'import**, elle reste exclusivement la porte de la création métier normale
+> (Phase 9A/9). L'import a besoin d'un **chemin serveur entièrement distinct**.
+- **Objectif** : fournir un chemin d'import serveur qui (a) préserve les numéros
+  legacy exacts, (b) garantit une idempotence au niveau base de données (pas
+  seulement dans `migrationMap`/IndexedDB), (c) ne réutilise ni n'affaiblit la
+  porte de création métier normale.
+- **Pourquoi côté serveur uniquement** : sur le projet réel, `service_role` n'a
+  **aucun privilège de table direct généralisé** — seul un `GRANT SELECT` ciblé
+  sur `public.workshops` existe (`…212932_grant_provision_workshop_service_role_select.sql`),
+  ajouté au cas par cas pour `provision_workshop_api`. Une Edge Function d'import
+  ne peut donc **pas** faire de simples `INSERT` bruts avec la clé secrète : il
+  faut de **nouvelles fonctions `app_hidden.import_legacy_*` `SECURITY DEFINER`**
+  (même schéma que `create_fiche_from_draft`/`provision_workshop`), avec
+  `EXECUTE` accordé **au seul `service_role`**, appelées par une Edge Function
+  dédiée qui vérifie le JWT et l'appartenance/rôle **avant** d'appeler
+  `service_role` (même frontière — corr. Q — que `create-fiche-from-draft`, 9A).
+- **Changements** :
+  - Edge Function `import-legacy-data` (ou orchestration serveur équivalente) :
+    1. vérifie le JWT, dérive l'utilisateur ;
+    2. vérifie que l'utilisateur est `owner` de l'atelier cible (jamais un
+       `workshop_id` accepté aveuglément depuis le client) ;
+    3. appelle les fonctions `app_hidden.import_legacy_*` en `service_role` ;
+    4. jamais l'inverse (aucun `INSERT` brut depuis l'Edge Function elle-même).
+  - `app_hidden.import_legacy_carnet(p_workshop_id, p_number, p_next_number)` —
+    crée le carnet avec le **`number` legacy exact** et `next_number = MAX(numero
+    legacy de ce carnet) + 1` **en une seule fois** (pas incrémentalement comme
+    `create_fiche_from_draft`). `ON CONFLICT (workshop_id, number) DO NOTHING` —
+    la contrainte `unique(workshop_id, number)` déjà existante (Phase 2) est la
+    clé d'idempotence naturelle, **aucune migration nécessaire pour les carnets**.
+  - `app_hidden.import_legacy_fiche(...)` — insère la fiche avec le **`number`
+    legacy exact** (pas d'allocation automatique), calcule `page_number`/
+    `slot_number` à partir de ce numéro (même formule que `create_fiche_from_draft`),
+    et est **idempotente par `(workshop_id, metadata->>'legacy_id')`** sous
+    verrou advisory (même principe que `provision_workshop_api`) **et** une
+    contrainte `UNIQUE` serveur (voir migration ci-dessous) — l'IndexedDB
+    `migrationMap` n'est jamais la seule garantie.
+  - `app_hidden.import_legacy_client(...)` / `app_hidden.import_legacy_modele(...)`
+    — même principe, idempotents par `(workshop_id, metadata->>'legacy_id')`.
+  - `app_hidden.import_legacy_payment(...)` — idempotent par construction : au
+    plus un versement importé par fiche (D6), protégé par une contrainte
+    `UNIQUE(fiche_id) WHERE metadata->>'source' = 'legacy_import'`.
+  - Médias (`media_assets`/`modele_medias`) : le chemin `storage_path` de
+    l'upload doit être **déterministe**, dérivé d'un segment sûr et stable
+    (identifiant legacy de l'entité + type de média + index ordinal dans le
+    tableau — jamais une chaîne legacy brute non assainie, jamais un id
+    aléatoire régénéré à chaque tentative). Un retry produit alors **exactement
+    le même `storage_path`** — les contraintes `UNIQUE(storage_path)` déjà
+    existantes (Phase 2) suffisent comme garantie serveur, sans migration
+    supplémentaire pour les médias.
+- **Migrations SQL nécessaires** (nouvelle migration horodatée `…_harden_legacy_import_idempotency.sql`,
+  la seule migration de tout ce graphe cloud, justifiée par un manque réel du
+  schéma actuel, pas créée par défaut) :
+  - `public.modeles` : **ajouter `metadata jsonb not null default '{}'::jsonb`**
+    (colonne absente aujourd'hui — vérifié dans `20260829120100_create_core_schema.sql`,
+    la table `modeles` n'a que `id/workshop_id/nom/created_at/updated_at/deleted_at`).
+  - Remplacer l'index simple `fiches_legacy_id_idx` par un index **`UNIQUE`
+    partiel tenant-aware** : `unique (workshop_id, (metadata->>'legacy_id')) where metadata ? 'legacy_id'`
+    (l'index actuel n'est **pas** `UNIQUE` — vérifié, il n'empêche aucun doublon).
+  - Ajouter un index `UNIQUE` partiel équivalent sur `clients` (téléphone
+    insuffisant seul comme clé d'idempotence — absent/malformé/plusieurs
+    identités legacy possibles, D4) et sur `modeles` (le `nom` seul n'est pas
+    fiable, deux modèles peuvent porter le même nom).
+  - Ajouter `unique (fiche_id) where metadata->>'source' = 'legacy_import'` sur
+    `client_payments` — défense en profondeur **obligatoire** (corr. R), pas
+    optionnelle : protège un retry après crash, une reprise sur un second
+    appareil, ou un appel concurrent.
+  - `database.types.ts` sera régénéré à ce moment (nouvelle colonne `modeles.metadata`).
+  - **`database.types.ts` régénéré**, `GRANT EXECUTE` des nouvelles fonctions
+    `app_hidden.import_legacy_*` réservé à `service_role` (même schéma que les
+    fonctions existantes).
+- **Principe d'idempotence, acté définitivement (corr. R)** : `migrationMap`
+  (IndexedDB) est un **accélérateur et un état de reprise local** — jamais
+  l'autorité. **Le serveur (contraintes `UNIQUE` + fonctions idempotentes sous
+  verrou) est la seule autorité d'idempotence.** Effacer IndexedDB, changer de
+  navigateur ou crasher entre l'`INSERT` serveur et l'écriture de `migrationMap`
+  ne doit **jamais** produire de doublon.
+- **Tests** : rejouer un import déjà réussi → 0 doublon sur `clients`/`carnets`/
+  `fiches`/`client_payments`/`media_assets`/`modeles`/`modele_medias` ; simuler
+  une suppression d'IndexedDB en cours d'import → reprise sans doublon (test qui
+  exploite réellement les contraintes serveur, pas seulement `migrationMap`) ;
+  appel concurrent (deux onglets) sur le même `legacy_id` → un seul gagne.
+- **Rollback** : nouvelles fonctions `app_hidden.import_legacy_*` supprimables
+  indépendamment (elles ne sont appelées par aucun autre chemin) ; `.down.sql`
+  miroir pour la migration de durcissement, comme les migrations Phase 2.
+
+---
+
 ### Phase 6B — Import effectif dans le cloud
-- **Pré-requis** : Phases 7 (clients/fiches cloud) **et 8** (buckets privés + politiques Storage + tests) **terminées** — **aucun média importé avant** (correction B).
-- **Objectif** : importer les vraies données une seule fois, sans perte, de façon idempotente.
+- **Pré-requis (corr. R)** : Phases **7B** (création/lecture/update fiche cloud),
+  **8A** (médias fiche), **8B** (catalogue cloud), **11A** (paiements cloud
+  minimal) **et 6B0** (infrastructure d'import sécurisé) **terminées** — **aucun
+  média importé avant 8A/8B**, **aucun paiement importé avant 11A** (sinon le
+  solde affiché serait faussé à l'écran, voir Phase 11A), **aucune fiche/aucun
+  modèle importés avant 6B0** (sinon les numéros legacy seraient réattribués et
+  perdus, voir Phase 6B0).
+- **Objectif** : importer **toutes** les données métier réelles prévisualisées
+  en Phase 6A une seule fois, sans perte, de façon idempotente — **y compris le
+  catalogue de modèles** : la prévisualisation Phase 6A promet explicitement
+  « X clients, Y fiches, **Z modèles** importés », cette promesse doit être
+  honorée intégralement, pas partiellement. Seuls les éléments classés `demo`
+  en Phase 6A restent exclus (correction G — jamais mélangés aux vraies données).
 - **Changements** :
   - Confirmation explicite (pas de coche pré-cochée).
-  - `migrationMap` (`legacyId → uuid`) en IndexedDB → idempotence (upsert sur `metadata.legacy_id`).
-  - Ordre : `clients` → `carnets` (+ `next_number` calculé) → `fiches` → `client_payments` (depuis `avance`, `paid_at = null`, D6) → **upload médias → `media_assets`** (Storage privé).
-  - Vérification post-import : recomptage serveur vs prévisualisation, rapport affiché.
+  - `migrationMap` (`legacyId → uuid`) en IndexedDB → **accélérateur de reprise
+    côté client** ; l'idempotence réelle est garantie côté serveur par les
+    fonctions et contraintes de la **Phase 6B0**, pas par cette map seule
+    (corr. R — voir principe d'idempotence, Phase 6B0).
+  - Ordre : `clients` → `carnets` (+ `next_number` calculé) → `fiches` →
+    `client_payments` (depuis `avance`, `paid_at = null`, D6) → **médias fiches
+    → `media_assets`** (Storage privé, chemin déterministe) → **`modeles`** →
+    **médias modèles/patrons → `modele_medias`** (Storage privé, chemin
+    déterministe, `kind` ∈ `photo`/`patron`).
+  - Chaque étape appelle exclusivement les fonctions `app_hidden.import_legacy_*`
+    de la Phase 6B0 — **jamais** `app_hidden.create_fiche_from_draft()`
+    (voir Phase 6B0 pour la raison : perte des numéros legacy).
+  - Vérification post-import : recomptage serveur vs prévisualisation (y
+    compris `count(modeles)`), rapport affiché.
   - `localStorage["tayoo-migration-v1"] = { done, at, counts }`.
-- **Migrations SQL** : aucune.
-- **Tests (cahier des charges)** : aucun doublon si l'import est rejoué ; compteurs identiques ; une fiche sans identité exploitable reste `client_id = null`.
+- **Migrations SQL** : aucune **dans cette phase** — le durcissement nécessaire
+  (idempotence, colonne `modeles.metadata`) est livré en amont, en **Phase 6B0**.
+- **Tests (cahier des charges)** : aucun doublon si l'import est rejoué (clients/
+  carnets/fiches/paiements/médias/**modèles**) ; compteurs identiques ; une
+  fiche sans identité exploitable reste `client_id = null` ; les numéros de
+  carnet/fiche legacy (y compris les trous, ex. `1, 2, 5`) sont préservés
+  exactement, `next_number` correctement positionné après le plus grand numéro
+  importé.
 - **Rollback** : `sunu-couture` **conservé** (jamais supprimé sans confirmation « J'ai vérifié mes fiches ») + fichier `tayoo-sauvegarde-*.json` ; build `VITE_BACKEND=local` restaure l'app d'avant.
 
 ---
 
-### Phase 7 — Clients & fiches dans le cloud
-- **Objectif** : `SupabaseRepository` actif pour clients + fiches, avec cache IndexedDB en lecture.
-- **Changements** : `SupabaseClientRepository`, `SupabaseFicheRepository` ; lecture = cache IndexedDB d'abord puis rafraîchissement réseau ; écriture = passe par le `SyncEngine` (Phase 12) ou, transitoirement, écriture directe si en ligne.
-- **Migrations SQL** : aucune (schéma déjà là).
-- **Tests** : CRUD client/fiche en ligne ; relecture après reload = données du cloud ; parité des 19 tests métier.
+### Phase 7A — Fondations cloud clients & fiches (lecture/update, sans création)
+> S'exécute **avant** 9A/7B (voir §7). Atteint « cloud infrastructure implemented »
+> **sans** atteindre « cloud backend activated » (corr. R) — ces deux états sont
+> délibérément distincts : 7A ne rend jamais l'app utilisable de bout en bout
+> avec `VITE_BACKEND=supabase`, ce n'est pas son rôle.
+- **Objectif** : construire les fondations cloud (mappers, cache, contrats async,
+  ordre des providers) sans création de fiche cloud et sans activation globale
+  du backend.
+- **Changements** :
+  - `SupabaseClientRepository` — `list`/`get`/`add`/`remove`/`removeMany` réels
+    (Phase 4 accorde déjà `SELECT`/`INSERT`/`UPDATE` sur `clients` à `authenticated`).
+  - `SupabaseFicheRepository` — **lecture et mise à jour uniquement** (`list`/
+    `get`/`setInfo`/`setChamp`/`setStatus`/`remove` sur les colonnes que la
+    Phase 4 autorise réellement en `UPDATE` : `status`, `measurements`,
+    `garment`, `description`, `fabric_notes`, `quantity`, `due_date`,
+    `total_price`, `settled_at`, `metadata`, `deleted_at`). **`add()` n'est pas
+    implémentée en 7A** — voir Phase 7B.
+  - `SupabaseCarnetRepository` — **lecture seule** (`carnets.number`/`status`/
+    `next_number`, `GRANT SELECT` déjà accordé). Nécessaire dès 7A : aucune vue
+    SQL (`fiches_view`) ne joint `carnets.number` à `fiches.carnet_id` — sans ce
+    Repository de lecture, `Fiche.carnetNumero` ne peut pas être reconstitué
+    côté client. Aucune migration SQL requise (lecture pure, GRANT existant).
+  - Mappers DB ↔ domaine (`Client`/`Fiche`) + validation Zod aux frontières
+    réseau (étend `src/repositories/schemas.ts`) — une row cloud incompatible
+    produit une erreur contrôlée, jamais une coercition silencieuse.
+  - Cache IndexedDB (lecture) : hydrater → rendre le snapshot → notifier →
+    rafraîchir réseau → remplacer si changement réel. Namespace explicite par
+    `workshopId`. Une erreur réseau conserve le cache existant, ne le supprime
+    jamais.
+  - `useFiche`/`useClient` exposent un état `loading` **distinct** de
+    « introuvable » — sans quoi une hydratation asynchrone provoquerait une
+    redirection intempestive (`FicheDetail` fait aujourd'hui `if (!fiche) return
+    <Navigate to="/" />` de façon synchrone).
+  - Réordonnancement : `RepositoryProvider` passe **sous** `AuthProvider` (il est
+    aujourd'hui au-dessus, `App.tsx`) ; le conteneur de repositories est
+    reconstruit quand `workshop.id` change (connexion, changement d'atelier,
+    déconnexion) — jamais un `workshopId` choisi arbitrairement.
+  - **Contrats Repository asynchrones** — migration `string/void → Promise<string>/Promise<void>`
+    pour **toutes** les interfaces Repository, faite **une seule fois, ici**
+    (pas répétée à chaque sous-phase suivante). Consumers impactés, vérifiés
+    dans le code réel : `FicheNew.tsx`, `CarnetList.tsx` (`handleAdd`,
+    `handleBulkDelete`), `ClientDetail.tsx` (`handleNewFiche`, `handleDelete`),
+    `ClientNew.tsx` (`handleSubmit`), `FicheDetail.tsx` (tous les `onChange`
+    d'écriture, `handleDelete`, `handleAddPhoto`, `handlePickModele`),
+    `ModeleNew.tsx`/`ModeleDetail.tsx` (branchés plus tard, 8B). Les
+    `Local*Repository` enveloppent leurs retours actuels dans `Promise.resolve(...)`
+    — comportement métier inchangé. **Aucun write réseau fire-and-forget.**
+- **Migrations SQL** : aucune.
+- **Tests** : contrat clients (list/get/add/soft-remove) ; mapper fiche (lecture,
+  tous statuts, `is_late` dérivé, jointure `carnetNumero` via `SupabaseCarnetRepository`) ;
+  cache/hydratation (`fake-indexeddb`, aucune fausse redirection) ; parité des
+  tests métier existants.
+- **Interdit en 7A** : `SupabaseFicheRepository.add()` ; `VITE_BACKEND=supabase`
+  global ; toute donnée de Phase 6B ; médias ; paiements cloud ; catalogue cloud.
 - **Rollback** : flag `local`.
 
 ---
 
-### Phase 8 — Stockage privé des médias
-- **Objectif** : photos / vocaux / signatures dans des buckets **privés**, plus de base64 en base. **Pré-requis de la Phase 6B.**
+### Phase 9A — Brouillon fiche & porte de création sécurisée *(sous-ensemble minimal de Phase 9 — corr. R)*
+> S'exécute **avant** 7B, **après** 7A (voir §7) — malgré la numérotation
+> héritée du cahier des charges qui place « Phase 9 » après « Phase 8 ». Comme
+> pour l'ordre 6B/9 déjà présent avant ce gel (§7), la numérotation officielle
+> des phases ne reflète pas l'ordre d'exécution.
+- **Objectif** : permettre une création de fiche cloud fiable, sans fiche vide
+  au tap et sans affaiblir la Phase 4 (aucun `GRANT INSERT` sur `fiches`).
+  Strictement limité à ce qui débloque la création — **ne couvre pas** le reste
+  de la Phase 9 (voir Phase 9 ci-dessous), ni `ClientPickerSheet`, ni la reprise
+  de mesures, ni l'anti-doublon téléphone, ni la Phase 10.
+- **Changements** :
+  - `FicheNew.tsx`, `CarnetList.tsx` (`handleAdd`), `ClientDetail.tsx`
+    (`handleNewFiche`) n'appellent **plus** `ficheRepository.add()` de façon
+    synchrone et immédiate (comportement actuel vérifié dans le code : les
+    trois créent une fiche vide au montage/au tap). Le brouillon reste **100 %
+    local** (IndexedDB / état d'UI), ne possède **aucun numéro**, ne crée
+    **aucun carnet**, tant qu'il n'est pas promu.
+  - Promotion = information significative saisie **ou** validation explicite.
+  - **Frontière serveur de création (choix architectural définitif — corr. R)** :
+    **Edge Function dédiée `create-fiche-from-draft`** — pas un wrapper SQL
+    `public` comme porte principale (un wrapper `SECURITY INVOKER` ne peut par
+    construction pas vérifier lui-même la provenance du JWT, comme le
+    reconnaît déjà le commentaire de tête de `provision_workshop_api`). Elle :
+    1. vérifie le JWT ;
+    2. dérive l'identité (`auth.uid()`) depuis ce JWT, jamais un paramètre de
+       requête ;
+    3. vérifie l'appartenance/le rôle de cet utilisateur à `p_workshop_id`
+       **avant** tout appel `service_role` (frontière corr. Q, exigence
+       bloquante) ;
+    4. n'accepte jamais un `workshop_id` fourni librement par le client sans
+       cette vérification ;
+    5. appelle `app_hidden.create_fiche_from_draft(...)` en `service_role`
+       **uniquement après** ces contrôles.
+  - `app_hidden.create_fiche_from_draft()` (créée Phase 2) reste inchangée et
+    reste **exclusivement** la porte de la **création métier normale** — elle
+    ne sera **jamais** utilisée pour l'import legacy (Phase 6B0/6B, raison
+    détaillée dans la section 6B0).
+- **Migrations SQL** : aucune — `create_fiche_from_draft()` créée en Phase 2
+  (`…120400`). `fiche_state` n'a **pas** de valeur `'draft'` (corr. L) : les
+  brouillons sont purement locaux et n'existent en base qu'une fois promus
+  `'active'`.
+- **Tests** : « ouvrir puis abandonner le brouillon → 0 fiche, 0 carnet, 0
+  numéro consommé » ; « brouillon significatif validé → exactement 1 fiche,
+  numéro serveur attribué » ; l'Edge Function refuse un appel sans JWT valide
+  ou sans appartenance vérifiée.
+- **Rollback** : revert ; l'ancien `FicheNew` est trivial à restaurer.
+
+---
+
+### Phase 7B — Création métier fiche cloud
+> S'exécute après 9A (voir §7).
+- **Objectif** : `SupabaseFicheRepository.add()` branché sur la porte 9A —
+  la création cloud normale devient possible.
+- **Changements** : `SupabaseFicheRepository.add()` appelle l'Edge Function
+  `create-fiche-from-draft` (9A) et attend sa réponse (`Promise`, contrat async
+  déjà migré en 7A) avant de considérer la fiche créée.
+- **Migrations SQL** : aucune.
+- **Tests** : CRUD fiche en ligne complet ; relecture après reload = données du
+  cloud ; parité des tests métier existants ; gate détaillé en 9A.
+- **Interdit en 7B** : `VITE_BACKEND=supabase` global (attend 8A+8B+11A, voir
+  §7/Gate) ; toute donnée de Phase 6B.
+- **Rollback** : flag `local`.
+
+---
+
+### Phase 8A — Médias fiche *(anciennement « Phase 8 » — renommée, corr. R)*
+- **Objectif** : photos tissu / vocaux / signatures dans des buckets **privés**,
+  plus de base64 en base. Couvre **exclusivement** `Fiche.tissuPhotos`,
+  `Fiche.signature`, `Fiche.voiceNote` — **pas** le catalogue de modèles (voir
+  Phase 8B).
 - **Changements** :
   - Buckets `media` privés ; chemin `workshops/{workshopId}/fiches/{ficheId}/{fileId}`.
-  - `SupabaseMediaRepository` : upload → `media_assets` (durée/dimensions/codec/checksum dans `metadata jsonb`, D7) ; lecture via **URL signée courte durée** (60–300 s), cache mémoire.
+  - `SupabaseMediaRepository` (fiches) : upload → `media_assets` (`type` ∈
+    `fabric_photo`/`signature`/`voice_note` ; durée/dimensions/codec/checksum
+    dans `metadata jsonb`, D7) ; lecture via **URL signée courte durée**
+    (60–300 s), cache mémoire.
   - `MediaRepository` local : garde les blobs en IndexedDB pour l'offline (Phase 12).
   - Compression avant upload (réutilise `image.ts`) ; détection du type MIME audio réellement supporté.
 - **Migrations SQL** : aucune (colonne `metadata jsonb` de `media_assets` créée en Phase 2).
@@ -344,16 +614,65 @@ L'ordre reprend celui du cahier des charges (§ « Ordre d'implémentation »).
 
 ---
 
-### Phase 9 — Correction de « Nouvelle fiche » (brouillon)
-- **Objectif** : ouvrir le formulaire ne crée **aucune** donnée persistante.
+### Phase 8B — Catalogue cloud *(nouvelle phase, désormais OBLIGATOIRE avant 6B — corr. R)*
+> Rendue obligatoire par la décision de ne **pas** exclure les modèles de la
+> Phase 6B (corr. R) — la prévisualisation Phase 6A promet explicitement des
+> modèles importés, cette promesse doit être honorée.
+- **Objectif** : rendre le catalogue de modèles réellement cloud-compatible.
+- **Correction de mapping obligatoire (corr. R)** : `public.media_assets.fiche_id`
+  est **`not null`** avec FK composite vers `fiches` — un média de modèle ne
+  peut structurellement **pas** y être stocké (cela exigerait une fiche
+  factice, interdit). Le mapping canonique, vérifié sur le schéma réel, est :
+  ```
+  médias Fiche   → media_assets   (type ∈ fabric_photo / voice_note / signature)
+  médias Modèle  → modele_medias  (kind ∈ photo / patron)
+  ```
+  `modele_medias` existe déjà, complète et indépendante, depuis la Phase 2
+  (`modele_id`, `kind`, `storage_path`, `mime_type`, `size_bytes`, `position`,
+  `metadata`, `deleted_at`, `storage_path` déjà `UNIQUE`). La valeur d'enum
+  `media_type = 'model_photo'` reste **inutilisée** par ce chemin — **aucune
+  migration n'est créée uniquement pour la retirer ou l'utiliser**.
 - **Changements** :
-  - `FicheNew` ne fait **plus** `addFiche()` en `useEffect`. Il ouvre un **brouillon** (`draftStore` en mémoire + sauvegarde IndexedDB locale, pas de `number` réservé).
-  - Le `number` (et l'écriture cloud) n'est attribué qu'à la **1re information utile** ou sur **bouton « Enregistrer la fiche »**. La **règle métier serveur** (corr. L) refuse une fiche qui n'a **ni client valide, ni** information significative (`garment` / `description` / `measurements` / `legacy_identity`, chaînes blanches exclues).
-  - Brouillon abandonné → n'apparaît pas dans le carnet, non compté comme commande, ne consomme pas de numéro.
-  - Même traitement pour `ModeleNew`.
-  - `CarnetList.handleAdd` et `Fab` d'`OrdersList` → naviguent vers le brouillon, n'appellent plus `addFiche()`.
-  - **Promotion** du brouillon → **1 seul appel** à **`app_hidden.create_fiche_from_draft(p_workshop_id, p_client_id, p_fiche jsonb)`** (les 3 args requis, pas de `DEFAULT`), via Edge Function `service_role` (frontière corr. Q), ou un wrapper `public` `SECURITY INVOKER` vérifiant l'appartenance. **`allocate_fiche_number()` n'existe plus** (porte unique — corr. L).
-- **Migrations SQL** : aucune — `create_fiche_from_draft()` créée en Phase 2 (`…120400`). `fiche_state` n'a **pas** de valeur `'draft'` (corr. L) : les brouillons sont purement locaux (IndexedDB / état d'UI) et n'existent en base qu'une fois promus `'active'`.
+  - `SupabaseModeleRepository` : `list`/`get`/`add`/`setNom` (rename)/`remove`
+    (soft-delete) sur `modeles`.
+  - Médias modèle/patron : `SupabaseMediaRepository` (variante catalogue) sur
+    `modele_medias`, `kind` ∈ `photo`/`patron`, `position` conservée.
+  - Storage : bucket privé, chemin `workshops/{workshopId}/modeles/{modeleId}/{fileId}`.
+  - **`ModeleNew.tsx`** : comportement actuel vérifié dans le code —
+    `modeleRepository.add()` au montage, sans nom (même défaut que `FicheNew`
+    avant 9A ; `modeles.nom` a la même contrainte stricte non-vide côté SQL,
+    corr. M). Ce correctif appartient à **8B** (pas à un sous-lot Phase 9
+    séparé — plus petit lot cohérent : même phase que le Repository qu'il
+    active) : le brouillon de modèle reste local tant qu'un nom valide n'est
+    pas fourni.
+  - **GRANT** : l'état SQL actuel de `modele_medias` n'autorise que `SELECT,
+    INSERT, DELETE` pour `authenticated` — **pas `UPDATE`** (vérifié,
+    `20260830231638_grants_and_rls_policies.sql`, justifié à l'époque par
+    « aucune nécessité démontrée »). Si 8B a réellement besoin de modifier
+    `position`/`metadata` sans supprimer/recréer la ligne, une migration
+    minimale `GRANT UPDATE (position, metadata) ON modele_medias TO authenticated`
+    (+ politique RLS correspondante) sera introduite **à ce moment**, après
+    tests RLS appropriés — **aucune migration créée dans ce gel documentaire**.
+- **Migrations SQL** : aucune dans ce document (voir note GRANT ci-dessus, à
+  trancher au moment de l'implémentation de 8B si le besoin se confirme).
+- **Tests** : CRUD modèle en ligne ; upload/lecture photo et patron ; « ouvrir
+  puis abandonner `ModeleNew` → 0 modèle créé » ; isolation atelier A/B.
+- **Rollback** : build `local` (catalogue conservé dans le backup Phase 6A).
+
+---
+
+### Phase 9 — Correction complète de « Nouvelle fiche » (brouillon)
+> Le sous-ensemble minimal nécessaire à la création cloud fiable est livré en
+> **Phase 9A** (voir ci-dessus), exécutée avant 7B. Cette Phase 9 couvre le
+> **reste**, après 6B, comme dans l'ordre originel du cahier des charges.
+- **Objectif** : ouvrir le formulaire ne crée **aucune** donnée persistante —
+  achever ce que 9A a commencé pour tous les cas restants (`ModeleNew` déjà
+  traité en 8B).
+- **Changements** :
+  - Base déjà posée par 9A (`FicheNew`/`CarnetList.handleAdd`/`ClientDetail.handleNewFiche`
+    ne créent plus de fiche vide, promotion via `create-fiche-from-draft`).
+  - `Fab` d'`OrdersList` → navigue vers le brouillon, n'appelle plus `addFiche()`.
+- **Migrations SQL** : aucune.
 - **Tests (cahier des charges)** : « fiche vide non créée » ; ouvrir puis quitter → 0 fiche ; saisir 1 mesure → 1 fiche `active` avec `number` attribué ; numérotation 1→120 inchangée.
 - **Rollback** : revert ; l'ancien `FicheNew` est trivial à restaurer.
 
@@ -374,11 +693,53 @@ L'ordre reprend celui du cahier des charges (§ « Ordre d'implémentation »).
 
 ---
 
-### Phase 11 — Paiements du client au tailleur
-- **Objectif** : remplacer `avance` (1 nombre) par un **historique de versements**.
+### Phase 11A — Paiements cloud minimal *(nouvelle sous-phase, obligatoire avant 6B — corr. R)*
+> S'exécute après 8B, avant le Gate `VITE_BACKEND=supabase` et avant 6B0/6B
+> (voir §7). Sans elle, un atelier réel migré en 6B afficherait un solde à
+> 0 F pour chaque fiche payée : `PaymentRepository` local lit aujourd'hui
+> `useStore.getState().fiches` (vérifié dans `LocalStoragePaymentRepository.ts`)
+> — un identifiant de fiche cloud n'y sera jamais trouvé.
+- **Objectif** : rendre les paiements cloud-cohérents, **sans** construire
+  l'UX historique complète de la Phase 11 (liste détaillée, suppression/
+  correction avancée, messages de dépassement dédiés — tout ça reste Phase 11).
 - **Changements** :
-  - `PaymentRepository` : `list(ficheId)`, `add({amount, paidAt, method?, note?})`, `remove(id)` (logique).
-  - `FicheDetail` : `AvanceChampCell` → liste de versements + bouton « Ajouter un versement » ; `reste = total_price − Σ amount` (jamais stocké).
+  - `SupabasePaymentRepository.list(ficheId)` — lit `client_payments` réel.
+  - `SupabasePaymentRepository.getBalance(ficheId)` — lit la vue `fiche_balances`
+    (`total_price`, `total_paid`, `reste`, déjà créée et accordée en Phase 2/4) ;
+    jamais recalculé côté client à partir de données locales.
+  - **Écriture = action explicite, jamais liée à la frappe (corr. R)** :
+    `AvanceChampCell`/`MontantChampCell` déclenchent aujourd'hui `onChange` à
+    **chaque caractère tapé** (vérifié dans `FichePaiementCells.tsx`) — un
+    branchement naïf sur un `add()` réseau créerait plusieurs versements pour
+    un seul montant tapé (ex. « 5000 » → 4 lignes `client_payments`, interdit :
+    `client_payments` est un historique **insert-only**, immuable, sans
+    `UPDATE`/`DELETE` accordés). `AvanceChampCell` change de comportement
+    (correctif ciblé de ce seul composant, pas une refonte) : état local non
+    commité pendant la saisie, puis **un seul appel** sur validation explicite
+    (bouton « Ajouter ») :
+    ```ts
+    add({ ficheId, amount, paidAt?, method?, note? }): Promise<Payment>
+    ```
+  - Affichage minimal acceptable avant la Phase 11 complète : `Total versé : X F`
+    / `Reste : Y F` + action « Ajouter un versement ».
+- **Migrations SQL** : aucune (`client_payments`, `fiche_balances`, `GRANT
+  SELECT/INSERT` déjà en place depuis les Phases 2/4).
+- **Tests** : `getBalance()` cloud ne renvoie jamais `0 F` par défaut pour une
+  fiche réellement payée ; taper un montant multi-chiffres ne crée **jamais**
+  plus d'une ligne `client_payments` ; l'ajout respecte `CHECK(amount > 0)`.
+- **Rollback** : build `local`.
+
+---
+
+### Phase 11 — Paiements du client au tailleur (UX complète)
+> Le sous-ensemble minimal nécessaire à des paiements cloud honnêtes est livré
+> en **Phase 11A** (ci-dessus), exécutée avant le Gate backend et avant 6B.
+> Cette Phase 11 couvre le **reste** : l'historique complet, après 6B, comme
+> dans l'ordre originel du cahier des charges.
+- **Objectif** : remplacer `avance` (1 nombre) par un **historique de versements** affiché en détail.
+- **Changements** :
+  - `PaymentRepository` : `list(ficheId)` (déjà cloud depuis 11A), `add({amount, paidAt, method?, note?})` (déjà cloud depuis 11A), `remove(id)` (logique — nouveau en Phase 11, `client_payments` n'accorde aujourd'hui aucun `DELETE`, une évolution de GRANT/politique sera nécessaire ici si la suppression logique est retenue).
+  - `FicheDetail` : `AvanceChampCell` → liste de versements détaillée + bouton « Ajouter un versement » (le commit explicite existe déjà depuis 11A, cette phase ajoute l'affichage multi-lignes) ; `reste = total_price − Σ amount` (jamais stocké).
   - Garde-fous : montant `≥ 0` (UI + `check` SQL) ; versement > reste → **message clair** (« Ce paiement dépasse le reste de X F ») sans modification silencieuse.
   - Montants = **entiers FCFA**.
   - Message type : « Le paiement de 5 000 F a été ajouté. Il reste 10 000 F. »
@@ -477,16 +838,19 @@ L'ordre reprend celui du cahier des charges (§ « Ordre d'implémentation »).
    - 2 listes (Réel / Démo), **bascule par ligne**. Les éléments `demo` ne sont **jamais** importés dans l'atelier réel.
 4. **Prévisualisation chiffrée** : « X clients, Y fiches, Z modèles seront importés. N éléments de démonstration seront ignorés. »
 
-**Phase 6B — écriture cloud (après Phases 7 et 8) :**
+**Phase 6B — écriture cloud (après 7B, 8A, 8B, 11A, et l'infrastructure d'import 6B0 — corr. R) :**
 
 5. **Confirmation explicite** (bouton « Importer maintenant », pas de coche pré-cochée).
-6. **Import avec UUID** :
+6. **Import avec UUID**, exclusivement via les fonctions `app_hidden.import_legacy_*`
+   de la Phase 6B0 (**jamais** `app_hidden.create_fiche_from_draft()` — elle
+   alloue elle-même les numéros et écraserait les trous legacy, ex. `1,2,5` →
+   `1,2,3`, voir Phase 6B0) :
    - Provisioning atelier (Phase 3) si pas déjà fait.
-   - Création `carnets` (1 par `carnetNumero`) + `next_number = MAX(numero du carnet) + 1` (D9).
-   - `migrationMap` (`legacyId → uuid`) en IndexedDB → **idempotence** (upsert sur `metadata.legacy_id`).
-   - Ordre : `clients` (D2/D3) → `carnets` → `fiches` (D4/D8) → `client_payments` (depuis `avance`, `paid_at = null`, D6) → **upload médias → `media_assets`** (Storage privé, D7).
-   - Reprise là où la `migrationMap` s'est arrêtée en cas d'échec réseau.
-7. **Vérification** : recompter côté serveur (`count(clients)`, `count(fiches)`, `Σ client_payments`) vs prévisualisation → rapport.
+   - Création `carnets` (1 par `carnetNumero`) + `next_number = MAX(numero du carnet) + 1` (D9) — idempotent nativement via `unique(workshop_id, number)`, déjà en place.
+   - `migrationMap` (`legacyId → uuid`) en IndexedDB → **accélérateur de reprise côté client** ; l'idempotence réelle est garantie **côté serveur** (contraintes `UNIQUE` + fonctions sous verrou, Phase 6B0) — une `migrationMap` effacée, une reprise sur un autre appareil, ou un crash entre l'`INSERT` serveur et l'écriture de la map ne doit **jamais** produire de doublon.
+   - Ordre : `clients` (D2/D3) → `carnets` → `fiches` (D4/D8, numéros legacy exacts préservés) → `client_payments` (depuis `avance`, `paid_at = null`, D6) → **médias fiches → `media_assets`** (Storage privé, chemin déterministe, D7) → **`modeles`** → **médias modèles/patrons → `modele_medias`** (Storage privé, chemin déterministe, `kind` ∈ `photo`/`patron`).
+   - Reprise là où la `migrationMap` s'est arrêtée en cas d'échec réseau ; **et** reprise correcte même sans `migrationMap` (autorité serveur, Phase 6B0).
+7. **Vérification** : recompter côté serveur (`count(clients)`, `count(fiches)`, `count(modeles)`, `Σ client_payments`) vs prévisualisation → rapport.
 8. **Marquer la migration terminée** : `localStorage["tayoo-migration-v1"] = { done: true, at, counts }`. La bascule cloud effective se fait par un **build `VITE_BACKEND=supabase`** (correction D) — pas d'interrupteur runtime.
 9. **Suppression de l'ancienne sauvegarde locale** : **seulement après** confirmation explicite (« J'ai vérifié mes fiches, supprimer la copie sur ce téléphone »). Par défaut : **conservée** en lecture seule.
 
@@ -512,19 +876,48 @@ L'ordre reprend celui du cahier des charges (§ « Ordre d'implémentation »).
 
 ---
 
-## 7. Ordre de bascule recommandé (résumé)
+## 7. Ordre de bascule recommandé (résumé) — **graphe figé, corr. R (2026-09-05)**
+
+> Ce diagramme remplace définitivement l'ancien enchaînement
+> « 7 → 8 → 6B → 9 ». Il est le fruit de trois audits architecturaux successifs
+> (preflight Phase 7, CAS C confirmé) qui ont vérifié l'architecture **réellement
+> mergée** (Phase 4 GRANT/RLS, corps exact de `create_fiche_from_draft`, schéma
+> réel `media_assets`/`modele_medias`, composants React réels) plutôt que de
+> supposer le plan initial correct. La numérotation officielle des phases ne
+> change pas (héritée du cahier des charges) — seul l'**ordre d'exécution**
+> change, comme c'était déjà le cas pour 6B/9 avant ce gel.
 
 ```
 2 Schéma (local) ─► 3 Auth/Ateliers ─► 4 RLS + tests A/B ─► 5 Repository (local) ─►
-6A Export + prévisualisation ─► 7 Clients/Fiches cloud ─► 8 Médias privés ─►
-6B Import effectif ─► 9 Brouillon « Nouvelle fiche » ─► 10 Parcours unifié + commande ─►
-11 Versements ─► 12 IndexedDB + Sync ─► 13 UX inclusive ─►
+6A Export + prévisualisation ─►
+7A Fondations cloud (client/fiche read+update, carnet read, contrats async, cache) ─►
+9A Brouillon fiche + Edge Function create-fiche-from-draft ─►
+7B Création métier fiche cloud ─►
+8A Médias fiche ─►
+8B Catalogue cloud (modeles + modele_medias, ModeleNew sûr) ─►
+11A Paiements cloud minimal (lecture réelle + ajout explicite, sans écriture par frappe) ─►
+[ GATE VITE_BACKEND=supabase — smoke-test E2E sur atelier de test vide ] ─►
+6B0 Infrastructure d'import legacy (idempotence serveur, numérotation préservée,
+    fonctions app_hidden.import_legacy_* SECURITY DEFINER, migration de durcissement) ─►
+6B Import réel COMPLET (clients, carnets, fiches, paiements, médias fiches,
+   modeles, médias modèles/patrons — aucune exclusion) ─►
+9 Reste de la correction « Nouvelle fiche » (au-delà de 9A) ─►
+10 Parcours unifié + commande ─►
+11 Versements (UX historique complète, au-delà de 11A) ─► 12 IndexedDB + Sync ─► 13 UX inclusive ─►
 14 Abonnement ─► 15 Paiement manuel ─► 16 Tests ─► 17 Pilote ─► 18 Paiement auto
 ```
 
-- **6A** peut être fait tôt (dès que l'assistant existe) ; **6B** attend **7 + 8** (correction B).
-- Phases **9, 11, 13** peuvent démarrer en parallèle dès que **5** (Repository) est en place, même avant que le cloud soit branché (elles marchent sur `LocalStorageRepository`).
+- **6A** peut être fait tôt (dès que l'assistant existe) ; **6B** attend
+  désormais **7B + 8A + 8B + 11A + 6B0** (corr. R — pas seulement « 7 + 8 »).
+- **`VITE_BACKEND=supabase` est activable sur un Preview dès que 7B + 8A + 8B +
+  11A sont terminées** — à ce moment, tous les domaines consommés par les
+  écrans existants (clients, fiches, carnets, médias fiche, paiements,
+  modèles, médias modèle) sont cloud-cohérents simultanément. **6B n'est pas
+  nécessaire pour ce gate** : le smoke-test s'exécute sur un atelier de test
+  vide, créé via le flux normal (9A/7B), pas via un import.
+- Phases **9 (reste), 11 (reste), 13** peuvent démarrer en parallèle dès que **5** (Repository) est en place pour tout ce qui ne dépend pas du cloud (elles marchent sur `LocalStorageRepository`).
 - Phase **4** est un **jalon bloquant** : aucune donnée réelle en `prod` avant que la suite d'isolation A/B soit verte.
+- **6B0** est un jalon bloquant distinct pour **6B seule** : `app_hidden.create_fiche_from_draft()` ne préserve pas les numéros legacy (elle alloue toujours `next_number`, jamais un numéro fourni) — l'import doit passer par un chemin serveur dédié, jamais par la porte de création métier normale.
 
 ---
 
@@ -539,7 +932,7 @@ L'ordre reprend celui du cahier des charges (§ « Ordre d'implémentation »).
 | RLS | `*.down.sql` (`DROP POLICY`) en local seulement ; en `prod`, RLS ne se désactive jamais |
 | Déploiement auto | aucun `.github/` workflow ; `supabase/` non committé pendant la correction ; avant tout commit de `supabase/`, vérifier côté Dashboard que le déploiement auto des migrations est désactivé (corr. J) |
 | Edge Functions | désactivation immédiate (message « fonction indisponible » côté front) |
-| Import | idempotent via `migrationMap` — un import interrompu se reprend, ne duplique pas |
+| Import | idempotence garantie **côté serveur** (contraintes `UNIQUE` + fonctions `app_hidden.import_legacy_*` sous verrou, Phase 6B0) — `migrationMap` (IndexedDB) n'est qu'un accélérateur de reprise côté client, jamais l'autorité (corr. R) ; un import interrompu, une `migrationMap` effacée, ou une reprise sur un autre appareil ne duplique pas |
 
 ---
 
@@ -555,10 +948,10 @@ L'ordre reprend celui du cahier des charges (§ « Ordre d'implémentation »).
 | D6 | Import avance | 1 `client_payments` `amount = avance` (**`CHECK (amount > 0)`**), **`paid_at = null`**, `recorded_at = createdAt`, note « date inconnue », `metadata.source = legacy_import` |
 | D7 | Médias | `media_assets.metadata jsonb` (durée, dimensions, codec, checksum) ; colonnes dédiées `type/mime_type/size_bytes/storage_path` |
 | D8 | Statuts | `recu→received`, `couture→sewing`, `pret→ready`, `livre→delivered` ; libellés FR ; **`late` non stocké** |
-| D9 | Numérotation | `carnets.next_number`, allocation atomique `FOR UPDATE` **dans `create_fiche_from_draft` — SEULE porte** (`allocate_fiche_number` supprimée, passe statique) ; aucun numéro sans fiche ; numéro jamais réutilisé (archive/suppression logique incluses) |
+| D9 | Numérotation | `carnets.next_number`, allocation atomique `FOR UPDATE` **dans `create_fiche_from_draft` — SEULE porte de la CRÉATION MÉTIER NORMALE** (`allocate_fiche_number` supprimée, passe statique) ; aucun numéro sans fiche ; numéro jamais réutilisé (archive/suppression logique incluses). **`create_fiche_from_draft` n'alloue jamais de numéro explicite — elle est donc interdite pour l'import legacy** (Phase 6B0), qui préserve les numéros/trous via des fonctions `app_hidden.import_legacy_*` dédiées (corr. R) |
 | D10 | Rôles | `owner` / `assistant` ; l'assistant ne touche ni abonnement, ni transactions, ni rôles, ni membres |
 | D11 | Hébergement | Vercel (front) + Edge Functions ; **import unique**, ancienne sauvegarde lecture seule, **pas de dual-write** |
 
 Corrections intégrées : **A** (sauvegarde : fichier JSON d'abord, gestion quota) · **B** (médias importés en 6B, après les buckets) · **C** (pas de cache Workbox sur Supabase authentifié ; IndexedDB partitionné `user_id`+`workshop_id`, purge au logout) · **D** (`VITE_BACKEND` = build, rollback = Vercel) · **E** (RLS non récursive sur `workshop_members` ; UPDATE `USING`+`WITH CHECK`) · **F** (`sync_conflicts`, pas de fiche fantôme) · **G** (données démo marquées `demo`, atelier réel = carnet vide) · **H** (schéma reproductible : RLS activée en migration ; **`rls_auto_enable()` : EXECUTE révoqué via migration dédiée `…120800`, event trigger `ensure_rls` intact** ; fonctions dans `app_hidden` ; vues `security_invoker`) · **I** (seed abonnement retiré, brouillon non actif) · **J** (aucun déploiement auto pendant la correction) · **K** (isolation multi-atelier : FK composites `(workshop_id, id)`) · **L** (brouillon 100 % local, `fiche_state` sans `'draft'`, `create_fiche_from_draft()`) · **M** (`modeles.nom` non vide) · **N** (`signature_path` supprimée → `media_assets(type='signature')`) · **O** (`workshops.owner_id` canonique + déclencheurs anti-divergence, `current_workshop_ids()` = UNION ; **transfert de propriétaire** : rétrograder avant promouvoir + invariant « un seul owner » + `workshop_id`/`user_id` de la ligne owner non modifiables) · **P** (`ALTER DEFAULT PRIVILEGES` schema-scoped **retiré** ; enforcement per-fonction ; validation CLI 2.116.0 locale ET distante (`sunu-couture-dev`) OK ; Phase 2 = « clôturée — schéma déployé et vérifié sur sunu-couture-dev ») · **Q** (frontière `service_role` : `create_fiche_from_draft` / `provision_workshop` — identité dérivée d'un JWT vérifié, contrôle appartenance/rôle en amont ; exigence **bloquante** Phases 3–4). Passe statique aussi : `create_fiche_from_draft` **sans `DEFAULT`** + **règle métier anti-fiche-vide** ; **`allocate_fiche_number` supprimée** (porte unique) ; index de **préfixe exact** pour les FK composites ; `fiches → carnets` en **`ON DELETE NO ACTION`**.
 
-*Fin du plan de migration mis à jour — Phase 1 close ; **Phase 2 = « Phase 2 clôturée — schéma déployé et vérifié sur sunu-couture-dev »** (Supabase CLI 2.116.0 : validation locale complète sur la vraie stack Docker PG 17.6, puis déploiement réel sur `sunu-couture-dev` — dev/staging, pas la production — après dry-run revu et confirmation explicite du porteur : 9/9 migrations appliquées, `migration list` local==remote, `db advisors --linked` 0 WARN/0 ERROR, structure et privilèges vérifiés en base, 35/35 tests SQL rejoués contre le distant réel avec 0 ligne résiduelle, `npm test` 19/19, `tsc -b` OK). La Phase 3 (authentification/ateliers) peut démarrer ; la Phase 4 (`GRANT` + politiques RLS) et la frontière `service_role` (corr. Q) restent des exigences bloquantes avant toute donnée réelle.*
+*Fin du plan de migration mis à jour — Phase 1 close ; **Phase 2 = « Phase 2 clôturée — schéma déployé et vérifié sur sunu-couture-dev »** (Supabase CLI 2.116.0 : validation locale complète sur la vraie stack Docker PG 17.6, puis déploiement réel sur `sunu-couture-dev` — dev/staging, pas la production — après dry-run revu et confirmation explicite du porteur : 9/9 migrations appliquées, `migration list` local==remote, `db advisors --linked` 0 WARN/0 ERROR, structure et privilèges vérifiés en base, 35/35 tests SQL rejoués contre le distant réel avec 0 ligne résiduelle, `npm test` 19/19, `tsc -b` OK). La Phase 3 (authentification/ateliers) et la Phase 4 (`GRANT` + politiques RLS) sont mergées sur `develop`. **Statut Phase 7 : « preflight CAS C confirmé (trois audits) — graphe d'exécution cloud figé le 2026-09-05, voir §7 et `03-DECISIONS.md` corr. R » — aucune implémentation Phase 7A commencée.** L'ordre d'exécution officiel est désormais 7A → 9A → 7B → 8A → 8B → 11A → [Gate `VITE_BACKEND=supabase`] → 6B0 → 6B, qui remplace toute mention antérieure de « Phase 7 puis Phase 8 puis Phase 6B » dans ce document. La frontière `service_role` (corr. Q) reste une exigence bloquante pour toute nouvelle fonction serveur (9A, 6B0).*

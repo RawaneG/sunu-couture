@@ -66,6 +66,20 @@
 > `authenticated` — refus encore plus strict que prévu, cohérent avec la Phase 4).
 > **Statut : « Phase 2 clôturée — schéma déployé et vérifié sur sunu-couture-dev »**.
 > Voir « Journal des révisions ».
+>
+> **Gel du graphe cloud post-preflight Phase 7 — corr. R (2026-09-05)** : trois
+> audits architecturaux successifs (preflight bloquant avant tout code Phase 7,
+> exigé par `02-PLAN-MIGRATION.md`) ont confirmé un **CAS C — réordonnancement
+> requis** : la séquence documentée « Phase 7 → Phase 8 → Phase 6B » ne peut pas
+> s'exécuter sans violer la Phase 4 (`GRANT`/RLS déjà mergée), sans commencer
+> silencieusement une autre phase, ou sans produire des données cloud fausses
+> (solde à 0 F, catalogue invisible, numérotation legacy écrasée). Le graphe
+> d'exécution cloud est désormais **figé** : `7A → 9A → 7B → 8A → 8B → 11A →
+> [Gate VITE_BACKEND=supabase] → 6B0 → 6B`. Détail complet en correction **R**
+> ci-dessous. **Statut Phase 7 : « preflight CAS C confirmé — graphe figé,
+> implémentation 7A non commencée »**. Aucun code, aucune migration SQL, aucune
+> Edge Function n'a été produit pour ce gel — uniquement une décision
+> architecturale documentée.
 
 Table :
 - [D1 — Projet Supabase](#d1--projet-supabase)
@@ -79,7 +93,7 @@ Table :
 - [D9 — Numérotation des carnets](#d9--numérotation-des-carnets)
 - [D10 — Rôles](#d10--rôles)
 - [D11 — Hébergement et transition](#d11--hébergement-et-transition)
-- [Corrections apportées au plan (A → Q)](#corrections-apportées-au-plan-de-migration)
+- [Corrections apportées au plan (A → R)](#corrections-apportées-au-plan-de-migration)
 
 ---
 
@@ -263,6 +277,16 @@ Un dépassement (versement supérieur au reste) reste **autorisé** et **signal�
 
 **Impact :** plus de colonne `duration` isolée — la durée d'un vocal vit dans `metadata.duration_seconds`. Les requêtes qui en ont besoin lisent le jsonb.
 
+**Précision (corr. R, audit Phase 7)** : `media_assets` porte `fiche_id uuid not null` avec une
+FK composite vers `fiches` — cette table est **exclusivement pour les médias de FICHE**
+(`fabric_photo`/`voice_note`/`signature`). La valeur d'enum `model_photo` **n'est pas
+utilisée par ce chemin** et reste inemployée (aucune migration n'est créée pour la
+retirer). Les photos/patrons de **modèle** vivent dans une table dédiée et
+indépendante, **`modele_medias`** (`modele_id`, `kind` ∈ `photo`/`patron`,
+`storage_path`, `mime_type`, `size_bytes`, `position`, `metadata`), créée en
+Phase 2 et **jamais** rattachée à `media_assets` — voir corr. K (FK composites)
+et corr. R (Phase 8B — Catalogue cloud, `02-PLAN-MIGRATION.md`).
+
 ---
 
 ## D8 — Statuts
@@ -289,7 +313,14 @@ Un dépassement (versement supérieur au reste) reste **autorisé** et **signal�
 - Contrainte `unique (carnet_id, number)` sur `fiches`.
 - Bascule à 120 : quand `next_number > fiches_par_carnet`, le carnet passe `status = 'full'` ; un nouveau carnet `(workshop_id, number = precedent + 1)` est créé avec `next_number = 1`.
 
-Entrée officielle : **`app_hidden.create_fiche_from_draft(p_workshop_id, p_client_id, p_fiche jsonb)`** (corr. L) — opération transactionnelle qui verrouille/crée le carnet, alloue le numéro, calcule page/slot, insère la fiche `'active'`, bascule le carnet plein et prépare le suivant. `security definer`, `search_path=''`, noms qualifiés, `EXECUTE` → `service_role` (Edge Function ; wrapper `public` `SECURITY INVOKER` contrôlant l'appartenance en Phase 9/10). **`app_hidden.allocate_fiche_number(uuid)`** reste une primitive bas niveau (`service_role`), **jamais appelée seule depuis le front**. Le schéma `app_hidden` n'est **pas** exposé par PostgREST.
+Entrée officielle pour la **création métier normale** : **`app_hidden.create_fiche_from_draft(p_workshop_id, p_client_id, p_fiche jsonb)`** (corr. L) — opération transactionnelle qui verrouille/crée le carnet, **alloue elle-même** le numéro suivant depuis `next_number` (aucun numéro fourni en paramètre), calcule page/slot, insère la fiche `'active'`, bascule le carnet plein et prépare le suivant. `security definer`, `search_path=''`, noms qualifiés, `EXECUTE` → `service_role` uniquement, appelée par l'**Edge Function dédiée `create-fiche-from-draft`** (corr. R, Phase 9A — pas un wrapper `public` `SECURITY INVOKER` : voir corr. R pour l'arbitrage). `app_hidden.allocate_fiche_number()` **n'existe plus** (supprimée, corr. L — porte unique). Le schéma `app_hidden` n'est **pas** exposé par PostgREST.
+
+**Précision (corr. R, audit Phase 7)** : `create_fiche_from_draft` n'acceptant **aucun
+numéro explicite**, elle est **structurellement incapable de préserver une
+numérotation legacy** (ex. carnet `1, 2, 5` → elle produirait `1, 2, 3`). Elle
+reste donc exclusivement la porte de la création métier **normale** — l'import
+legacy (Phase 6B0/6B) utilise un chemin serveur entièrement distinct
+(`app_hidden.import_legacy_*`), qui accepte les numéros/carnets legacy explicites.
 
 ---
 
@@ -479,6 +510,156 @@ Les fonctions `app_hidden.create_fiche_from_draft` et `app_hidden.provision_work
 
 ---
 
+### R — Réordonnancement et gates cloud après preflight Phase 7 (CAS C confirmé, 2026-09-05)
+
+Trois audits architecturaux successifs, exigés en preflight bloquant avant tout
+code de la Phase 7 (`02-PLAN-MIGRATION.md`), ont vérifié l'architecture
+**réellement mergée** (Phase 4 `GRANT`/RLS, `AuthProvider`/`RepositoryProvider`,
+contrats Repository synchrones, mapping `Fiche` ↔ `public.fiches`, schéma réel
+`media_assets`/`modele_medias`, corps exact de `create_fiche_from_draft`) plutôt
+que de supposer correcte la séquence documentée « Phase 7 → Phase 8 → Phase 6B ».
+Verdict confirmé trois fois : **CAS C — réordonnancement requis**. Cette
+correction acte le **graphe d'exécution figé**, remplaçant définitivement
+l'ancienne séquence partout où elle apparaît dans `02-PLAN-MIGRATION.md`.
+
+**Graphe figé :**
+```
+7A → 9A → 7B → 8A → 8B → 11A → [Gate VITE_BACKEND=supabase] → 6B0 → 6B
+```
+La numérotation officielle des phases (héritée du cahier des charges) ne
+change pas — seul l'ordre d'exécution change (comme c'était déjà le cas pour
+6B/9 avant ce gel).
+
+**1. Split 7A / 7B** — Phase 7 scindée : **7A** livre les fondations cloud
+(mappers, cache IndexedDB, contrats async, `SupabaseClientRepository` complet,
+`SupabaseFicheRepository` **lecture/update seulement**, `SupabaseCarnetRepository`
+**lecture seule** — nécessaire dès 7A car aucune vue SQL ne joint
+`carnets.number` à `fiches.carnet_id`, indispensable pour reconstituer
+`Fiche.carnetNumero` côté client) sans création de fiche cloud ni activation
+globale. **7B** ajoute `SupabaseFicheRepository.add()`, branché sur 9A.
+
+**2. Phase 9A minimale** — sous-ensemble strict de la Phase 9 : `FicheNew`,
+`CarnetList.handleAdd`, `ClientDetail.handleNewFiche` (les trois créent
+aujourd'hui une fiche vide de façon synchrone et immédiate, vérifié dans le
+code) arrêtent de le faire ; brouillon 100 % local, aucun numéro/carnet avant
+promotion explicite. Exclut explicitement `ClientPickerSheet`, la reprise de
+mesures, l'anti-doublon téléphone et la Phase 10.
+
+**3. Frontière serveur de création métier — Edge Function, pas un wrapper SQL** —
+choix architectural définitif : **Edge Function dédiée `create-fiche-from-draft`**
+(vérifie le JWT, dérive l'identité, vérifie l'appartenance/le rôle avant tout
+appel `service_role`, frontière corr. Q), **pas** un wrapper `public`
+`SECURITY INVOKER` comme porte principale — un tel wrapper ne peut par
+construction pas vérifier lui-même la provenance du JWT (limite déjà reconnue
+par le commentaire de tête de `provision_workshop_api`, qui délègue déjà cette
+vérification à l'Edge Function `provision-workshop`). `create_fiche_from_draft`
+reste inchangée et reste **exclusivement** la porte de la création métier
+**normale** — jamais utilisée pour l'import legacy (voir point 8).
+
+**4. Split 8A / 8B, mapping médias corrigé** — Phase 8 renommée **8A — Médias
+fiche** (`Fiche.tissuPhotos`/`signature`/`voiceNote` → `media_assets`,
+inchangée sinon). Nouvelle **Phase 8B — Catalogue cloud**, rendue
+**obligatoire avant 6B** (la Phase 6A promet explicitement des modèles
+importés — voir point 9) : `SupabaseModeleRepository`, médias modèle/patron →
+**`modele_medias`** (jamais `media_assets`, dont `fiche_id` est `not null` —
+voir corr. D7), correctif `ModeleNew` (même défaut que `FicheNew` avant 9A :
+création vide au montage, contrainte SQL `nom` non vide — corrigé dans 8B, pas
+dans un sous-lot Phase 9 séparé, plus petit lot cohérent). `modele_medias`
+n'a aujourd'hui aucun `GRANT UPDATE` — une migration ciblée
+(`GRANT UPDATE (position, metadata)`) sera introduite **au moment de 8B**, si
+le besoin de repositionnement se confirme, jamais avant.
+
+**5. Phase 11A minimale, validation explicite du paiement** — nouvelle
+sous-phase, obligatoire avant le Gate backend et avant 6B : lecture réelle
+(`client_payments`, `fiche_balances`, déjà accordées Phase 2/4), écriture =
+action explicite. **`AvanceChampCell` déclenche aujourd'hui `onChange` à
+chaque frappe** (vérifié dans `FichePaiementCells.tsx`) — un branchement naïf
+sur un `add()` réseau créerait plusieurs versements pour un seul montant tapé
+(ex. « 5000 » → 4 lignes), interdit sur un ledger insert-only sans
+`UPDATE`/`DELETE`. 11A introduit un état local non commité + un commit
+explicite unique (`add({ficheId, amount, paidAt?, method?, note?}): Promise<Payment>`),
+sans construire l'UX historique complète (reste Phase 11).
+
+**6. Gate d'activation `VITE_BACKEND=supabase`** — activable sur un Preview
+seulement quand **7B ET 8A ET 8B ET 11A** sont terminées (pas seulement 7B+8A) :
+à ce moment, tous les domaines consommés par les écrans existants (clients,
+fiches, carnets, médias fiche, paiements, modèles, médias modèle) sont
+cloud-cohérents simultanément. Un backend activé plus tôt (ex. après 7B+8A
+seuls) ferait tourner `SupabaseFicheRepository` avec `LocalStoragePaymentRepository`/
+`LocalStorageModeleRepository` simultanément — le solde afficherait 0 F et le
+catalogue serait invisible, silencieusement. **6B n'est pas nécessaire pour ce
+gate** — le smoke-test utilise un atelier de test vide, créé via le flux
+normal (9A/7B).
+
+**7. Phase 6B — import complet, aucune exclusion des modèles** — la
+Phase 6A promet explicitement « X clients, Y fiches, **Z modèles** importés » ;
+transformer cette prévisualisation en promesse fausse est rejeté. Phase 6B
+importe **toutes** les données métier réelles prévisualisées : `clients` →
+`carnets` → `fiches` → `client_payments` → médias fiches → **`modeles`** →
+médias modèles/patrons. Seuls les éléments classés `demo` (corr. G) restent
+exclus.
+
+**8. Phase 6B0 — infrastructure d'import sécurisé (nouvelle phase, distincte
+de la création métier normale)** — `create_fiche_from_draft` n'accepte **aucun
+numéro explicite** (elle alloue toujours `next_number`) : rejouer un carnet
+legacy `1, 2, 5` via 3 appels produirait `1, 2, 3`, numéros perdus — **interdite
+pour l'import**. De plus, `service_role` n'a **aucun privilège de table direct
+généralisé** sur le projet réel (vérifié : seul un `GRANT SELECT` ciblé sur
+`public.workshops` existe, ajouté pour `provision_workshop_api`) — une Edge
+Function d'import ne peut donc pas faire de simples `INSERT` bruts. 6B0 livre :
+- une Edge Function `import-legacy-data` (JWT vérifié, appartenance/rôle owner
+  vérifiés, jamais de `workshop_id` accepté aveuglément) ;
+- des fonctions **`app_hidden.import_legacy_*`** (`carnet`/`fiche`/`client`/
+  `modele`/`payment`) `SECURITY DEFINER`, `EXECUTE` → `service_role` seul,
+  symétriques à `create_fiche_from_draft`/`provision_workshop` ;
+- préservation stricte des numéros/carnets legacy (numéro fourni explicitement,
+  `next_number = MAX(legacy) + 1` calculé en une fois, pas incrémentalement) ;
+- une **migration SQL de durcissement de l'idempotence** (seule migration de
+  tout ce graphe, justifiée par un manque réel, pas créée par défaut) — voir
+  point 9.
+
+**9. Idempotence — le serveur est l'autorité, pas `migrationMap`** — acté
+définitivement : `migrationMap` (IndexedDB) est un **accélérateur et un état
+de reprise local**, jamais l'autorité d'idempotence. Effacer IndexedDB,
+changer d'appareil, ou crasher entre l'`INSERT` serveur et l'écriture de la
+map ne doit **jamais** produire de doublon — seule une garantie **serveur**
+(contrainte `UNIQUE` + fonction idempotente sous verrou advisory) protège ce
+cas. Vérifié sur le schéma réel :
+  - `fiches_legacy_id_idx` est aujourd'hui un **index simple, pas `UNIQUE`**
+    (`20260829120100_create_core_schema.sql`) — remplacé en 6B0 par
+    `unique (workshop_id, (metadata->>'legacy_id')) where metadata ? 'legacy_id'`.
+  - `clients` n'a **aucune** clé d'idempotence aujourd'hui — le téléphone
+    (`phone_e164`) est **insuffisant seul** (absent/malformé, plusieurs
+    identités legacy possibles, stratégie hybride D4) — 6B0 ajoute le même
+    index `UNIQUE` partiel sur `metadata->>'legacy_id'`.
+  - `public.modeles` **ne possède aujourd'hui aucune colonne `metadata`**
+    (vérifié dans le schéma réel — seules `id/workshop_id/nom/created_at/
+    updated_at/deleted_at` existent). 6B0 **ajoute** `metadata jsonb not null
+    default '{}'::jsonb` à `modeles`, puis le même index `UNIQUE` partiel sur
+    `metadata->>'legacy_id'` (le `nom` seul n'est pas fiable — deux modèles
+    peuvent porter le même nom). `database.types.ts` sera régénéré à ce moment.
+  - `carnets` n'a besoin d'**aucun** ajout — `unique (workshop_id, number)`
+    (déjà en Phase 2) est la clé naturelle, `number` = `carnetNumero` legacy
+    verbatim.
+  - `client_payments` n'a pas de clé propre mais une garantie **obligatoire**
+    (pas optionnelle) : `unique (fiche_id) where metadata->>'source' =
+    'legacy_import'` — D6 garantit au plus un versement importé par fiche ;
+    protège un retry après crash, une reprise sur un second appareil, ou un
+    appel concurrent.
+  - `media_assets`/`modele_medias` : `storage_path` est **déjà** `UNIQUE`
+    (Phase 2) — suffisant **à condition** que le chemin d'upload soit
+    **déterministe**, dérivé d'un segment sûr (id legacy de l'entité + type de
+    média + index ordinal), **jamais** une chaîne legacy brute non assainie ni
+    un id aléatoire régénéré à chaque tentative. Aucune migration nécessaire
+    pour les médias.
+
+**10. Aucune implémentation dans ce gel** — cette correction R est purement
+documentaire. Aucun code, aucune migration SQL, aucune Edge Function n'a été
+créé. L'implémentation démarre par la Phase 7A, sur instruction explicite
+ultérieure du porteur.
+
+---
+
 ## Récapitulatif des impacts sur le schéma PostgreSQL
 
 | Table | Colonnes / contraintes issues des décisions |
@@ -487,9 +668,9 @@ Les fonctions `app_hidden.create_fiche_from_draft` et `app_hidden.provision_work
 | `fiches` | `status` enum `received/sewing/ready/delivered` ; `state` enum **`active/cancelled/archived`** (plus de `draft` — corr. L) ; `client_id` **nullable** ; `metadata jsonb` ; **pas** de `late` ni de **`signature_path`** (corr. N) ; **`unique (workshop_id, id)`** ; FK composites `(workshop_id, carnet_id)` et `(workshop_id, client_id)` (corr. K) |
 | `carnets` | `number`, `next_number int not null default 1`, `status`, `unique (workshop_id, number)`, **`unique (workshop_id, id)`** |
 | `client_payments` | `amount integer not null check (amount > 0)` (D6), `paid_at timestamptz null`, `recorded_at not null default now()`, `method`, `note`, `metadata jsonb` ; FK composite `(workshop_id, fiche_id)` |
-| `media_assets` | `type` enum, `mime_type`, `size_bytes`, `storage_path`, `metadata jsonb` ; **1 signature max/fiche** (`unique … where type='signature'`, corr. N) ; FK composite `(workshop_id, fiche_id)` |
-| `modeles` | **`nom text not null check (length(btrim(nom)) between 1 and 200)`** (corr. M) ; `unique (workshop_id, id)` |
-| `modele_medias` | FK composite `(workshop_id, modele_id)` |
+| `media_assets` | `type` enum, `mime_type`, `size_bytes`, `storage_path`, `metadata jsonb` ; **1 signature max/fiche** (`unique … where type='signature'`, corr. N) ; FK composite `(workshop_id, fiche_id)` **NOT NULL** — **médias de FICHE uniquement** (corr. R), jamais de média de modèle |
+| `modeles` | **`nom text not null check (length(btrim(nom)) between 1 and 200)`** (corr. M) ; `unique (workshop_id, id)` ; **`metadata jsonb` pas encore ajoutée** — prévue en Phase 6B0 (`legacy_id` + index `unique` partiel, corr. R) |
+| `modele_medias` | FK composite `(workshop_id, modele_id)` ; `kind` ∈ `photo`/`patron`, `storage_path` **`unique`**, `position`, `metadata jsonb` — **médias de MODÈLE uniquement** (corr. R), indépendante de `media_assets` |
 | `sync_conflicts` | `fiche_id`, `local_version`, `remote_version`, `conflicting_fields jsonb`, `detected_at`, `resolution_state` ; FK composite `(workshop_id, fiche_id)` |
 | `workshops` | `owner_id` (**source canonique**, corr. O), `is_demo boolean not null default false` |
 | `workshop_members` | `role` enum `owner/assistant` ; ligne `owner` tenue synchrone d'`owner_id` par déclencheurs (corr. O) ; RLS non récursive |
@@ -500,8 +681,9 @@ Schéma privé **`app_hidden`** (hors `[api].schemas`) — **6 fonctions** (`all
 - `set_updated_at()` — trigger, `search_path=''` ; aucun grant
 - `sync_owner_membership()` / `protect_owner_membership()` — triggers `security definer` (corr. O) ; aucun grant
 - `current_workshop_ids()` — `security definer`, `stable`, `search_path=''` ; UNION owner_id ∪ membres ; `EXECUTE` → `authenticated`
-- `create_fiche_from_draft(uuid, uuid, jsonb)` — `security definer` ; **SEULE porte** d'attribution de numéro + création de fiche ; règle métier anti-fiche-vide ; `EXECUTE` → `service_role` (corr. L)
+- `create_fiche_from_draft(uuid, uuid, jsonb)` — `security definer` ; **SEULE porte de la création métier NORMALE** (jamais l'import legacy — corr. R, Phase 6B0) — attribution de numéro + création de fiche ; règle métier anti-fiche-vide ; `EXECUTE` → `service_role`, appelée par l'Edge Function `create-fiche-from-draft` (corr. L, Q, R)
 - `provision_workshop(uuid, text)` — `security definer` ; `EXECUTE` → `service_role` (corr. O)
+- *(Phase 6B0, à venir)* `import_legacy_carnet`/`import_legacy_fiche`/`import_legacy_client`/`import_legacy_modele`/`import_legacy_payment` — `security definer`, `EXECUTE` → `service_role` seul, chemin distinct pour l'import legacy avec numéros explicites (corr. R) — **non créées à ce jour**, documentées ici par anticipation.
 - `COMMENT ON FUNCTION` sur `create_fiche_from_draft` et `provision_workshop` : frontière `service_role` (corr. Q).
 
 RLS **activée** (sans `GRANT` ni politique) sur les 15 tables en Phase 2 ; `GRANT` explicites + politiques en Phase 4 (même migration — voir corr. E).
@@ -525,3 +707,4 @@ RLS **activée** (sans `GRANT` ni politique) sur les 15 tables en Phase 2 ; `GRA
 | 2026-08-29 (2ᵉ passe ciblée) | **L, H** | **L** anti-fiche-vide **NULL-safe** : `p_fiche IS NULL` → `null_value_not_allowed` ; `jsonb_typeof(p_fiche) <> 'object'` → `invalid_parameter_value` ; termes strictement booléens (`nullif(btrim(<txt>, E' \t\n\r\f\v'), '') is not null`) ; `jsonb_each` gardé par `CASE` (tableau/scalaire → FALSE sans erreur) ; `IF v_significatif IS NOT TRUE THEN RAISE`. **H** nouvelle **migration dédiée `20260829120800_secure_rls_auto_enable.sql`** : `REVOKE EXECUTE ON FUNCTION public.rls_auto_enable() FROM PUBLIC, anon, authenticated` via `to_regprocedure()`/`to_regrole()` (compatible « absent ») ; **event trigger `ensure_rls` NON supprimé/désactivé** ; `.down` = no-op ; test **T35**. Tests : 34 → **35 groupes**. Migrations : 8 → **9**. |
 | 2026-08-30 (correction documentaire, aucun changement SQL/applicatif) | **D1, E/H (Phase 4), P (provenance), correspondance schéma (subscriptions)** | **D1** règle dev/prod clarifiée sans contradiction : `sunu-couture-dev` = **dev/staging** ; après validation locale complète, `supabase link` + `db push --dry-run` autorisés ; `db push` réel seulement après revue du dry-run + confirmation explicite du porteur ; aucune donnée réelle de tailleur avant la Phase 4 ; futur **projet de production** créé/modifié seulement après RLS + isolation + pilote. **E/H** Phase 4 documentée comme livrant `GRANT` explicites (authenticated) + aucun accès métier `anon` + politiques RLS + droits différenciés owner/assistant + droits séquences le cas échéant, **dans la même migration** — rappel que `GRANT` et RLS sont deux couches distinctes. **P** provenance des migrations reformulée sans contradiction (rédigées à la main, validées par la CLI réelle sur PG 17, non recréées/renommées ; futures migrations via `supabase migration new`). **Correspondance schéma** (`02-PLAN-MIGRATION.md` §3) : ligne `subscriptions` corrigée — aucune souscription/offre active créée en Phase 2, offres expérimentales reportées Phase 14. **Nouveau statut : « Phase 2 validée localement sur Supabase PostgreSQL 17 — dry-run distant en attente »** (puis, après `db push` distant réussi + advisors distants validés : « Phase 2 clôturée — schéma déployé sur sunu-couture-dev »). |
 | 2026-08-30 (déploiement réel + vérification distante) | **statut, tests (T16)** | Dashboard vérifié : intégration GitHub connectée mais « Deploy to production » désactivé (aucun auto-déploiement). `supabase link --project-ref nffcdygtqzlivsresuuk` → `db push --dry-run` (9/9, revue) → **confirmation explicite du porteur** → `db push` réel → **9/9 migrations appliquées** sur `sunu-couture-dev`, `migration list` local==remote. `db advisors --linked` **0 WARN/0 ERROR** (37 INFO identiques au local). Vérifié en base via `db query --linked` (API Management, sans mot de passe) : 15 tables, RLS 15/15, 2 vues `security_invoker`, `app_hidden` = 6 fonctions, `create_fiche_from_draft`/`provision_workshop` = `service_role` seul, le vrai `public.rls_auto_enable()` de la plateforme a `EXECUTE` révoqué pour `anon`/`authenticated`, `ensure_rls` actif, 0 politique RLS métier. **35/35 tests SQL rejoués contre le distant réel** (`db query --linked -f`, `BEGIN…ROLLBACK`) ; 0 ligne résiduelle sur 12 tables vérifiées après coup ; `npm test` 19/19, `tsc -b` OK. **T16 durci** : accepte désormais `0 ligne` **ou** `insufficient_privilege` — le distant réel n'a aucun `GRANT` pour `authenticated` sur les tables métier (refus encore plus strict que le cas local, cohérent avec la Phase 4), revalidé 35/35 en local avant et après. **Nouveau statut : « Phase 2 clôturée — schéma déployé et vérifié sur sunu-couture-dev »**. Aucun commit ni push GitHub. |
+| 2026-09-05 (gel du graphe cloud, corr. R — trois audits, CAS C confirmé) | **R ; statut Phase 7 ; D7, D9 (précisions)** | Preflight architectural bloquant avant tout code Phase 7 (exigé par `02-PLAN-MIGRATION.md`) : trois audits successifs de l'architecture réellement mergée (Phase 4 `GRANT`/RLS, `AuthProvider`/`RepositoryProvider`, contrats Repository synchrones, mapping `Fiche`↔`public.fiches`, schéma réel `media_assets`/`modele_medias`, corps exact de `create_fiche_from_draft`) confirment **CAS C — réordonnancement requis**. **Graphe figé** : `7A → 9A → 7B → 8A → 8B → 11A → [Gate VITE_BACKEND=supabase] → 6B0 → 6B`. **7A/7B** : split de la Phase 7 (fondations cloud lecture/update + carnet en lecture seule, puis création). **9A** : sous-ensemble minimal de la Phase 9 (fin de la création de fiche vide au tap), Edge Function `create-fiche-from-draft` retenue comme frontière serveur (pas un wrapper SQL `public`). **8A/8B** : split de la Phase 8 — 8A médias fiche inchangée, **8B catalogue cloud nouvelle et obligatoire avant 6B** (le catalogue de modèles réels reste importé en 6B, aucune exclusion — correction du mapping D7 : médias de fiche → `media_assets`, médias de modèle → `modele_medias`, jamais l'inverse, `fiche_id` étant `not null`). **11A** : nouvelle sous-phase, paiements cloud minimaux avant 6B, avec commit explicite (pas d'écriture par frappe sur `AvanceChampCell`). **Gate `VITE_BACKEND=supabase`** = 7B **ET** 8A **ET** 8B **ET** 11A (pas 7B+8A seules). **6B0** : nouvelle phase, infrastructure d'import legacy distincte de la création métier normale (`create_fiche_from_draft` n'alloue jamais de numéro explicite — interdite pour l'import), fonctions `app_hidden.import_legacy_*` `SECURITY DEFINER`/`service_role`, migration de durcissement de l'idempotence (index `UNIQUE` partiels `legacy_id` sur `clients`/`fiches`, ajout de `modeles.metadata` + `UNIQUE` partiel, `UNIQUE(fiche_id) WHERE metadata->>'source'='legacy_import'` sur `client_payments`, `storage_path` déterministe pour les médias) — la seule migration SQL de tout ce graphe, non créée dans ce gel documentaire. Principe acté : le serveur est l'autorité d'idempotence, `migrationMap` (IndexedDB) n'est qu'un accélérateur de reprise. **Nouveau statut : « Preflight CAS C confirmé — graphe d'exécution cloud figé, implémentation Phase 7A non commencée »**. Aucun code, aucune migration SQL, aucune Edge Function créés pour ce gel — mise à jour documentaire uniquement, sur `docs/freeze-cloud-migration-graph`. |
