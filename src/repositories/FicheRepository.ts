@@ -7,6 +7,11 @@ export interface NewFicheInput {
   prenom?: string;
   telephone?: string;
   prefillChamps?: Partial<Record<FicheChampKey, string>>;
+  /** Ajoutés en Phase 9A — informations CORE que le brouillon (`FicheNew`)
+   * peut porter avant validation explicite. Volontairement PAS `voiceNote`/
+   * `tissuPhotos`/`signature`/`avance` : ces domaines restent 8A/11A (corr. R). */
+  garment?: string;
+  description?: string;
 }
 
 export type FicheInfoPatch = Partial<

@@ -273,6 +273,9 @@ interface NewFicheInput {
   prenom?: string;
   telephone?: string;
   prefillChamps?: Partial<Record<FicheChampKey, string>>;
+  /** Phase 9A — voir `FicheRepository.NewFicheInput` (source de vérité). */
+  garment?: string;
+  description?: string;
 }
 
 interface NewClientInput {
@@ -618,8 +621,8 @@ export const useStore = create<StoreState>()(
           signature: null,
           price: 0,
           avance: 0,
-          garment: "",
-          description: null,
+          garment: input?.garment ?? "",
+          description: input?.description ?? null,
           fabricColor: "#2d3a6b",
           status: "recu",
           late: false,

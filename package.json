@@ -9,7 +9,9 @@
     "lint": "oxlint",
     "preview": "vite preview",
     "test": "vitest run",
-    "test:edge": "node scripts/test-provision-workshop.mjs",
+    "test:edge": "node scripts/test-provision-workshop.mjs && node scripts/test-create-fiche-from-draft.mjs",
+    "test:edge:provision-workshop": "node scripts/test-provision-workshop.mjs",
+    "test:edge:fiche-draft": "node scripts/test-create-fiche-from-draft.mjs",
     "test:a11y": "node scripts/test-a11y.mjs"
   },
   "dependencies": {

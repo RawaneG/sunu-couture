@@ -9,17 +9,15 @@ import OrderRow from "../components/ui/OrderRow";
 import ConfirmDialog from "../components/ui/ConfirmDialog";
 import { IconPhone, IconPlus, IconTrash } from "../lib/icons";
 import { haptic } from "../lib/haptics";
-import { FICHE_MESURE_KEYS } from "../lib/types";
 
 export default function ClientDetail() {
   const { id } = useParams();
   const navigate = useNavigate();
   const allFiches = useFiches();
-  const { fiches: ficheRepository, clients: clientRepository } = useRepositories();
+  const { clients: clientRepository } = useRepositories();
   const [confirmDeleteOpen, setConfirmDeleteOpen] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const [deleteError, setDeleteError] = useState<string | null>(null);
-  const [ficheError, setFicheError] = useState<string | null>(null);
 
   // `useClient` (pas `useClients().find(...)`) : seul ce hook distingue
   // "pas encore hydraté" (loading) de "hydraté et absent" (ready + undefined)
@@ -69,30 +67,14 @@ export default function ClientDetail() {
     }
   };
 
-  // Sémantique de création inchangée pendant ce hotfix (prefillChamps/
-  // clientId/nom/prenom/telephone identiques) — seule la signature devient
-  // asynchrone (Promise<string> depuis la Phase 7A). La suppression de la
-  // création immédiate d'une fiche vide appartient à la Phase 9A, pas ici.
-  const handleNewFiche = async () => {
+  // Phase 9A (corr. R) : n'appelle plus `ficheRepository.add()` ici — ouvrir
+  // "Nouvelle fiche" ne doit créer ni fiche, ni carnet, ni numéro tant que le
+  // tailleur n'a pas validé le brouillon. Le préremplissage (dernières
+  // mesures connues, nom/prénom/téléphone) est désormais assuré par
+  // `FicheNew` lui-même à partir de `?client=<id>`.
+  const handleNewFiche = () => {
     haptic(16);
-    setFicheError(null);
-    const lastFiche = fiches[0];
-    const prefillChamps = lastFiche
-      ? Object.fromEntries(FICHE_MESURE_KEYS.map((key) => [key, lastFiche.champs[key].valeur]))
-      : undefined;
-    const [prenom, ...rest] = client.name.trim().split(/\s+/);
-    try {
-      const newId = await ficheRepository.add({
-        clientId: client.id,
-        prenom: prenom ?? "",
-        nom: rest.join(" "),
-        telephone: client.phone,
-        prefillChamps,
-      });
-      navigate(`/carnet/${newId}`);
-    } catch {
-      setFicheError("La fiche n'a pas pu être créée. Réessaie.");
-    }
+    navigate(`/carnet/nouvelle?client=${client.id}`);
   };
 
   const headerActions = (
@@ -153,16 +135,10 @@ export default function ClientDetail() {
           )}
         </div>
 
-        {ficheError && (
-          <p role="alert" className="mt-3 text-[13px] font-semibold text-terracotta">
-            {ficheError}
-          </p>
-        )}
-
         <motion.button
           type="button"
           whileTap={{ scale: 0.97 }}
-          onClick={() => void handleNewFiche()}
+          onClick={handleNewFiche}
           className="mt-5 flex w-full items-center justify-center gap-2 rounded-2xl bg-amber-tile px-4 py-3.5 font-bold text-[#2a1c04] shadow-soft"
         >
           <IconPlus size={17} strokeWidth={2} />

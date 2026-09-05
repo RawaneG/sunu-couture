@@ -6,7 +6,7 @@
 import { describe, expect, it } from "vitest";
 import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { MemoryRouter, Routes, Route, useParams } from "react-router-dom";
+import { MemoryRouter, Routes, Route, useParams, useSearchParams } from "react-router-dom";
 import type { Client, Fiche } from "../lib/types";
 import type { ClientRepository } from "../repositories/ClientRepository";
 import type { FicheRepository, NewFicheInput } from "../repositories/FicheRepository";
@@ -85,6 +85,14 @@ function FicheDestinationProbe() {
   return <p>Destination fiche : {id}</p>;
 }
 
+/** Sonde du brouillon — Phase 9A : prouve que "Nouvelle fiche" navigue vers
+ * `/carnet/nouvelle?client=<id>` (contexte client par paramètre d'URL, pas un
+ * objet sérialisé), sans jamais passer par `/carnet/:id`. */
+function FicheDraftDestinationProbe() {
+  const [params] = useSearchParams();
+  return <p>Destination brouillon — client : {params.get("client")}</p>;
+}
+
 function renderClientDetail(clients: ClientRepository, fiches: FicheRepository, initialPath = "/clients/c1") {
   const container = { ...createRepositoryContainerFor("local"), clients, fiches };
   return render(
@@ -93,6 +101,7 @@ function renderClientDetail(clients: ClientRepository, fiches: FicheRepository, 
         <Routes>
           <Route path="/clients/:id" element={<ClientDetail />} />
           <Route path="/clients" element={<p>Liste des clients</p>} />
+          <Route path="/carnet/nouvelle" element={<FicheDraftDestinationProbe />} />
           <Route path="/carnet/:id" element={<FicheDestinationProbe />} />
         </Routes>
       </MemoryRouter>
@@ -139,40 +148,26 @@ describe("ClientDetail — ready + introuvable (B)", () => {
   });
 });
 
-describe("ClientDetail — création de fiche asynchrone (C) — empêche /carnet/[object Promise]", () => {
-  it("pendant que la Promise est en attente, aucune navigation ; une fois résolue, navigue vers le VRAI id", async () => {
-    const user = userEvent.setup();
-    const pending = deferred<string>();
-    const clients = new FakeClientRepository([client1], READY_STATUS);
-    renderClientDetail(clients, fakeFicheRepository(() => pending.promise));
-
-    await user.click(screen.getByRole("button", { name: /nouvelle fiche pour awa/i }));
-
-    // Toujours sur ClientDetail : aucune navigation prématurée, et surtout
-    // jamais vers une route contenant "[object Promise]".
-    expect(screen.queryByText(/destination fiche/i)).not.toBeInTheDocument();
-    expect(screen.getByText("77 512 44 08")).toBeInTheDocument();
-
-    pending.resolve("fiche-123");
-    await waitFor(() => expect(screen.getByText("Destination fiche : fiche-123")).toBeInTheDocument());
-  });
-});
-
-describe("ClientDetail — échec de création (D)", () => {
-  it("add() rejeté -> aucune navigation, message role=alert affiché", async () => {
+describe("ClientDetail — Phase 9A : navigation vers le brouillon, aucune création immédiate (C)", () => {
+  it("clique sur 'Nouvelle fiche' -> navigue vers /carnet/nouvelle?client=<id>, add() jamais appelé", async () => {
     const user = userEvent.setup();
     const clients = new FakeClientRepository([client1], READY_STATUS);
+    let addCalls = 0;
     renderClientDetail(
       clients,
       fakeFicheRepository(async () => {
-        throw new Error("réseau indisponible");
+        addCalls += 1;
+        return "ne-devrait-jamais-etre-appele";
       }),
     );
 
     await user.click(screen.getByRole("button", { name: /nouvelle fiche pour awa/i }));
 
-    await waitFor(() => expect(screen.getByRole("alert")).toHaveTextContent(/n'a pas pu être créée/i));
-    expect(screen.queryByText(/destination fiche/i)).not.toBeInTheDocument();
+    // Navigation synchrone (pas de Promise en jeu) : le contexte client passe
+    // par le paramètre d'URL `?client=`, jamais par un `add()` immédiat.
+    expect(screen.getByText("Destination brouillon — client : c1")).toBeInTheDocument();
+    expect(screen.queryByText(/destination fiche :/i)).not.toBeInTheDocument();
+    expect(addCalls).toBe(0);
   });
 });
 

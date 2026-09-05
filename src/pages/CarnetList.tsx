@@ -130,15 +130,13 @@ export default function CarnetList() {
     setPageIndex(clamped);
   }
 
-  async function handleAdd() {
+  // Phase 9A (corr. R) : ouvrir "Nouvelle fiche" ne crée plus rien ici — ni
+  // fiche, ni carnet, ni numéro. On navigue vers le brouillon (`FicheNew`),
+  // qui seul appelle `ficheRepository.add()`, et seulement sur validation
+  // explicite du tailleur.
+  function handleAdd() {
     haptic(16);
-    setActionError(null);
-    try {
-      const id = await ficheRepository.add();
-      navigate(`/carnet/${id}`);
-    } catch {
-      setActionError("La fiche n'a pas pu être créée. Réessaie.");
-    }
+    navigate("/carnet/nouvelle");
   }
 
   function handleDragEnd(_: unknown, info: PanInfo) {
