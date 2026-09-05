@@ -196,4 +196,105 @@ describe("migrateLegacyState — v8 → v9", () => {
     const { fiches } = migrateLegacyState(legacy);
     expect(fiches[0].description).toBe("Épaule 46, poitrine 102");
   });
+
+  // Phase 6A (docs/refonte/02-PLAN-MIGRATION.md §5.1.2) : migrateLegacyState()
+  // doit aussi produire `modeles`, sans jamais supprimer une donnée inattendue.
+  it("carries modeles over unchanged when already shaped like today's Modele[]", () => {
+    const legacy = {
+      modeles: [{ id: "m1", nom: "Boubou wax", photos: [{ id: "p1", dataUrl: "data:x" }], patronPhotos: [], createdAt: "2026-01-01T00:00:00.000Z" }],
+    };
+    const { modeles } = migrateLegacyState(legacy);
+    expect(modeles).toEqual(legacy.modeles);
+  });
+
+  it("defaults missing modele fields instead of dropping the record (no silent data loss)", () => {
+    const legacy = { modeles: [{ id: "m1" }] };
+    const { modeles } = migrateLegacyState(legacy);
+    expect(modeles).toHaveLength(1);
+    expect(modeles[0]).toMatchObject({ id: "m1", nom: "", photos: [], patronPhotos: [] });
+  });
+
+  // Phase 6A, correction blocker « aucune identité aléatoire silencieuse » :
+  // un modèle sans id ne doit JAMAIS recevoir un uid() aléatoire — l'analyse
+  // doit être reproductible, et l'identifiant temporaire doit être clairement
+  // distinguable d'un vrai id legacy.
+  it("assigns a deterministic, clearly-marked placeholder id to a modele with no id — never a random uid()", () => {
+    const legacy = { modeles: [{ nom: "Sans id" }] };
+    const { modeles: first } = migrateLegacyState(legacy);
+    const { modeles: second } = migrateLegacyState(legacy);
+    expect(first[0].id).toBe(second[0].id); // même payload → même id à chaque analyse
+    expect(first[0].id).toMatch(/^legacy-modele-sans-id-/); // jamais confondu avec un vrai uid("m...")
+  });
+
+  it("produces the exact same report (ids included) across two successive analyses of the same malformed payload", () => {
+    const legacy = { modeles: [{ nom: "A" }, { id: "m-real", nom: "B" }, {}] };
+    const run1 = migrateLegacyState(legacy).modeles;
+    const run2 = migrateLegacyState(legacy).modeles;
+    expect(run1).toEqual(run2);
+    expect(run1.map((m) => m.id)).toEqual(["legacy-modele-sans-id-0", "m-real", "legacy-modele-sans-id-2"]);
+  });
+
+  it("keeps a real modele id untouched even when another modele in the same payload is missing one", () => {
+    const legacy = { modeles: [{}, { id: "m-real", nom: "Boubou" }] };
+    const { modeles } = migrateLegacyState(legacy);
+    expect(modeles[1].id).toBe("m-real");
+  });
+
+  it("defaults modeles to an empty array on a persisted store from before the catalogue feature existed", () => {
+    const { modeles } = migrateLegacyState({ clients: [], fiches: [] });
+    expect(modeles).toEqual([]);
+  });
+
+  // Phase 6A, correction review « state.modeles peut ne pas être un tableau » —
+  // `state` vient d'un payload `unknown` réel, `modeles` truthy ne veut pas
+  // dire tableau. Array.isArray() doit protéger .map() à l'exécution, pas
+  // seulement satisfaire TypeScript.
+  describe("migrateLegacyState — state.modeles non-array (runtime shape-guard)", () => {
+    it("defaults to [] when modeles is absent", () => {
+      expect(migrateLegacyState({}).modeles).toEqual([]);
+    });
+
+    it("defaults to [] when modeles is null", () => {
+      expect(migrateLegacyState({ modeles: null }).modeles).toEqual([]);
+    });
+
+    it("never throws when modeles is a plain object ({})", () => {
+      expect(() => migrateLegacyState({ modeles: {} })).not.toThrow();
+      expect(migrateLegacyState({ modeles: {} }).modeles).toEqual([]);
+    });
+
+    it("never throws when modeles is a string", () => {
+      expect(() => migrateLegacyState({ modeles: "abc" })).not.toThrow();
+      expect(migrateLegacyState({ modeles: "abc" }).modeles).toEqual([]);
+    });
+
+    it("never throws when modeles is a number", () => {
+      expect(() => migrateLegacyState({ modeles: 42 })).not.toThrow();
+      expect(migrateLegacyState({ modeles: 42 }).modeles).toEqual([]);
+    });
+
+    it("behaves normally when modeles is a genuine empty array", () => {
+      expect(migrateLegacyState({ modeles: [] }).modeles).toEqual([]);
+    });
+
+    it("keeps the existing deterministic handling of a malformed-but-array modeles list", () => {
+      const legacy = { modeles: [{ nom: "Sans id" }, null, "not-an-object", { id: "m-real", nom: "Boubou" }] };
+      const { modeles } = migrateLegacyState(legacy);
+      expect(modeles).toHaveLength(4);
+      expect(modeles.map((m) => m.id)).toEqual([
+        "legacy-modele-sans-id-0",
+        "legacy-modele-sans-id-1",
+        "legacy-modele-sans-id-2",
+        "m-real",
+      ]);
+    });
+
+    it("produces the exact same result across two successive analyses of the same corrupted payload", () => {
+      const corrupted = { modeles: "corrupted" };
+      expect(migrateLegacyState(corrupted)).toEqual(migrateLegacyState(corrupted));
+
+      const partiallyCorrupted = { modeles: [null, { nom: "x" }, 42] };
+      expect(migrateLegacyState(partiallyCorrupted)).toEqual(migrateLegacyState(partiallyCorrupted));
+    });
+  });
 });

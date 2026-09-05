@@ -2,7 +2,7 @@ import { create } from "zustand";
 import { persist } from "zustand/middleware";
 import type { Client, Fiche, OrderStatus, VoiceNote, FicheChampKey, FicheChamp, TissuPhoto, Modele } from "./types";
 import { ORDER_STEPS, FICHE_MESURE_KEYS, FICHE_INFO_KEYS } from "./types";
-import { nextDays, isOverdue } from "./format";
+import { isOverdue } from "./format";
 import { normalize } from "./search";
 import { FICHES_PAR_CARNET } from "./entitlements";
 export { isOverdue };
@@ -10,6 +10,17 @@ export { isOverdue };
 function uid(prefix: string): string {
   return `${prefix}${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 }
+
+/** Clé `localStorage` du store persisté — seule source de vérité pour tout
+ * code qui doit lire le stockage brut en dehors du store lui-même (Phase 6A,
+ * `legacyBackup.ts`). Ne JAMAIS dupliquer cette chaîne ailleurs. */
+export const LEGACY_STORAGE_KEY = "sunu-couture";
+
+/** Marque un id de modèle synthétisé par `migrateLegacyState()` faute d'id
+ * legacy exploitable — jamais confondu avec un vrai id (`uid("m")` produit
+ * toujours `m<horodatage>-<aléatoire>`, jamais ce préfixe). Utilisé par
+ * `legacyPreview.ts` pour signaler l'anomalie plutôt que la masquer. */
+export const LEGACY_SYNTHETIC_MODELE_ID_PREFIX = "legacy-modele-sans-id-";
 
 function normalizePhone(phone: string | null | undefined): string {
   return (phone ?? "").replace(/\D/g, "");
@@ -39,15 +50,16 @@ export function nextFicheSlot(fiches: Fiche[]): { carnetNumero: number; numero: 
   return { carnetNumero: activeCarnet, numero: maxInCarnet + 1 };
 }
 
-const seedClients: Client[] = [
+// Exportées pour la Phase 6A (`legacyClassification.ts`) : une donnée n'est
+// « démo » que si elle est identique, id ET champs, à l'un de ces enregistrements
+// — jamais une heuristique approximative (§5.1.3, docs/refonte/02-PLAN-MIGRATION.md).
+export const seedClients: Client[] = [
   { id: "c1", name: "Awa Diouf", phone: "77 512 44 08", photo: null, colorSeed: "indigo" },
   { id: "c2", name: "Modou Fall", phone: "76 233 90 17", photo: null, colorSeed: "terracotta" },
   { id: "c3", name: "Fatou Ndiaye", phone: "70 845 21 63", photo: null, colorSeed: "teal" },
   { id: "c4", name: "Ibrahima Sarr", phone: "78 190 55 42", photo: null, colorSeed: "grey" },
   { id: "c5", name: "Khady Sow", phone: "77 402 68 91", photo: null, colorSeed: "amber" },
 ];
-
-const days = nextDays(20, -4);
 
 function seedChamps(values: Partial<Record<FicheChampKey, string>>): Record<FicheChampKey, FicheChamp> {
   const champs = emptyFicheChamps();
@@ -57,146 +69,203 @@ function seedChamps(values: Partial<Record<FicheChampKey, string>>): Record<Fich
   return champs;
 }
 
-const seedFiches: Fiche[] = [
-  {
-    id: "f1",
-    carnetNumero: 1,
-    numero: 1,
-    nom: "Diouf",
-    prenom: "Awa",
-    telephone: "77 512 44 08",
-    clientId: "c1",
-    champs: { ...seedChamps({ E: "44", Cou: "38", P: "96", T: "78", M: "58", H: "104", nbrePagnes: "6" }), T: { valeur: "78", historique: ["76"] } },
-    voiceNote: null,
-    tissuPhotos: [],
-    dueDate: days[8],
-    soldeLe: null,
-    signature: null,
-    price: 25000,
-    avance: 10000,
-    garment: "Boubou · wax bleu",
-    description: null,
-    fabricColor: "#2d3a6b",
-    status: "couture",
-    late: false,
-    createdAt: days[0],
-  },
-  {
-    id: "f2",
-    carnetNumero: 1,
-    numero: 2,
-    nom: "Fall",
-    prenom: "Modou",
-    telephone: "76 233 90 17",
-    clientId: "c2",
-    champs: emptyFicheChamps(),
-    voiceNote: null,
-    tissuPhotos: [],
-    dueDate: days[2],
-    soldeLe: null,
-    signature: null,
-    price: 45000,
-    avance: 0,
-    garment: "Costume · trois pièces",
-    description: "Épaule 46, poitrine 102, longueur veste 78",
-    fabricColor: "#8c8398",
-    status: "couture",
-    late: isOverdue(days[2], "couture"),
-    createdAt: days[0],
-  },
-  {
-    id: "f3",
-    carnetNumero: 1,
-    numero: 3,
-    nom: "Ndiaye",
-    prenom: "Fatou",
-    telephone: "70 845 21 63",
-    clientId: "c3",
-    champs: emptyFicheChamps(),
-    voiceNote: null,
-    tissuPhotos: [],
-    dueDate: days[10],
-    soldeLe: days[1],
-    signature: null,
-    price: 20000,
-    avance: 20000,
-    garment: "Robe · lin blanc",
-    description: null,
-    fabricColor: "#faf3e6",
-    status: "pret",
-    late: false,
-    createdAt: days[1],
-  },
-  {
-    id: "f4",
-    carnetNumero: 1,
-    numero: 4,
-    nom: "Sarr",
-    prenom: "Ibrahima",
-    telephone: "78 190 55 42",
-    clientId: "c4",
-    champs: emptyFicheChamps(),
-    voiceNote: null,
-    tissuPhotos: [],
-    dueDate: days[1],
-    soldeLe: null,
-    signature: null,
-    price: 30000,
-    avance: 0,
-    garment: "Ensemble · bazin gris",
-    description: null,
-    fabricColor: "#5b5468",
-    status: "recu",
-    late: isOverdue(days[1], "recu"),
-    createdAt: days[0],
-  },
-  {
-    id: "f5",
-    carnetNumero: 1,
-    numero: 5,
-    nom: "Sow",
-    prenom: "Khady",
-    telephone: "77 402 68 91",
-    clientId: "c5",
-    champs: emptyFicheChamps(),
-    voiceNote: null,
-    tissuPhotos: [],
-    dueDate: days[14],
-    soldeLe: null,
-    signature: null,
-    price: 85000,
-    avance: 40000,
-    garment: "Tenue de mariage",
-    description: null,
-    fabricColor: "#c98a2b",
-    status: "couture",
-    late: false,
-    createdAt: days[2],
-  },
-  {
-    id: "f6",
-    carnetNumero: 1,
-    numero: 6,
-    nom: "Diouf",
-    prenom: "Awa",
-    telephone: "77 512 44 08",
-    clientId: "c1",
-    champs: emptyFicheChamps(),
-    voiceNote: null,
-    tissuPhotos: [],
-    dueDate: days[16],
-    soldeLe: null,
-    signature: null,
-    price: 12000,
-    avance: 0,
-    garment: "Chemise · wax orange",
-    description: null,
-    fabricColor: "#b8502e",
-    status: "recu",
-    late: false,
-    createdAt: days[3],
-  },
-];
+/** Comme `isOverdue()` (format.ts), mais paramétrée par l'instant de référence
+ * au lieu de lire `Date.now()` — `buildSeedFiches()` doit être une fonction
+ * PURE de `referenceDate` (Phase 6A, correction blocker « seed datée ») :
+ * appelée deux fois avec la même date, elle doit produire EXACTEMENT le même
+ * résultat, peu importe le jour réel où elle tourne. `isOverdue()` elle-même
+ * reste inchangée et continue d'utiliser l'horloge réelle partout ailleurs
+ * dans l'app (c'est le comportement voulu en dehors de la génération de seed). */
+function isOverdueAt(iso: string | null, status: string, referenceInstant: Date): boolean {
+  if (!iso || status === "livre") return false;
+  const due = new Date(iso);
+  due.setHours(23, 59, 59, 999);
+  return due.getTime() < referenceInstant.getTime();
+}
+
+/** Décalage (en jours, signé) entre le jour de référence (« aujourd'hui » au
+ * moment où la seed est construite) et chaque champ daté de chaque fiche seed —
+ * les mêmes valeurs que l'ancien tableau `nextDays(20, -4)` codait implicitement
+ * dans ses index. Seule source de vérité pour reconstruire une seed passée
+ * (`legacyClassification.ts`) : si le contenu des fiches seed change un jour,
+ * mettre à jour ces décalages en même temps que `buildSeedFiches()` ci-dessous. */
+export const SEED_FICHE_DAY_OFFSETS = {
+  f1: { createdAt: -4, dueDate: 4 },
+  f2: { createdAt: -4, dueDate: -2 },
+  f3: { createdAt: -3, dueDate: 6, soldeLe: -3 },
+  f4: { createdAt: -4, dueDate: -3 },
+  f5: { createdAt: -2, dueDate: 10 },
+  f6: { createdAt: -1, dueDate: 12 },
+} as const satisfies Record<string, { createdAt: number; dueDate: number; soldeLe?: number }>;
+
+/**
+ * Construit le catalogue de fiches de démonstration, entièrement déterminé par
+ * `referenceDate` (normalisée à minuit local, comme `nextDays()`) — aucune
+ * lecture de l'horloge réelle à l'intérieur. Appelée avec `new Date()` à
+ * l'initialisation du store (comportement historique inchangé) ET, à l'identique,
+ * par `legacyClassification.ts` avec la date reconstruite d'une fiche legacy
+ * pour vérifier si elle correspond exactement à SA seed d'origine — jamais à
+ * une seed régénérée à la date du jour (Phase 6A, correction blocker).
+ */
+export function buildSeedFiches(referenceDate: Date): Fiche[] {
+  const start = new Date(referenceDate);
+  start.setHours(0, 0, 0, 0);
+  const at = (offsetDays: number): string => {
+    const d = new Date(start);
+    d.setDate(d.getDate() + offsetDays);
+    return d.toISOString();
+  };
+  const o = SEED_FICHE_DAY_OFFSETS;
+
+  return [
+    {
+      id: "f1",
+      carnetNumero: 1,
+      numero: 1,
+      nom: "Diouf",
+      prenom: "Awa",
+      telephone: "77 512 44 08",
+      clientId: "c1",
+      champs: { ...seedChamps({ E: "44", Cou: "38", P: "96", T: "78", M: "58", H: "104", nbrePagnes: "6" }), T: { valeur: "78", historique: ["76"] } },
+      voiceNote: null,
+      tissuPhotos: [],
+      dueDate: at(o.f1.dueDate),
+      soldeLe: null,
+      signature: null,
+      price: 25000,
+      avance: 10000,
+      garment: "Boubou · wax bleu",
+      description: null,
+      fabricColor: "#2d3a6b",
+      status: "couture",
+      late: isOverdueAt(at(o.f1.dueDate), "couture", start),
+      createdAt: at(o.f1.createdAt),
+    },
+    {
+      id: "f2",
+      carnetNumero: 1,
+      numero: 2,
+      nom: "Fall",
+      prenom: "Modou",
+      telephone: "76 233 90 17",
+      clientId: "c2",
+      champs: emptyFicheChamps(),
+      voiceNote: null,
+      tissuPhotos: [],
+      dueDate: at(o.f2.dueDate),
+      soldeLe: null,
+      signature: null,
+      price: 45000,
+      avance: 0,
+      garment: "Costume · trois pièces",
+      description: "Épaule 46, poitrine 102, longueur veste 78",
+      fabricColor: "#8c8398",
+      status: "couture",
+      late: isOverdueAt(at(o.f2.dueDate), "couture", start),
+      createdAt: at(o.f2.createdAt),
+    },
+    {
+      id: "f3",
+      carnetNumero: 1,
+      numero: 3,
+      nom: "Ndiaye",
+      prenom: "Fatou",
+      telephone: "70 845 21 63",
+      clientId: "c3",
+      champs: emptyFicheChamps(),
+      voiceNote: null,
+      tissuPhotos: [],
+      dueDate: at(o.f3.dueDate),
+      soldeLe: at(o.f3.soldeLe),
+      signature: null,
+      price: 20000,
+      avance: 20000,
+      garment: "Robe · lin blanc",
+      description: null,
+      fabricColor: "#faf3e6",
+      status: "pret",
+      late: isOverdueAt(at(o.f3.dueDate), "pret", start),
+      createdAt: at(o.f3.createdAt),
+    },
+    {
+      id: "f4",
+      carnetNumero: 1,
+      numero: 4,
+      nom: "Sarr",
+      prenom: "Ibrahima",
+      telephone: "78 190 55 42",
+      clientId: "c4",
+      champs: emptyFicheChamps(),
+      voiceNote: null,
+      tissuPhotos: [],
+      dueDate: at(o.f4.dueDate),
+      soldeLe: null,
+      signature: null,
+      price: 30000,
+      avance: 0,
+      garment: "Ensemble · bazin gris",
+      description: null,
+      fabricColor: "#5b5468",
+      status: "recu",
+      late: isOverdueAt(at(o.f4.dueDate), "recu", start),
+      createdAt: at(o.f4.createdAt),
+    },
+    {
+      id: "f5",
+      carnetNumero: 1,
+      numero: 5,
+      nom: "Sow",
+      prenom: "Khady",
+      telephone: "77 402 68 91",
+      clientId: "c5",
+      champs: emptyFicheChamps(),
+      voiceNote: null,
+      tissuPhotos: [],
+      dueDate: at(o.f5.dueDate),
+      soldeLe: null,
+      signature: null,
+      price: 85000,
+      avance: 40000,
+      garment: "Tenue de mariage",
+      description: null,
+      fabricColor: "#c98a2b",
+      status: "couture",
+      late: isOverdueAt(at(o.f5.dueDate), "couture", start),
+      createdAt: at(o.f5.createdAt),
+    },
+    {
+      id: "f6",
+      carnetNumero: 1,
+      numero: 6,
+      nom: "Diouf",
+      prenom: "Awa",
+      telephone: "77 512 44 08",
+      clientId: "c1",
+      champs: emptyFicheChamps(),
+      voiceNote: null,
+      tissuPhotos: [],
+      dueDate: at(o.f6.dueDate),
+      soldeLe: null,
+      signature: null,
+      price: 12000,
+      avance: 0,
+      garment: "Chemise · wax orange",
+      description: null,
+      fabricColor: "#b8502e",
+      status: "recu",
+      late: isOverdueAt(at(o.f6.dueDate), "recu", start),
+      createdAt: at(o.f6.createdAt),
+    },
+  ];
+}
+
+// Calculée une seule fois, au chargement du module (= « maintenant » au tout
+// premier lancement de l'app sur cet appareil) — comportement historique
+// inchangé pour l'état initial du store. `legacyClassification.ts` ne
+// compare JAMAIS une fiche legacy à CETTE constante (elle dérive de la date
+// du jour où le module a été chargé) : elle reconstruit sa propre seed
+// attendue via `buildSeedFiches()` + la date d'origine de la fiche.
+export const seedFiches: Fiche[] = buildSeedFiches(new Date());
 
 interface NewFicheInput {
   clientId?: string | null;
@@ -253,10 +322,16 @@ function colorSeedFor(seedString: string): string {
   return palette[sum % palette.length];
 }
 
-/** Upgrades a v8-or-earlier persisted store (separate clients/orders/fiches) to the unified v9 Fiche model. Exported standalone so the migration's business rules can be tested without going through the persist middleware. */
-export function migrateLegacyState(persisted: unknown): { clients: Client[]; fiches: Fiche[] } {
+/** Upgrades a v8-or-earlier persisted store (separate clients/orders/fiches) to the unified v9 Fiche model. Exported standalone so the migration's business rules can be tested without going through the persist middleware.
+ *
+ * `modeles` was folded in additively for Phase 6A (`legacyBackup.ts`) — no
+ * legacy version of the store ever wrote it in a different shape than today's
+ * `Modele[]`, so it only needs defaulting/shape-guarding, never rewriting like
+ * clients/orders/fiches above. */
+export function migrateLegacyState(persisted: unknown): { clients: Client[]; fiches: Fiche[]; modeles: Modele[] } {
   const state = (persisted ?? {}) as {
     clients?: (Client & { measurementsNote?: VoiceNote | null; measurementsText?: string | null })[];
+    modeles?: Partial<Modele>[];
     orders?: {
       id: string;
       clientId: string;
@@ -433,7 +508,48 @@ export function migrateLegacyState(persisted: unknown): { clients: Client[]; fic
     if (legacy.text && !target.description) target.description = legacy.text;
   }
 
-  return { clients, fiches };
+  // Defensive shape-guarding only — no legacy version stored modeles under a
+  // different shape, so unlike clients/fiches above this never needs field
+  // remapping, only defaulting for a persisted file older than the feature.
+  //
+  // `state` comes from `unknown` (a real persisted payload can be anything) —
+  // `state.modeles` being present and truthy does NOT mean it's an array
+  // (Phase 6A, correction review « state.modeles peut ne pas être un
+  // tableau ») : `{}`, `"corrupted"`, `42`… would all make `.map()` throw
+  // below. `Array.isArray()` is a genuine RUNTIME guard, not just a TS
+  // annotation — the `as` cast on `state` above gives no protection here.
+  // A non-array `modeles` isn't signalled as a distinct anomaly to the
+  // tailor (that would mean threading a new anomalies channel through
+  // `migrateLegacyState()` just for this one top-level shape, well beyond
+  // what's needed) — it's simply treated as "no modeles readable", exactly
+  // like `modeles` being absent.
+  const legacyModeles: Partial<Modele>[] = Array.isArray(state.modeles) ? state.modeles : [];
+
+  // A modele with no `id` NEVER gets a random uid() here (Phase 6A, correction
+  // blocker « aucune identité aléatoire silencieuse ») : the same malformed
+  // payload must produce the exact same analysis every time it's re-read, and
+  // a random id would also masquerade as a real legacy identifier. Instead it
+  // gets a deterministic, clearly-marked placeholder — index-based, so two
+  // analyses of the same (unchanged) payload always agree — that
+  // `legacyPreview.ts` recognizes and surfaces as an anomaly rather than
+  // silently treating it as if it were a genuine legacy id.
+  const modeles: Modele[] = legacyModeles.map((raw, index) => {
+    // Same reasoning at element level — `legacyModeles[i]` can itself be
+    // `null`/a string/a number inside an otherwise-array `modeles` (e.g.
+    // `modeles: [null, "x"]`) ; falling back to `{}` keeps every field below
+    // going through its own explicit default instead of reading a property
+    // off a non-object and throwing.
+    const m: Partial<Modele> = raw && typeof raw === "object" && !Array.isArray(raw) ? raw : {};
+    return {
+      id: typeof m.id === "string" && m.id.length > 0 ? m.id : `${LEGACY_SYNTHETIC_MODELE_ID_PREFIX}${index}`,
+      nom: typeof m.nom === "string" ? m.nom : "",
+      photos: Array.isArray(m.photos) ? m.photos : [],
+      patronPhotos: Array.isArray(m.patronPhotos) ? m.patronPhotos : [],
+      createdAt: typeof m.createdAt === "string" ? m.createdAt : new Date(0).toISOString(),
+    };
+  });
+
+  return { clients, fiches, modeles };
 }
 
 export const useStore = create<StoreState>()(
