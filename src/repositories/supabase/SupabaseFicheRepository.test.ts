@@ -54,8 +54,21 @@ function fakeGateway(overrides: Partial<SupabaseGateway> = {}): SupabaseGateway 
     getFicheById: vi.fn(async () => ({ data: ficheRow(), error: null })),
     updateFiche: vi.fn(async () => ({ data: ficheRow(), error: null })),
     softDeleteFiches: vi.fn(async () => ({ data: null, error: null })),
+    createFicheFromDraft: vi.fn(async () => ({
+      data: { fiche: createdFicheRow() },
+      error: null,
+    })),
     ...overrides,
   };
+}
+
+/** Ligne BRUTE `public.fiches` telle que renvoyée par l'Edge Function
+ * `create-fiche-from-draft` — délibérément DIFFÉRENTE de `ficheRow()`
+ * (`fiches_view`, avec `is_late`) : ce n'est jamais cette forme qui est
+ * mappée en `Fiche` domaine (corr. R §12), seuls `id`/`workshop_id` en sont
+ * lus avant relecture via `getFicheById`. */
+function createdFicheRow(overrides: Record<string, unknown> = {}) {
+  return { id: "f-new", workshop_id: "w1", carnet_id: "carnet-1", number: 6, ...overrides };
 }
 
 async function setupRepo(gateway: SupabaseGateway) {
@@ -75,30 +88,265 @@ describe("SupabaseFicheRepository — construction", () => {
   });
 });
 
-describe("SupabaseFicheRepository — sécurité : aucune création cloud (corr. R §26/§38)", () => {
-  it("add() n'est pas implémentée : rejette systématiquement, sans jamais appeler le gateway", async () => {
-    const gateway = fakeGateway();
-    const { fiches } = await setupRepo(gateway);
-    await expect(fiches.add()).rejects.toThrow(/create-fiche-from-draft/);
-    // Aucune des méthodes du gateway pouvant créer une ligne n'a été appelée
-    // par add() lui-même (seul le bootstrap a pu appeler listActiveFiches).
-    expect(gateway.insertClient).not.toHaveBeenCalled();
-    expect(gateway.updateFiche).not.toHaveBeenCalled();
-  });
-
+describe("SupabaseFicheRepository — sécurité : aucun INSERT direct (corr. R §26/§38, Phase 7B)", () => {
   it("aucune méthode du SupabaseGateway ne permet un INSERT sur fiches — vérifié par la forme du contrat", () => {
     // Preuve structurelle : SupabaseGateway n'expose que list/get/update/softDelete
-    // pour les fiches, jamais un "insertFiche". Ce test échoue à la compilation
-    // (pas à l'exécution) si une telle méthode était ajoutée sans revue — il
-    // documente explicitement l'invariant attendu.
+    // + createFicheFromDraft (Edge Function) pour les fiches, jamais un
+    // "insertFiche" qui ferait un `.from("fiches").insert(...)`. Ce test échoue
+    // à la compilation (pas à l'exécution) si une telle méthode était ajoutée
+    // sans revue — il documente explicitement l'invariant attendu.
     const methods: (keyof SupabaseGateway)[] = [
       "listActiveFiches",
       "getFicheById",
       "updateFiche",
       "softDeleteFiches",
+      "createFicheFromDraft",
     ];
     for (const m of methods) expect(typeof fakeGateway()[m]).toBe("function");
     expect((fakeGateway() as unknown as Record<string, unknown>).insertFiche).toBeUndefined();
+  });
+});
+
+describe("SupabaseFicheRepository — création (Phase 7B, brouillon vide)", () => {
+  it("un brouillon non significatif est rejeté AVANT tout appel réseau", async () => {
+    const gateway = fakeGateway();
+    const { fiches } = await setupRepo(gateway);
+    await expect(fiches.add({})).rejects.toThrow(/brouillon vide/);
+    expect(gateway.createFicheFromDraft).not.toHaveBeenCalled();
+  });
+
+  it("add() sans argument (équivalent historique) est aussi rejeté AVANT tout appel réseau", async () => {
+    const gateway = fakeGateway();
+    const { fiches } = await setupRepo(gateway);
+    await expect(fiches.add()).rejects.toThrow(/brouillon vide/);
+    expect(gateway.createFicheFromDraft).not.toHaveBeenCalled();
+  });
+
+  it("des chaînes blanches uniquement restent non significatives", async () => {
+    const gateway = fakeGateway();
+    const { fiches } = await setupRepo(gateway);
+    await expect(fiches.add({ nom: "   ", telephone: "\t" })).rejects.toThrow(/brouillon vide/);
+    expect(gateway.createFicheFromDraft).not.toHaveBeenCalled();
+  });
+});
+
+describe("SupabaseFicheRepository — création (Phase 7B, succès simple)", () => {
+  it("brouillon significatif : createFicheFromDraft appelé 1 fois, carnet rafraîchi, fiche relue et mise en cache, id retourné", async () => {
+    const gateway = fakeGateway({
+      getFicheById: vi.fn(async () => ({ data: ficheRow({ id: "f-new", garment: "Boubou" }), error: null })),
+    });
+    const { fiches } = await setupRepo(gateway);
+
+    const id = await fiches.add({ clientId: "c1", nom: "Diouf", prenom: "Awa", telephone: "77 512 44 08", garment: "Boubou" });
+
+    expect(id).toBe("f-new");
+    expect(gateway.createFicheFromDraft).toHaveBeenCalledTimes(1);
+    expect(gateway.getFicheById).toHaveBeenCalledWith("w1", "f-new");
+    expect(fiches.get("f-new")?.garment).toBe("Boubou");
+  });
+
+  it("le body exact envoyé à createFicheFromDraft ne contient aucun champ structurel serveur", async () => {
+    const gateway = fakeGateway();
+    const { fiches } = await setupRepo(gateway);
+    await fiches.add({ clientId: "c1", nom: "Diouf", prenom: "Awa", telephone: "77 512 44 08", garment: "Boubou", description: "Manches longues" });
+
+    expect(gateway.createFicheFromDraft).toHaveBeenCalledWith(
+      "w1",
+      "c1",
+      expect.objectContaining({
+        garment: "Boubou",
+        description: "Manches longues",
+        measurements: expect.any(Object),
+        metadata: { legacy_identity: { nom: "Diouf", prenom: "Awa", telephone: "77 512 44 08" } },
+      }),
+    );
+    const [, , payload] = (gateway.createFicheFromDraft as ReturnType<typeof vi.fn>).mock.calls[0];
+    const serialized = JSON.stringify(payload);
+    for (const forbidden of ["numero", "carnetNumero", "carnet_id", "page_number", "slot_number", "workshop_id", "ownerId", "userId", "role"]) {
+      expect(serialized).not.toContain(forbidden);
+    }
+  });
+
+  it("prefillChamps devient measurements[key] = { valeur, historique: [] }", async () => {
+    const gateway = fakeGateway();
+    const { fiches } = await setupRepo(gateway);
+    await fiches.add({ clientId: "c1", prefillChamps: { Cou: "42" } });
+
+    expect(gateway.createFicheFromDraft).toHaveBeenCalledWith(
+      "w1",
+      "c1",
+      expect.objectContaining({ measurements: expect.objectContaining({ Cou: { valeur: "42", historique: [] } }) }),
+    );
+  });
+
+  it("un subscriber est notifié comme pour une mutation normale, et get(id) répond immédiatement après", async () => {
+    const gateway = fakeGateway({
+      getFicheById: vi.fn(async () => ({ data: ficheRow({ id: "f-new" }), error: null })),
+    });
+    const { fiches } = await setupRepo(gateway);
+    const listener = vi.fn();
+    fiches.subscribe(listener);
+
+    const id = await fiches.add({ clientId: "c1", garment: "Boubou" });
+
+    expect(listener).toHaveBeenCalled();
+    expect(fiches.get(id)?.id).toBe(id);
+  });
+});
+
+describe("SupabaseFicheRepository — création (Phase 7B, premier carnet / numérotation serveur)", () => {
+  it("atelier sans carnet préalable : carnetNumero=1 résolu depuis la vraie ligne carnet après refresh, jamais un fallback", async () => {
+    let carnetsCall = 0;
+    const gateway = fakeGateway({
+      listActiveFiches: vi.fn(async () => ({ data: [], error: null })),
+      listCarnets: vi.fn(async () => {
+        carnetsCall += 1;
+        if (carnetsCall === 1) return { data: [], error: null }; // bootstrap : aucun carnet
+        return { data: [{ id: "carnet-new", workshop_id: "w1", number: 1, status: "active", next_number: 2 }], error: null };
+      }),
+      createFicheFromDraft: vi.fn(async () => ({ data: { fiche: createdFicheRow({ id: "f-new", carnet_id: "carnet-new" }) }, error: null })),
+      getFicheById: vi.fn(async () => ({ data: ficheRow({ id: "f-new", carnet_id: "carnet-new", number: 1 }), error: null })),
+    });
+    const { fiches } = await setupRepo(gateway);
+
+    const id = await fiches.add({ garment: "Boubou" });
+
+    expect(fiches.get(id)?.carnetNumero).toBe(1);
+    expect(fiches.get(id)?.numero).toBe(1);
+  });
+
+  it("carnet #4 déjà actif, next_number=18 : le Repository apprend numero/carnetNumero de la relecture serveur, ne les calcule jamais", async () => {
+    const gateway = fakeGateway({
+      listCarnets: vi.fn(async () => ({
+        data: [{ id: "carnet-4", workshop_id: "w1", number: 4, status: "active", next_number: 18 }],
+        error: null,
+      })),
+      createFicheFromDraft: vi.fn(async () => ({ data: { fiche: createdFicheRow({ id: "f-new", carnet_id: "carnet-4" }) }, error: null })),
+      getFicheById: vi.fn(async () => ({ data: ficheRow({ id: "f-new", carnet_id: "carnet-4", number: 18 }), error: null })),
+    });
+    const { fiches } = await setupRepo(gateway);
+
+    const id = await fiches.add({ garment: "Boubou" });
+
+    expect(fiches.get(id)?.numero).toBe(18);
+    expect(fiches.get(id)?.carnetNumero).toBe(4);
+  });
+});
+
+describe("SupabaseFicheRepository — création (Phase 7B, erreurs Edge structurées)", () => {
+  it.each([
+    ["empty_draft", 422],
+    ["forbidden", 403],
+    ["invalid_client", 400],
+  ])("code=%s : aucune mutation cache, aucun getFicheById, aucun retry", async (code) => {
+    const gateway = fakeGateway({
+      createFicheFromDraft: vi.fn(async () => ({ data: null, error: { code, message: `erreur ${code}` } })),
+    });
+    const { fiches } = await setupRepo(gateway);
+
+    await expect(fiches.add({ garment: "Boubou" })).rejects.toMatchObject({ code, message: `erreur ${code}` });
+    expect(gateway.createFicheFromDraft).toHaveBeenCalledTimes(1);
+    expect(gateway.getFicheById).not.toHaveBeenCalled();
+    expect(fiches.list().some((f) => f.garment === "Boubou" && f.id !== "f1")).toBe(false);
+  });
+
+  it("préserve le message métier structuré (pas un message générique Supabase)", async () => {
+    const gateway = fakeGateway({
+      createFicheFromDraft: vi.fn(async () => ({ data: null, error: { code: "forbidden", message: "Accès refusé à cet atelier." } })),
+    });
+    const { fiches } = await setupRepo(gateway);
+    await expect(fiches.add({ garment: "Boubou" })).rejects.toThrow("Accès refusé à cet atelier.");
+  });
+});
+
+describe("SupabaseFicheRepository — création réussie mais synchronisation locale incomplète (Phase 7B §18/§19)", () => {
+  it("Edge SUCCESS + carnets.refresh() SUCCESS + getFicheById ERROR -> reject, id connu, aucun retry de création", async () => {
+    const gateway = fakeGateway({
+      getFicheById: vi.fn(async () => ({ data: null, error: { message: "réseau indisponible" } })),
+    });
+    const { fiches } = await setupRepo(gateway);
+
+    const rejection = fiches.add({ garment: "Boubou" });
+    await expect(rejection).rejects.toThrow(/relecture a échoué/);
+    await rejection.catch((err: unknown) => {
+      expect(err).toMatchObject({ ficheId: "f-new" });
+    });
+    expect(gateway.createFicheFromDraft).toHaveBeenCalledTimes(1);
+  });
+
+  it("Edge SUCCESS + carnets.refresh() ERROR -> reject explicite, aucun second create", async () => {
+    let carnetsCall = 0;
+    const gateway = fakeGateway({
+      listCarnets: vi.fn(async () => {
+        carnetsCall += 1;
+        if (carnetsCall === 1) {
+          return { data: [{ id: "carnet-1", workshop_id: "w1", number: 3, status: "active", next_number: 6 }], error: null };
+        }
+        return { data: null, error: { message: "réseau indisponible" } };
+      }),
+    });
+    const { fiches } = await setupRepo(gateway);
+
+    const rejection = fiches.add({ garment: "Boubou" });
+    await expect(rejection).rejects.toThrow(/carnet n'a pas pu être synchronisé/);
+    await rejection.catch((err: unknown) => {
+      expect(err).toMatchObject({ ficheId: "f-new" });
+    });
+    expect(gateway.createFicheFromDraft).toHaveBeenCalledTimes(1);
+    expect(gateway.getFicheById).not.toHaveBeenCalled();
+  });
+
+  it("la fiche créée pour un autre atelier que celui attendu est une création confirmée mal synchronisée, PAS une simple erreur générique", async () => {
+    const gateway = fakeGateway({
+      createFicheFromDraft: vi.fn(async () => ({ data: { fiche: createdFicheRow({ id: "f-new", workshop_id: "w-autre" }) }, error: null })),
+    });
+    const { fiches } = await setupRepo(gateway);
+
+    const rejection = fiches.add({ garment: "Boubou" });
+    await expect(rejection).rejects.toThrow(/atelier incohérent/);
+    await rejection.catch((err: unknown) => {
+      expect(err).toMatchObject({ name: "FicheCreatedButSyncIncompleteError", ficheId: "f-new" });
+    });
+    expect(gateway.createFicheFromDraft).toHaveBeenCalledTimes(1);
+    expect(gateway.getFicheById).not.toHaveBeenCalled();
+    expect(gateway.listCarnets).toHaveBeenCalledTimes(1); // uniquement le bootstrap — pas de refresh post-incohérence
+  });
+
+  it.each([
+    ["objet vide", {}],
+    ["fiche null", { fiche: null }],
+    ["fiche sans id", { fiche: { workshop_id: "w1" } }],
+    ["fiche sans workshop_id", { fiche: { id: "f-new" } }],
+  ])("réponse Edge SUCCESS malformée (%s) : rejet post-création explicite, aucun retry, aucune étape suivante", async (_label, malformed) => {
+    const gateway = fakeGateway({
+      createFicheFromDraft: vi.fn(async () => ({ data: malformed, error: null })),
+    });
+    const { fiches } = await setupRepo(gateway);
+
+    const rejection = fiches.add({ garment: "Boubou" });
+    await expect(rejection).rejects.toThrow(/peut déjà exister/);
+    await rejection.catch((err: unknown) => {
+      expect(err).toMatchObject({ name: "FicheCreatedButResponseInvalidError" });
+    });
+    expect(gateway.createFicheFromDraft).toHaveBeenCalledTimes(1);
+    expect(gateway.listCarnets).toHaveBeenCalledTimes(1); // uniquement le bootstrap
+    expect(gateway.getFicheById).not.toHaveBeenCalled();
+  });
+
+  it("data === null (réponse Edge SUCCESS sans corps) : même traitement, aucun ficheId inventé", async () => {
+    const gateway = fakeGateway({
+      createFicheFromDraft: vi.fn(async () => ({ data: null, error: null })),
+    });
+    const { fiches } = await setupRepo(gateway);
+
+    const rejection = fiches.add({ garment: "Boubou" });
+    await expect(rejection).rejects.toThrow(/peut déjà exister/);
+    await rejection.catch((err: unknown) => {
+      expect(err).toMatchObject({ name: "FicheCreatedButResponseInvalidError" });
+      expect((err as { ficheId?: unknown }).ficheId).toBeUndefined();
+    });
+    expect(gateway.createFicheFromDraft).toHaveBeenCalledTimes(1);
+    expect(gateway.getFicheById).not.toHaveBeenCalled();
   });
 });
 

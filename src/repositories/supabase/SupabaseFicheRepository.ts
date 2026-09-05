@@ -1,23 +1,73 @@
-// Phase 7A — lecture + mise à jour SEULEMENT (corr. R §26). `add()` N'EST
-// PAS implémentée : aucun `INSERT` sur `fiches` n'est accessible depuis le
-// navigateur (Phase 4 ne l'accorde à personne — seule
+// Phase 7A — lecture + mise à jour ; Phase 7B — création via l'Edge Function
+// `create-fiche-from-draft` (corr. R §26). Aucun `INSERT` sur `fiches` n'est
+// accessible depuis le navigateur (Phase 4 ne l'accorde à personne — seule
 // `app_hidden.create_fiche_from_draft`, `service_role` uniquement, peut
-// créer une fiche). La porte de création cloud est l'Edge Function
-// `create-fiche-from-draft` (Phase 9A), jamais ce Repository.
+// créer une fiche) : `add()` passe donc exclusivement par
+// `SupabaseGateway.createFicheFromDraft()`, jamais par un `.from("fiches")
+// .insert(...)`.
 import { ORDER_STEPS } from "../../lib/types";
 import type { Fiche, FicheChamp, FicheChampKey, OrderStatus } from "../../lib/types";
-import type { FicheInfoPatch, FicheRepository } from "../FicheRepository";
+import { isMeaningfulFicheDraft, mapFicheDraftToCloudPayload } from "../../lib/ficheDraft";
+import type { FicheInfoPatch, FicheRepository, NewFicheInput } from "../FicheRepository";
 import type { RepositoryStatus } from "../RepositoryStatus";
 import { CloudCollectionStore } from "./CloudCollectionStore";
 import { IndexedDbCollectionCache } from "./cache/IndexedDbCache";
 import { DOMAIN_STATUS_TO_CLOUD, mapFicheRowToDomain } from "./mappers/fiche";
-import { ficheViewRowSchema, parseRowOrThrow } from "./schemas";
+import { newFicheInputToDraft } from "./ficheDraftFromInput";
+import { createFicheFromDraftResponseSchema, ficheViewRowSchema, parseRowOrThrow } from "./schemas";
 import { parseOrThrow, storedFicheSchema } from "../schemas";
-import type { SupabaseGateway } from "./gateway";
+import type { GatewayError, SupabaseGateway } from "./gateway";
 import type { SupabaseCarnetRepository } from "./SupabaseCarnetRepository";
 import type { Database, Json } from "../../lib/supabase/database.types";
 
 type FicheUpdate = Database["public"]["Tables"]["fiches"]["Update"];
+
+/** Erreur métier de `create-fiche-from-draft` (corr. R §11, Phase 7B) —
+ * préserve le `message` déjà curaté par l'Edge Function (extrait du corps
+ * JSON `{error, message}` par `toFunctionGatewayError`, `gateway.ts`) et
+ * expose `code` (`"unauthorized"`/`"forbidden"`/`"invalid_client"`/
+ * `"empty_draft"`/...) pour un futur branchement UI fin, sans coupler
+ * l'appelant à `FunctionsHttpError` (interne à `@supabase/supabase-js`). */
+export class CreateFicheFromDraftError extends Error {
+  readonly code: string | undefined;
+  constructor(gatewayError: GatewayError) {
+    super(gatewayError.message || "La fiche n'a pas pu être créée. Réessaie plus tard.");
+    this.name = "CreateFicheFromDraftError";
+    this.code = gatewayError.code;
+  }
+}
+
+/** La fiche a été créée avec succès côté serveur (un numéro a été consommé,
+ * un `id` existe réellement en base) mais une étape locale POST-création a
+ * échoué (refresh carnet, relecture `fiches_view`, incohérence d'atelier
+ * dans la réponse) — jamais rejouer `create-fiche-from-draft` dans ce cas :
+ * un doublon serait pire qu'une synchronisation locale incomplète (corr. R
+ * §16/§18/§19, Phase 7B). `ficheId` reste disponible pour un futur refresh
+ * ciblé ou un message UI plus précis, sans élargir `FicheRepository.add()`
+ * au-delà de `Promise<string>`. */
+export class FicheCreatedButSyncIncompleteError extends Error {
+  readonly ficheId: string;
+  constructor(ficheId: string, message: string, cause?: unknown) {
+    super(message, cause !== undefined ? { cause } : undefined);
+    this.name = "FicheCreatedButSyncIncompleteError";
+    this.ficheId = ficheId;
+  }
+}
+
+/** `createFicheFromDraft()` a renvoyé `error === null` — l'Edge Function a
+ * donc emprunté son chemin SUCCESS, la création serveur a déjà eu lieu —
+ * mais le corps de la réponse est trop malformé pour même en extraire un
+ * `id` fiable (`null`, `{}`, `{fiche: null}`, `fiche` sans `id`/
+ * `workshop_id`...). Contrairement à `FicheCreatedButSyncIncompleteError`,
+ * cette erreur ne prétend PAS connaître `ficheId` — l'inventer serait pire
+ * que ne pas le fournir. Jamais un retry : la fiche existe probablement déjà
+ * côté serveur (corr. R §4, Phase 7B). */
+export class FicheCreatedButResponseInvalidError extends Error {
+  constructor(message: string, cause?: unknown) {
+    super(message, cause !== undefined ? { cause } : undefined);
+    this.name = "FicheCreatedButResponseInvalidError";
+  }
+}
 
 /** Message d'erreur unique pour les 3 opérations Phase 4 n'autorise pas
  * encore (`client_id` immuable par ce chemin, médias/paiements hors scope
@@ -117,15 +167,86 @@ export class SupabaseFicheRepository implements FicheRepository {
     this.store.dispose();
   }
 
-  /** INTERDIT en 7A — voir le commentaire de tête du fichier. */
-  add(): Promise<string> {
-    return Promise.reject(
-      new Error(
-        "SupabaseFicheRepository.add() n'est pas implémentée (Phase 7A). " +
-          "La création de fiche cloud passe exclusivement par l'Edge Function " +
-          "create-fiche-from-draft (Phase 9A), jamais par un INSERT direct.",
-      ),
-    );
+  /** Phase 7B — SEULE porte de création : `create-fiche-from-draft` (Edge
+   * Function), jamais un `.from("fiches").insert(...)` (voir tête de
+   * fichier). Réutilise le brouillon 9A (`isMeaningfulFicheDraft`,
+   * `mapFicheDraftToCloudPayload`) : un payload non significatif est rejeté
+   * AVANT tout appel réseau, même si le serveur revalide la même règle
+   * (défense en profondeur, jamais un aller-retour réseau inutile). Après
+   * succès serveur, la fiche existe déjà : plus aucune étape suivante ne doit
+   * rejouer la création, même si le refresh carnet ou la relecture échoue
+   * (voir `FicheCreatedButSyncIncompleteError`). */
+  async add(input?: NewFicheInput): Promise<string> {
+    const draft = newFicheInputToDraft(input);
+    if (!isMeaningfulFicheDraft(draft)) {
+      throw new Error(
+        "SupabaseFicheRepository.add: brouillon vide — ajoute au moins un client, un nom/prénom/téléphone, " +
+          "un vêtement, une description ou une mesure avant de créer la fiche.",
+      );
+    }
+    const payload = mapFicheDraftToCloudPayload(draft);
+
+    const { data, error } = await this.gateway.createFicheFromDraft(this.workshopId, draft.clientId, payload);
+    if (error) throw new CreateFicheFromDraftError(error);
+
+    // À partir d'ici, la fiche EXISTE côté serveur — `error === null` signifie
+    // que l'Edge Function a emprunté son chemin SUCCESS, donc que la création
+    // a déjà eu lieu (un numéro a potentiellement été consommé). Plus AUCUN
+    // échec ci-dessous — corps de réponse malformé, atelier incohérent,
+    // refresh carnet, relecture — ne doit jamais réappeler
+    // createFicheFromDraft ni laisser croire que rien n'a été créé (§16).
+    let created: { id: string; workshop_id: string };
+    try {
+      ({ fiche: created } = parseRowOrThrow(createFicheFromDraftResponseSchema, data, "SupabaseFicheRepository.add"));
+    } catch (parseError) {
+      throw new FicheCreatedButResponseInvalidError(
+        "Le serveur a confirmé la création, mais la réponse reçue est invalide. " +
+          "La fiche peut déjà exister. Rafraîchis les données avant de réessayer.",
+        parseError,
+      );
+    }
+
+    if (created.workshop_id !== this.workshopId) {
+      throw new FicheCreatedButSyncIncompleteError(
+        created.id,
+        "La fiche a été créée, mais la réponse serveur indique un atelier incohérent. " +
+          "Rafraîchis les données avant de réessayer.",
+      );
+    }
+
+    await this.carnets.refresh();
+    const carnetRefreshError = this.carnets.getLastRefreshError();
+    if (carnetRefreshError) {
+      throw new FicheCreatedButSyncIncompleteError(
+        created.id,
+        "La fiche a été créée, mais le carnet n'a pas pu être synchronisé. Rafraîchis les données.",
+        carnetRefreshError,
+      );
+    }
+
+    const { data: ficheData, error: ficheError } = await this.gateway.getFicheById(this.workshopId, created.id);
+    if (ficheError) {
+      throw new FicheCreatedButSyncIncompleteError(
+        created.id,
+        "La fiche a été créée, mais sa relecture a échoué. Rafraîchis les données.",
+        new Error(ficheError.message),
+      );
+    }
+
+    let fiche: Fiche;
+    try {
+      const row = parseRowOrThrow(ficheViewRowSchema, ficheData, "SupabaseFicheRepository.add");
+      fiche = mapFicheRowToDomain(row, (carnetId) => this.carnets.getCarnetNumero(carnetId));
+    } catch (mapError) {
+      throw new FicheCreatedButSyncIncompleteError(
+        created.id,
+        "La fiche a été créée, mais sa relecture a échoué. Rafraîchis les données.",
+        mapError,
+      );
+    }
+
+    this.store.applyMutation(fiche.id, fiche);
+    return fiche.id;
   }
 
   private async applyUpdate(id: string, update: FicheUpdate): Promise<void> {

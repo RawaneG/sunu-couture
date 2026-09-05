@@ -30,6 +30,7 @@ function fakeGateway(overrides: Partial<SupabaseGateway> = {}): SupabaseGateway 
     getFicheById: vi.fn(async () => ({ data: null, error: null })),
     updateFiche: vi.fn(async () => ({ data: null, error: null })),
     softDeleteFiches: vi.fn(async () => ({ data: null, error: null })),
+    createFicheFromDraft: vi.fn(async () => ({ data: null, error: null })),
     ...overrides,
   };
 }

@@ -79,3 +79,16 @@ export const ficheViewRowSchema = z.object({
   is_late: z.boolean(),
 });
 export type FicheViewRow = z.infer<typeof ficheViewRowSchema>;
+
+// ── réponse `create-fiche-from-draft` (Phase 7B/9A) ─────────────────────
+// La ligne renvoyée par l'Edge Function est une ligne BRUTE `public.fiches`
+// (celle que `create_fiche_from_draft_api` retourne), PAS une ligne
+// `fiches_view` — elle n'a donc pas `is_late` et ne doit JAMAIS être passée
+// à `mapFicheRowToDomain` directement (corr. R §12, Phase 7B). On ne valide
+// ici que le strict nécessaire pour extraire `id`/`workshop_id` (défense :
+// vérifier que la fiche créée appartient bien à l'atelier attendu) — la
+// fiche complète est ensuite relue via `getFicheById` (`fiches_view`),
+// seule source pour construire un `Fiche` domaine (§13).
+export const createFicheFromDraftResponseSchema = z.object({
+  fiche: z.object({ id: z.string(), workshop_id: z.string() }).loose(),
+});
