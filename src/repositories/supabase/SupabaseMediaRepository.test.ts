@@ -490,7 +490,7 @@ describe("SupabaseMediaRepository — médias modèle (Phase 8B)", () => {
     expect(media.listModelePhotos("mod1")).toHaveLength(0);
   });
 
-  it("addModelePhoto : position suivante = nombre de lignes déjà actives du même kind", async () => {
+  it("addModelePhoto : position suivante = max(position) + 1 sur des positions contiguës", async () => {
     const gateway = fakeGateway({
       listActiveModeleMedias: vi.fn(async () => ({
         data: [modeleMediaRow({ id: "mm-a", kind: "photo", position: 0 }), modeleMediaRow({ id: "mm-b", kind: "photo", position: 1 })],
@@ -505,6 +505,31 @@ describe("SupabaseMediaRepository — médias modèle (Phase 8B)", () => {
 
     const insertPayload = (gateway.insertModeleMedia as ReturnType<typeof vi.fn>).mock.calls[0][0];
     expect(insertPayload.position).toBe(2);
+  });
+
+  it("addModelePhoto : position suivante = max(position) + 1, PAS un compte de lignes, quand des positions ont été retirées (trous)", async () => {
+    // Positions initiales 0,1,2,3,4 ; 1 et 2 ont été supprimées (détachées) —
+    // il reste 0, 3, 4 (3 lignes actives). Un simple `.length` (3) attribuerait
+    // la position 3, déjà occupée par un média existant, faisant apparaître le
+    // nouvel ajout AVANT lui dans le tri `position ASC` (correctif ciblé).
+    const gateway = fakeGateway({
+      listActiveModeleMedias: vi.fn(async () => ({
+        data: [
+          modeleMediaRow({ id: "mm-0", kind: "photo", position: 0 }),
+          modeleMediaRow({ id: "mm-3", kind: "photo", position: 3 }),
+          modeleMediaRow({ id: "mm-4", kind: "photo", position: 4 }),
+        ],
+        error: null,
+      })),
+      insertModeleMedia: vi.fn(async () => ({ data: modeleMediaRow({ id: "mm-5", kind: "photo", position: 5 }), error: null })),
+    });
+    const media = new SupabaseMediaRepository({ gateway, workshopId: "w1" });
+    await media.bootstrapped;
+
+    await media.addModelePhoto("mod1", JPEG_DATA_URL);
+
+    const insertPayload = (gateway.insertModeleMedia as ReturnType<typeof vi.fn>).mock.calls[0][0];
+    expect(insertPayload.position).toBe(5); // jamais 3 (le compte de lignes actives)
   });
 
   it("addModelePhoto : MIME audio refusé AVANT tout upload (§38 — plus restrictif que le bucket fiche)", async () => {
@@ -582,6 +607,45 @@ describe("SupabaseMediaRepository — médias modèle (Phase 8B)", () => {
 
     expect(gateway.deleteModeleMedia).toHaveBeenCalledWith("w1", "mm1");
     expect(media.listModelePhotos("mod1")).toHaveLength(0);
+  });
+
+  describe("evictModeleMedia (correctif ciblé — coordination avec SupabaseModeleRepository)", () => {
+    it("retire du cache mémoire UNIQUEMENT les médias des modèles listés, aucune requête serveur, jamais les médias fiche", async () => {
+      const gateway = fakeGateway({
+        listActiveModeleMedias: vi.fn(async () => ({
+          data: [modeleMediaRow({ id: "mm-m1", modele_id: "m1" }), modeleMediaRow({ id: "mm-m2", modele_id: "m2" })],
+          error: null,
+        })),
+        listActiveMediaAssets: vi.fn(async () => ({ data: [mediaRow({ id: "fm1" })], error: null })),
+      });
+      const media = new SupabaseMediaRepository({ gateway, workshopId: "w1" });
+      await media.bootstrapped;
+
+      expect(media.listModelePhotos("m1")).toHaveLength(1);
+      expect(media.listModelePhotos("m2")).toHaveLength(1);
+      expect(media.listFichePhotos("f1")).toHaveLength(1);
+
+      media.evictModeleMedia(["m1"]);
+
+      expect(media.listModelePhotos("m1")).toEqual([]);
+      expect(media.listModelePhotos("m2")).toHaveLength(1); // non listé, inchangé
+      expect(media.listFichePhotos("f1")).toHaveLength(1); // médias fiche jamais touchés
+      // Aucune requête gateway déclenchée par cette éviction (cache mémoire uniquement).
+      expect(gateway.deleteModeleMedia).not.toHaveBeenCalled();
+      expect(gateway.softDeleteMediaAsset).not.toHaveBeenCalled();
+    });
+
+    it("aucun média correspondant -> ne notifie pas (aucun changement réel)", async () => {
+      const gateway = fakeGateway();
+      const media = new SupabaseMediaRepository({ gateway, workshopId: "w1" });
+      await media.bootstrapped;
+      const listener = vi.fn();
+      media.subscribe(listener);
+
+      media.evictModeleMedia(["m-inexistant"]);
+
+      expect(listener).not.toHaveBeenCalled();
+    });
   });
 
   describe("copyModeleMediaToFiche", () => {

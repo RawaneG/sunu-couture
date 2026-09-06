@@ -127,6 +127,35 @@ export class SupabaseMediaRepository implements MediaRepository {
     this.listeners.clear();
   }
 
+  /** Éviction CACHE MÉMOIRE uniquement (correctif ciblé) — aucune requête
+   * serveur, aucune suppression Storage. Appelée par
+   * `createPhase8BCloudRepositories` juste après qu'un soft-delete de
+   * modèle est confirmé côté serveur (`SupabaseModeleRepository.
+   * onModelesRemoved`) : sans cette éviction, `modeleMediaMap` garderait des
+   * rows dont le `storage_path` est désormais refusé par la policy Storage
+   * (`modeles.deleted_at IS NULL`), empoisonnant le prochain rafraîchissement
+   * PÉRIODIQUE atomique des URLs signées (`signAllPaths` échoue en bloc dès
+   * qu'UN SEUL path du lot est refusé — y compris pour les médias FICHE du
+   * même lot) en boucle de retry (30 s) sans jamais réussir. Ne touche
+   * JAMAIS `mediaMap`/`derivedCache` (médias fiche) — uniquement
+   * `modeleMediaMap` et les entrées `signedUrls`/`sessionFallback` qui lui
+   * correspondent. */
+  evictModeleMedia(modeleIds: readonly string[]): void {
+    if (modeleIds.length === 0) return;
+    const idSet = new Set(modeleIds);
+    let changed = false;
+    for (const row of this.modeleMediaMap.values()) {
+      if (!idSet.has(row.modele_id)) continue;
+      this.modeleMediaMap.delete(row.id);
+      this.sessionFallback.delete(row.id);
+      this.signedUrls.delete(row.storage_path);
+      changed = true;
+    }
+    if (!changed) return; // rien à évincer — jamais de notification inutile
+    this.epoch += 1;
+    this.notify();
+  }
+
   /** Contrainte DOMAINE (la DB ne l'impose pas pour `voice_note`, seulement
    * pour `signature` via son index partiel) : au plus une `voice_note`
    * active par fiche — jamais résolue en prenant arbitrairement la dernière
@@ -543,8 +572,21 @@ export class SupabaseMediaRepository implements MediaRepository {
     );
   }
 
+  /** `max(position) + 1`, jamais `count` (correctif ciblé) — après une
+   * suppression laissant des trous (ex. positions restantes 0, 3, 4), un
+   * simple compte de lignes actives (`length` = 3) réattribuerait `3`, une
+   * position déjà occupée par un média existant, faisant apparaître le
+   * nouvel ajout AVANT lui dans le tri `position ASC`. Aucun média du kind
+   * → `0`. Le tie-break (`position ASC`, `created_at`, `id`) reste inchangé
+   * pour les données déjà en base (positions dupliquées possibles, jamais
+   * une corruption) — ce correctif ne concerne que l'ALLOCATION des
+   * nouveaux médias. */
   private nextModelePosition(modeleId: string, kind: ModeleMediaKind): number {
-    return this.rowsForModele(modeleId).filter((r) => r.kind === kind).length;
+    const rows = this.rowsForModele(modeleId).filter((r) => r.kind === kind);
+    if (rows.length === 0) return 0;
+    let max = rows[0].position;
+    for (const row of rows) if (row.position > max) max = row.position;
+    return max + 1;
   }
 
   /** Même contrat de stabilité de référence que `getDerived()` (fiche) —

@@ -19,12 +19,26 @@ export interface SupabaseModeleRepositoryOptions {
   workshopId: string;
   /** Injection pour les tests — par défaut un `IndexedDbCollectionCache` réel. */
   cache?: IndexedDbCollectionCache<Modele>;
+  /** Coordination cloud (correctif ciblé) — appelé UNIQUEMENT après confirmation
+   * serveur du soft-delete, jamais avant, jamais si le serveur rejette. Sans ce
+   * callback, `SupabaseMediaRepository.modeleMediaMap` garde des rows dont le
+   * `storage_path` est désormais refusé par la policy Storage
+   * (`modeles.deleted_at IS NULL`) : le prochain rafraîchissement PÉRIODIQUE des
+   * URLs signées (atomique, `signAllPaths`) inclut ce path stale, échoue en
+   * bloc, et retente indéfiniment (30 s) sans jamais réussir — empoisonnant
+   * aussi le renouvellement des médias FICHE valides du même lot. Optionnel
+   * pour que les tests unitaires et la construction isolée du Repository
+   * restent possibles sans dépendance à `SupabaseMediaRepository`. La
+   * coordination réelle vit dans `createPhase8BCloudRepositories.ts` — jamais
+   * dans une page UI (`ModeleDetail`/`Catalogue`). */
+  onModelesRemoved?: (ids: readonly string[]) => void;
 }
 
 export class SupabaseModeleRepository implements ModeleRepository {
   private readonly gateway: SupabaseGateway;
   private readonly workshopId: string;
   private readonly store: CloudCollectionStore<Modele>;
+  private readonly onModelesRemoved?: (ids: readonly string[]) => void;
 
   /** Résout une fois le cycle hydratation-cache + premier refresh réseau
    * terminé (succès ou échec) — voir `SupabaseClientRepository`. */
@@ -36,6 +50,7 @@ export class SupabaseModeleRepository implements ModeleRepository {
     }
     this.gateway = options.gateway;
     this.workshopId = options.workshopId;
+    this.onModelesRemoved = options.onModelesRemoved;
     this.store = new CloudCollectionStore<Modele>({
       cache: options.cache ?? new IndexedDbCollectionCache<Modele>("modeles", options.workshopId),
       getId: (m) => m.id,
@@ -113,11 +128,16 @@ export class SupabaseModeleRepository implements ModeleRepository {
   /** `deleted_at = now()` — jamais de DELETE physique (§28). Les médias DB
    * associés (`modele_medias`) peuvent rester présents : c'est
    * `SupabaseMediaRepository.listActiveModeleMedias` (via le gateway) qui ne
-   * les charge/signe jamais dès que leur modèle parent est soft-deleted. */
+   * les charge/signe jamais dès que leur modèle parent est soft-deleted.
+   * `onModelesRemoved` n'est appelé QU'APRÈS confirmation serveur du
+   * soft-delete — un rejet serveur laisse le callback à 0 appel, le cache
+   * média et le store modèle inchangés (correctif ciblé, voir le
+   * commentaire de tête de `SupabaseModeleRepositoryOptions`). */
   async removeMany(ids: string[]): Promise<void> {
     if (ids.length === 0) return;
     const { error } = await this.gateway.softDeleteModeles(this.workshopId, ids);
     if (error) throw new Error(error.message);
     for (const id of ids) this.store.applyMutation(id, null);
+    this.onModelesRemoved?.(ids);
   }
 }
