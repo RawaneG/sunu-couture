@@ -11,12 +11,15 @@
 // stockée par une version antérieure du schéma, ou corrompue, doit être
 // validée par l'appelant (`CloudCollectionStore`) avant tout affichage.
 //
-// DB_VERSION 1 → 2 (ajout de "carnets") : le upgrade n'ajoute QUE les
-// magasins manquants (`if (!contains(storeName))`) — les données déjà
-// présentes dans "clients"/"fiches" ne sont jamais touchées ni supprimées.
+// DB_VERSION 1 → 2 (ajout de "carnets"), 2 → 3 (Phase 8B, ajout de
+// "modeles") : le upgrade n'ajoute QUE les magasins manquants
+// (`if (!contains(storeName))`) — les données déjà présentes dans
+// "clients"/"fiches"/"carnets" ne sont jamais touchées ni supprimées. Le
+// cache "modeles" ne stocke QUE les métadonnées (`nom`, dates) — jamais les
+// photos/patrons (non autoritatifs ici, voir `mappers/modele.ts`).
 const DB_NAME = "tayoo-cloud-cache";
-const DB_VERSION = 2;
-export const CACHE_STORE_NAMES = ["clients", "fiches", "carnets"] as const;
+const DB_VERSION = 3;
+export const CACHE_STORE_NAMES = ["clients", "fiches", "carnets", "modeles"] as const;
 export type CacheStoreName = (typeof CACHE_STORE_NAMES)[number];
 
 interface StoredRow {

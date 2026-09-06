@@ -82,7 +82,21 @@ export const champValeurSchema = z.string();
 
 export const amountSchema = z.number().int().min(0);
 
-export const modeleNomSchema = z.string();
+// Aligné sur la contrainte SQL réelle (Phase 8B, `public.modeles` :
+// `length(btrim(nom)) BETWEEN 1 AND 200`) — la valeur elle-même n'est PAS
+// trimmée ici (le schéma valide la longueur du nom TRIMMÉ, comme SQL, mais
+// ne réécrit jamais la saisie du tailleur). `""`/`"   "`/>200 caractères
+// (trimmés) sont invalides ; aucun fallback inventé ("Nouveau modèle",
+// "Sans nom", "Modèle 1") ne doit jamais remplacer un rejet.
+export const modeleNomSchema = z.string().refine((v) => {
+  const trimmed = v.trim();
+  return trimmed.length >= 1 && trimmed.length <= 200;
+}, "nom de modèle invalide (1 à 200 caractères après suppression des espaces)");
+
+export const newModeleInputSchema = z.object({
+  nom: modeleNomSchema,
+});
+export type NewModeleInputParsed = z.infer<typeof newModeleInputSchema>;
 
 export const dataUrlSchema = z.string().min(1);
 

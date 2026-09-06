@@ -49,6 +49,19 @@ export async function sha256Hex(blob: Blob): Promise<string> {
     .join("");
 }
 
+/** Inverse de `parseDataUrl` pour un `Blob` déjà en mémoire (Phase 8B,
+ * `copyModeleMediaToFiche`) — sert UNIQUEMENT de repli d'affichage
+ * SESSION quand la signature immédiate d'une copie échoue (même rôle que
+ * `sourceDataUrl` dans `SupabaseMediaRepository.commitRow`), jamais persisté. */
+export function blobToDataUrl(blob: Blob): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(reader.result as string);
+    reader.onerror = () => reject(reader.error ?? new Error("blobToDataUrl : lecture échouée."));
+    reader.readAsDataURL(blob);
+  });
+}
+
 /** Dimensions réelles d'une image (photo tissu compressée ou signature PNG)
  * — décodée depuis sa propre data URL, jamais devinées depuis sa taille en
  * octets. Rejette explicitement une image qui ne charge pas (corr. R §26).

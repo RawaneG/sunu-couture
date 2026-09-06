@@ -1764,6 +1764,183 @@ begin
 end;
 $$;
 
-do $$ begin raise notice '════════  SCHÉMA PHASE 2 + WRAPPER PHASE 3A + CORRECTIFS GRANT + PHASE 4 GRANT/RLS + WRAPPER PHASE 9A + STORAGE PHASE 8A : 61 groupes de tests OK  ════════'; end; $$;
+-- ══════════════════════════════════════════════════════════════════════════
+-- PHASE 8B — extension des policies Storage `media` au catalogue de modèles
+-- (`20260906161045_phase_8b_catalog_storage_policies.sql`). Aucun changement
+-- de schéma `public.modeles`/`public.modele_medias` (déjà en place depuis
+-- Phase 4) — cette migration ne touche QUE `storage.objects`. Les scénarios
+-- FONCTIONNELS (upload réel, isolation cross-atelier, soft-delete modèle)
+-- sont couverts par `scripts/test-phase-8b-catalog.mjs` (API Storage réelle),
+-- pas ici — ces groupes restent au niveau STRUCTUREL, comme T58-T61.
+-- ══════════════════════════════════════════════════════════════════════════
+
+-- ── T62 — toujours exactement 2 policies combinées (fiche+modèle) ─────────
+do $$
+declare v_count int;
+begin
+  select count(*) into v_count from pg_policies
+  where schemaname = 'storage' and tablename = 'objects'
+    and policyname in ('media_objects_select_member', 'media_objects_insert_member');
+  if v_count <> 2 then
+    raise exception 'T62 FAIL: attendu exactement 2 policies media_objects_* après Phase 8B, trouvé %', v_count;
+  end if;
+  if exists (
+    select 1 from pg_policies
+    where schemaname = 'storage' and tablename = 'objects'
+      and policyname in ('media_objects_select_member', 'media_objects_insert_member')
+      and (roles <> array['authenticated']::name[] or cmd not in ('SELECT', 'INSERT'))
+  ) then
+    raise exception 'T62 FAIL: une policy media_objects_* n''est plus exactement SELECT/INSERT authenticated';
+  end if;
+  raise notice 'T62 OK — toujours exactement 2 policies (SELECT+INSERT authenticated), aucune duplication 8B';
+end;
+$$;
+
+-- ── T63 — toujours aucune policy UPDATE/DELETE/anon après Phase 8B ────────
+do $$
+begin
+  if exists (
+    select 1 from pg_policies
+    where schemaname = 'storage' and tablename = 'objects'
+      and policyname like 'media_objects_%' and cmd in ('UPDATE', 'DELETE')
+  ) then
+    raise exception 'T63 FAIL: une policy media_objects_* UPDATE/DELETE existe après Phase 8B';
+  end if;
+  if exists (
+    select 1 from pg_policies
+    where schemaname = 'storage' and tablename = 'objects'
+      and policyname like 'media_objects_%' and 'anon' = any(roles)
+  ) then
+    raise exception 'T63 FAIL: une policy media_objects_* accorde un rôle anon après Phase 8B';
+  end if;
+  raise notice 'T63 OK — aucun UPDATE/DELETE/anon sur media_objects_* après Phase 8B';
+end;
+$$;
+
+-- ── T64 — la branche FICHE (fonctionnellement identique à 8A) est préservée
+do $$
+declare v_select_qual text;
+declare v_insert_check text;
+begin
+  select qual::text into v_select_qual from pg_policies
+  where schemaname = 'storage' and tablename = 'objects' and policyname = 'media_objects_select_member';
+  select with_check::text into v_insert_check from pg_policies
+  where schemaname = 'storage' and tablename = 'objects' and policyname = 'media_objects_insert_member';
+
+  if v_select_qual is null or v_select_qual !~ 'fiches' or v_select_qual !~ 'deleted_at IS NULL' then
+    raise exception 'T64 FAIL: la branche fiche (public.fiches, deleted_at IS NULL) est absente de la policy SELECT : %', v_select_qual;
+  end if;
+  if v_insert_check is null or v_insert_check !~ 'fiches' or v_insert_check !~ 'deleted_at IS NULL' then
+    raise exception 'T64 FAIL: la branche fiche est absente de la policy INSERT : %', v_insert_check;
+  end if;
+  raise notice 'T64 OK — branche FICHE (public.fiches, deleted_at IS NULL) préservée dans les 2 policies';
+end;
+$$;
+
+-- ── T65 — la nouvelle branche MODELE est bien présente ────────────────────
+do $$
+declare v_select_qual text;
+declare v_insert_check text;
+begin
+  select qual::text into v_select_qual from pg_policies
+  where schemaname = 'storage' and tablename = 'objects' and policyname = 'media_objects_select_member';
+  select with_check::text into v_insert_check from pg_policies
+  where schemaname = 'storage' and tablename = 'objects' and policyname = 'media_objects_insert_member';
+
+  if v_select_qual is null or v_select_qual !~ 'modeles' then
+    raise exception 'T65 FAIL: la branche modèle (public.modeles) est absente de la policy SELECT : %', v_select_qual;
+  end if;
+  if v_insert_check is null or v_insert_check !~ 'modeles' then
+    raise exception 'T65 FAIL: la branche modèle est absente de la policy INSERT : %', v_insert_check;
+  end if;
+  raise notice 'T65 OK — branche MODELE (public.modeles) présente dans les 2 policies';
+end;
+$$;
+
+-- ── T66 — la branche MODELE exige modeles.deleted_at IS NULL (§29) ────────
+do $$
+declare v_select_qual text;
+declare v_insert_check text;
+begin
+  select qual::text into v_select_qual from pg_policies
+  where schemaname = 'storage' and tablename = 'objects' and policyname = 'media_objects_select_member';
+  select with_check::text into v_insert_check from pg_policies
+  where schemaname = 'storage' and tablename = 'objects' and policyname = 'media_objects_insert_member';
+
+  -- Recherche la clause "m.deleted_at IS NULL" (alias utilisé côté modèle,
+  -- distinct de "f.deleted_at IS NULL" côté fiche) : les DEUX clauses
+  -- "deleted_at IS NULL" doivent apparaître (une pour chaque branche).
+  if (select count(*) from regexp_matches(v_select_qual, 'deleted_at IS NULL', 'g')) < 2 then
+    raise exception 'T66 FAIL: la policy SELECT ne vérifie pas deleted_at IS NULL sur les DEUX branches : %', v_select_qual;
+  end if;
+  if (select count(*) from regexp_matches(v_insert_check, 'deleted_at IS NULL', 'g')) < 2 then
+    raise exception 'T66 FAIL: la policy INSERT ne vérifie pas deleted_at IS NULL sur les DEUX branches : %', v_insert_check;
+  end if;
+  raise notice 'T66 OK — couple workshop+modele exact (deleted_at IS NULL vérifié sur les 2 branches, pas seulement l''accessibilité de la fiche/du modèle)';
+end;
+$$;
+
+-- ── T67 — aucun cast ::uuid non protégé sur un segment de path ────────────
+do $$
+declare v_select_qual text;
+declare v_insert_check text;
+begin
+  select qual::text into v_select_qual from pg_policies
+  where schemaname = 'storage' and tablename = 'objects' and policyname = 'media_objects_select_member';
+  select with_check::text into v_insert_check from pg_policies
+  where schemaname = 'storage' and tablename = 'objects' and policyname = 'media_objects_insert_member';
+
+  if v_select_qual ~ '::uuid' or v_insert_check ~ '::uuid' then
+    raise exception 'T67 FAIL: un cast ::uuid non protégé subsiste (un path malformé pourrait lever une exception) — select=% insert=%', v_select_qual, v_insert_check;
+  end if;
+  raise notice 'T67 OK — comparaisons ::text uniquement, aucun cast ::uuid non protégé (path malformé jamais une exception)';
+end;
+$$;
+
+-- ── T68 — bucket "media" inchangé par Phase 8B (privé, même allowlist) ────
+do $$
+declare
+  v_bucket record;
+begin
+  select id, public, allowed_mime_types into v_bucket from storage.buckets where id = 'media';
+  if not found then
+    raise exception 'T68 FAIL: bucket "media" absent après Phase 8B';
+  end if;
+  if v_bucket.public is distinct from false then
+    raise exception 'T68 FAIL: bucket "media" doit rester privé (public=false) après Phase 8B';
+  end if;
+  if v_bucket.allowed_mime_types is null
+     or v_bucket.allowed_mime_types::text[] <> array['image/jpeg', 'image/png', 'audio/webm', 'audio/mp4', 'audio/ogg']
+  then
+    raise exception 'T68 FAIL: allowed_mime_types modifié par Phase 8B (ne devrait pas l''être) : %', v_bucket.allowed_mime_types;
+  end if;
+  raise notice 'T68 OK — bucket "media" inchangé par Phase 8B (privé, même allowlist MIME)';
+end;
+$$;
+
+-- ── T69 — public.modeles / public.modele_medias : GRANT Phase 4 inchangés ─
+do $$
+begin
+  if not has_table_privilege('authenticated', 'public.modeles', 'select')
+     or not has_table_privilege('authenticated', 'public.modeles', 'insert') then
+    raise exception 'T69 FAIL: authenticated a perdu SELECT/INSERT sur modeles (régression Phase 8B)';
+  end if;
+  if not has_table_privilege('authenticated', 'public.modele_medias', 'select')
+     or not has_table_privilege('authenticated', 'public.modele_medias', 'insert')
+     or not has_table_privilege('authenticated', 'public.modele_medias', 'delete') then
+    raise exception 'T69 FAIL: authenticated a perdu SELECT/INSERT/DELETE sur modele_medias (régression Phase 8B)';
+  end if;
+  if has_table_privilege('authenticated', 'public.modele_medias', 'update') then
+    raise exception 'T69 FAIL: authenticated a un UPDATE sur modele_medias — Phase 8B ne doit PAS l''ajouter (§6)';
+  end if;
+  if has_table_privilege('anon', 'public.modeles', 'select')
+     or has_table_privilege('anon', 'public.modele_medias', 'select') then
+    raise exception 'T69 FAIL: anon a un accès sur modeles/modele_medias (régression)';
+  end if;
+  raise notice 'T69 OK — GRANT Phase 4 inchangés sur modeles/modele_medias, aucun nouveau GRANT UPDATE ajouté par Phase 8B';
+end;
+$$;
+
+do $$ begin raise notice '════════  SCHÉMA PHASE 2 + WRAPPER PHASE 3A + CORRECTIFS GRANT + PHASE 4 GRANT/RLS + WRAPPER PHASE 9A + STORAGE PHASE 8A + STORAGE PHASE 8B : 69 groupes de tests OK  ════════'; end; $$;
 
 rollback;

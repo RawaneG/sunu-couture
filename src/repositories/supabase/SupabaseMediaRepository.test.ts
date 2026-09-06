@@ -47,6 +47,35 @@ function mediaRow(overrides: Record<string, unknown> = {}) {
   };
 }
 
+function modeleRow(overrides: Record<string, unknown> = {}) {
+  return {
+    id: "mod1",
+    workshop_id: "w1",
+    nom: "Robe wax",
+    created_at: "2026-01-01T00:00:00.000Z",
+    updated_at: "2026-01-01T00:00:00.000Z",
+    deleted_at: null,
+    ...overrides,
+  };
+}
+
+function modeleMediaRow(overrides: Record<string, unknown> = {}) {
+  return {
+    id: "mm1",
+    workshop_id: "w1",
+    modele_id: "mod1",
+    kind: "photo",
+    storage_path: "workshops/w1/modeles/mod1/file1",
+    mime_type: "image/jpeg",
+    size_bytes: 100,
+    position: 0,
+    metadata: {},
+    created_at: "2026-01-01T00:00:00.000Z",
+    deleted_at: null,
+    ...overrides,
+  };
+}
+
 function fakeGateway(overrides: Partial<SupabaseGateway> = {}): SupabaseGateway {
   return {
     listActiveClients: vi.fn(async () => ({ data: [], error: null })),
@@ -64,6 +93,15 @@ function fakeGateway(overrides: Partial<SupabaseGateway> = {}): SupabaseGateway 
     restoreMediaAsset: vi.fn(async () => ({ data: null, error: null })),
     uploadMediaObject: vi.fn(async () => ({ data: null, error: null })),
     createSignedMediaUrl: vi.fn(async () => ({ data: "https://signed.example/x", error: null })),
+    downloadMediaObject: vi.fn(async () => ({ data: new Blob(["x"]), error: null })),
+    listActiveModeles: vi.fn(async () => ({ data: [], error: null })),
+    getModeleById: vi.fn(async () => ({ data: modeleRow(), error: null })),
+    insertModele: vi.fn(async () => ({ data: null, error: null })),
+    updateModeleNom: vi.fn(async () => ({ data: null, error: null })),
+    softDeleteModeles: vi.fn(async () => ({ data: null, error: null })),
+    listActiveModeleMedias: vi.fn(async () => ({ data: [], error: null })),
+    insertModeleMedia: vi.fn(async () => ({ data: modeleMediaRow({ id: "mm-new" }), error: null })),
+    deleteModeleMedia: vi.fn(async () => ({ data: null, error: null })),
     ...overrides,
   };
 }
@@ -415,17 +453,368 @@ describe("SupabaseMediaRepository — setFicheSignature", () => {
   });
 });
 
-describe("SupabaseMediaRepository — médias modèle (Phase 8B, non implémentés)", () => {
-  it("listModelePhotos rejette explicitement — jamais une collection vide silencieuse", async () => {
-    const media = new SupabaseMediaRepository({ gateway: fakeGateway(), workshopId: "w1" });
+describe("SupabaseMediaRepository — médias modèle (Phase 8B)", () => {
+  it("addModelePhoto : assert modèle, 1 upload, 1 insert kind=photo, bon workshop/modele_id/MIME/size/path, 1 signature", async () => {
+    const gateway = fakeGateway({
+      insertModeleMedia: vi.fn(async () => ({ data: modeleMediaRow({ id: "mm-new", kind: "photo" }), error: null })),
+    });
+    const media = new SupabaseMediaRepository({ gateway, workshopId: "w1" });
     await media.bootstrapped;
-    expect(() => media.listModelePhotos("m1")).toThrow(/Phase 8B/);
+
+    await media.addModelePhoto("mod1", JPEG_DATA_URL);
+
+    expect(gateway.getModeleById).toHaveBeenCalledWith("w1", "mod1");
+    expect(gateway.uploadMediaObject).toHaveBeenCalledTimes(1);
+    const [path, , contentType] = (gateway.uploadMediaObject as ReturnType<typeof vi.fn>).mock.calls[0];
+    expect(path).toMatch(/^workshops\/w1\/modeles\/mod1\//);
+    expect(contentType).toBe("image/jpeg");
+    expect(gateway.insertModeleMedia).toHaveBeenCalledTimes(1);
+    const insertPayload = (gateway.insertModeleMedia as ReturnType<typeof vi.fn>).mock.calls[0][0];
+    expect(insertPayload).toMatchObject({ workshop_id: "w1", modele_id: "mod1", kind: "photo", position: 0 });
+    expect(gateway.createSignedMediaUrl).toHaveBeenCalledTimes(1);
+    expect(media.listModelePhotos("mod1")).toHaveLength(1);
   });
 
-  it("addModelePhoto rejette explicitement", async () => {
-    const media = new SupabaseMediaRepository({ gateway: fakeGateway(), workshopId: "w1" });
+  it("addModelePatronPhoto : kind=patron", async () => {
+    const gateway = fakeGateway({
+      insertModeleMedia: vi.fn(async () => ({ data: modeleMediaRow({ id: "mm-new", kind: "patron" }), error: null })),
+    });
+    const media = new SupabaseMediaRepository({ gateway, workshopId: "w1" });
     await media.bootstrapped;
-    await expect(media.addModelePhoto("m1", JPEG_DATA_URL)).rejects.toThrow(/Phase 8B/);
+
+    await media.addModelePatronPhoto("mod1", PNG_DATA_URL);
+
+    const insertPayload = (gateway.insertModeleMedia as ReturnType<typeof vi.fn>).mock.calls[0][0];
+    expect(insertPayload).toMatchObject({ kind: "patron" });
+    expect(media.listModelePatronPhotos("mod1")).toHaveLength(1);
+    expect(media.listModelePhotos("mod1")).toHaveLength(0);
+  });
+
+  it("addModelePhoto : position suivante = max(position) + 1 sur des positions contiguës", async () => {
+    const gateway = fakeGateway({
+      listActiveModeleMedias: vi.fn(async () => ({
+        data: [modeleMediaRow({ id: "mm-a", kind: "photo", position: 0 }), modeleMediaRow({ id: "mm-b", kind: "photo", position: 1 })],
+        error: null,
+      })),
+      insertModeleMedia: vi.fn(async () => ({ data: modeleMediaRow({ id: "mm-c", kind: "photo", position: 2 }), error: null })),
+    });
+    const media = new SupabaseMediaRepository({ gateway, workshopId: "w1" });
+    await media.bootstrapped;
+
+    await media.addModelePhoto("mod1", JPEG_DATA_URL);
+
+    const insertPayload = (gateway.insertModeleMedia as ReturnType<typeof vi.fn>).mock.calls[0][0];
+    expect(insertPayload.position).toBe(2);
+  });
+
+  it("addModelePhoto : position suivante = max(position) + 1, PAS un compte de lignes, quand des positions ont été retirées (trous)", async () => {
+    // Positions initiales 0,1,2,3,4 ; 1 et 2 ont été supprimées (détachées) —
+    // il reste 0, 3, 4 (3 lignes actives). Un simple `.length` (3) attribuerait
+    // la position 3, déjà occupée par un média existant, faisant apparaître le
+    // nouvel ajout AVANT lui dans le tri `position ASC` (correctif ciblé).
+    const gateway = fakeGateway({
+      listActiveModeleMedias: vi.fn(async () => ({
+        data: [
+          modeleMediaRow({ id: "mm-0", kind: "photo", position: 0 }),
+          modeleMediaRow({ id: "mm-3", kind: "photo", position: 3 }),
+          modeleMediaRow({ id: "mm-4", kind: "photo", position: 4 }),
+        ],
+        error: null,
+      })),
+      insertModeleMedia: vi.fn(async () => ({ data: modeleMediaRow({ id: "mm-5", kind: "photo", position: 5 }), error: null })),
+    });
+    const media = new SupabaseMediaRepository({ gateway, workshopId: "w1" });
+    await media.bootstrapped;
+
+    await media.addModelePhoto("mod1", JPEG_DATA_URL);
+
+    const insertPayload = (gateway.insertModeleMedia as ReturnType<typeof vi.fn>).mock.calls[0][0];
+    expect(insertPayload.position).toBe(5); // jamais 3 (le compte de lignes actives)
+  });
+
+  it("addModelePhoto : MIME audio refusé AVANT tout upload (§38 — plus restrictif que le bucket fiche)", async () => {
+    const gateway = fakeGateway();
+    const media = new SupabaseMediaRepository({ gateway, workshopId: "w1" });
+    await media.bootstrapped;
+
+    await expect(media.addModelePhoto("mod1", WEBM_DATA_URL)).rejects.toThrow(/non autorisé/);
+    expect(gateway.uploadMediaObject).not.toHaveBeenCalled();
+    expect(gateway.insertModeleMedia).not.toHaveBeenCalled();
+  });
+
+  it("addModelePhoto : modèle inaccessible (autre atelier/soft-deleted) → aucun upload", async () => {
+    const gateway = fakeGateway({ getModeleById: vi.fn(async () => ({ data: null, error: { message: "not found" } })) });
+    const media = new SupabaseMediaRepository({ gateway, workshopId: "w1" });
+    await media.bootstrapped;
+
+    await expect(media.addModelePhoto("mod-absent", JPEG_DATA_URL)).rejects.toThrow(/inaccessible/);
+    expect(gateway.uploadMediaObject).not.toHaveBeenCalled();
+  });
+
+  it("addModelePhoto : signature échouée après création → repli data URL de session, pas de duplicate", async () => {
+    const gateway = fakeGateway({
+      insertModeleMedia: vi.fn(async () => ({ data: modeleMediaRow({ id: "mm-new", kind: "photo" }), error: null })),
+      createSignedMediaUrl: vi.fn(async () => ({ data: null, error: { message: "signing down" } })),
+    });
+    const media = new SupabaseMediaRepository({ gateway, workshopId: "w1" });
+    await media.bootstrapped;
+
+    await media.addModelePhoto("mod1", JPEG_DATA_URL);
+
+    expect(gateway.uploadMediaObject).toHaveBeenCalledTimes(1);
+    expect(gateway.insertModeleMedia).toHaveBeenCalledTimes(1);
+    expect(media.listModelePhotos("mod1")[0].dataUrl).toBe(JPEG_DATA_URL);
+  });
+
+  it("listModelePhotos/listModelePatronPhotos : tri position ASC, tie-break created_at puis id — deux positions égales ne sont PAS une corruption", async () => {
+    const gateway = fakeGateway({
+      listActiveModeleMedias: vi.fn(async () => ({
+        data: [
+          modeleMediaRow({ id: "z", kind: "photo", position: 0, created_at: "2026-01-01T00:00:01.000Z" }),
+          modeleMediaRow({ id: "a", kind: "photo", position: 0, created_at: "2026-01-01T00:00:00.000Z" }),
+          modeleMediaRow({ id: "p1", kind: "patron", position: 1 }),
+          modeleMediaRow({ id: "p0", kind: "patron", position: 0 }),
+        ],
+        error: null,
+      })),
+    });
+    const media = new SupabaseMediaRepository({ gateway, workshopId: "w1" });
+    await media.bootstrapped;
+
+    expect(media.listModelePhotos("mod1").map((p) => p.id)).toEqual(["a", "z"]);
+    expect(media.listModelePatronPhotos("mod1").map((p) => p.id)).toEqual(["p0", "p1"]);
+  });
+
+  it("row modele_medias invalide (kind inattendu) → refresh entier refusé atomiquement", async () => {
+    const gateway = fakeGateway({
+      listActiveModeleMedias: vi.fn(async () => ({ data: [modeleMediaRow({ kind: "invalide" })], error: null })),
+    });
+    const media = new SupabaseMediaRepository({ gateway, workshopId: "w1" });
+    await media.bootstrapped;
+
+    expect(media.getStatus().status).toBe("error");
+    expect(media.listModelePhotos("mod1")).toEqual([]);
+  });
+
+  it("removeModelePhoto/removeModelePatronPhoto : DELETE physique de la ligne, jamais storage.remove (aucun tel appel n'existe dans le gateway)", async () => {
+    const gateway = fakeGateway({
+      listActiveModeleMedias: vi.fn(async () => ({ data: [modeleMediaRow({ id: "mm1", kind: "photo" })], error: null })),
+    });
+    const media = new SupabaseMediaRepository({ gateway, workshopId: "w1" });
+    await media.bootstrapped;
+
+    await media.removeModelePhoto("mod1", "mm1");
+
+    expect(gateway.deleteModeleMedia).toHaveBeenCalledWith("w1", "mm1");
+    expect(media.listModelePhotos("mod1")).toHaveLength(0);
+  });
+
+  describe("evictModeleMedia (correctif ciblé — coordination avec SupabaseModeleRepository)", () => {
+    it("retire du cache mémoire UNIQUEMENT les médias des modèles listés, aucune requête serveur, jamais les médias fiche", async () => {
+      const gateway = fakeGateway({
+        listActiveModeleMedias: vi.fn(async () => ({
+          data: [modeleMediaRow({ id: "mm-m1", modele_id: "m1" }), modeleMediaRow({ id: "mm-m2", modele_id: "m2" })],
+          error: null,
+        })),
+        listActiveMediaAssets: vi.fn(async () => ({ data: [mediaRow({ id: "fm1" })], error: null })),
+      });
+      const media = new SupabaseMediaRepository({ gateway, workshopId: "w1" });
+      await media.bootstrapped;
+
+      expect(media.listModelePhotos("m1")).toHaveLength(1);
+      expect(media.listModelePhotos("m2")).toHaveLength(1);
+      expect(media.listFichePhotos("f1")).toHaveLength(1);
+
+      media.evictModeleMedia(["m1"]);
+
+      expect(media.listModelePhotos("m1")).toEqual([]);
+      expect(media.listModelePhotos("m2")).toHaveLength(1); // non listé, inchangé
+      expect(media.listFichePhotos("f1")).toHaveLength(1); // médias fiche jamais touchés
+      // Aucune requête gateway déclenchée par cette éviction (cache mémoire uniquement).
+      expect(gateway.deleteModeleMedia).not.toHaveBeenCalled();
+      expect(gateway.softDeleteMediaAsset).not.toHaveBeenCalled();
+    });
+
+    it("aucun média correspondant -> ne notifie pas (aucun changement réel)", async () => {
+      const gateway = fakeGateway();
+      const media = new SupabaseMediaRepository({ gateway, workshopId: "w1" });
+      await media.bootstrapped;
+      const listener = vi.fn();
+      media.subscribe(listener);
+
+      media.evictModeleMedia(["m-inexistant"]);
+
+      expect(listener).not.toHaveBeenCalled();
+    });
+  });
+
+  describe("copyModeleMediaToFiche", () => {
+    function copyGateway(overrides: Partial<SupabaseGateway> = {}) {
+      return fakeGateway({
+        listActiveModeleMedias: vi.fn(async () => ({
+          data: [modeleMediaRow({ id: "p1", kind: "photo", position: 0 }), modeleMediaRow({ id: "pp1", kind: "patron", position: 0 })],
+          error: null,
+        })),
+        downloadMediaObject: vi.fn(async () => ({ data: new Blob(["bytes"], { type: "image/jpeg" }), error: null })),
+        insertMediaAsset: vi.fn(async () => ({ data: mediaRow({ id: "copy-new" }), error: null })),
+        ...overrides,
+      });
+    }
+
+    it("télécharge chaque source (session utilisateur), ré-uploade vers la fiche, insère fabric_photo pour photo ET patron, jamais parseDataUrl sur une URL signée", async () => {
+      const gateway = copyGateway();
+      const media = new SupabaseMediaRepository({ gateway, workshopId: "w1" });
+      await media.bootstrapped;
+
+      await media.copyModeleMediaToFiche("mod1", "f1");
+
+      expect(gateway.downloadMediaObject).toHaveBeenCalledTimes(2);
+      expect(gateway.downloadMediaObject).toHaveBeenNthCalledWith(1, "workshops/w1/modeles/mod1/file1");
+      expect(gateway.uploadMediaObject).toHaveBeenCalledTimes(2);
+      expect(gateway.insertMediaAsset).toHaveBeenCalledTimes(2);
+      for (const call of (gateway.insertMediaAsset as ReturnType<typeof vi.fn>).mock.calls) {
+        expect(call[0]).toMatchObject({ type: "fabric_photo", fiche_id: "f1", workshop_id: "w1" });
+        expect(call[0].storage_path).toMatch(/^workshops\/w1\/fiches\/f1\//);
+      }
+    });
+
+    it("modèle inaccessible → 0 download/upload/insert", async () => {
+      const gateway = copyGateway({ getModeleById: vi.fn(async () => ({ data: null, error: { message: "not found" } })) });
+      const media = new SupabaseMediaRepository({ gateway, workshopId: "w1" });
+      await media.bootstrapped;
+
+      await expect(media.copyModeleMediaToFiche("mod-absent", "f1")).rejects.toThrow(/inaccessible/);
+      expect(gateway.downloadMediaObject).not.toHaveBeenCalled();
+      expect(gateway.uploadMediaObject).not.toHaveBeenCalled();
+      expect(gateway.insertMediaAsset).not.toHaveBeenCalled();
+    });
+
+    it("fiche inaccessible → 0 upload", async () => {
+      const gateway = copyGateway({ getFicheById: vi.fn(async () => ({ data: null, error: { message: "not found" } })) });
+      const media = new SupabaseMediaRepository({ gateway, workshopId: "w1" });
+      await media.bootstrapped;
+
+      await expect(media.copyModeleMediaToFiche("mod1", "f-absente")).rejects.toThrow(/inaccessible/);
+      expect(gateway.uploadMediaObject).not.toHaveBeenCalled();
+    });
+
+    it("échec intermédiaire (2ᵉ item) : le 1er reste créé, la Promise rejette, aucun retry, pas de duplicate du 1er", async () => {
+      const uploadMediaObject = vi
+        .fn()
+        .mockResolvedValueOnce({ data: null, error: null })
+        .mockResolvedValueOnce({ data: null, error: { message: "upload down" } });
+      const gateway = copyGateway({ uploadMediaObject });
+      const media = new SupabaseMediaRepository({ gateway, workshopId: "w1" });
+      await media.bootstrapped;
+
+      await expect(media.copyModeleMediaToFiche("mod1", "f1")).rejects.toThrow(/upload de la copie échoué/);
+
+      expect(uploadMediaObject).toHaveBeenCalledTimes(2); // pas de 3ᵉ tentative / retry
+      expect(gateway.insertMediaAsset).toHaveBeenCalledTimes(1); // le 1er est resté créé
+    });
+
+    describe("fallback lazy (correctif review PR #11 — finding 2 : Blob → data URL générée trop tôt)", () => {
+      const realFileReader = globalThis.FileReader;
+      afterEach(() => {
+        vi.unstubAllGlobals();
+        vi.restoreAllMocks();
+      });
+
+      // Casse `FileReader` GLOBALEMENT (pas un spy sur le module réimporté
+      // dans ce fichier de test — un import nommé transpilé ne garantit pas
+      // qu'un tel spy intercepte l'appel fait depuis `SupabaseMediaRepository.
+      // ts`, vérifié empiriquement). `blobToDataUrl()` utilise `new
+      // FileReader()` en interne : si le code appelait encore la conversion
+      // de façon EAGER (la régression exacte visée par ce correctif), la
+      // construction lèverait immédiatement, avant même que `commitRow`
+      // ait pu tenter la signature — preuve directe, indépendante du bundler.
+      function breakFileReader() {
+        vi.stubGlobal(
+          "FileReader",
+          class {
+            constructor() {
+              throw new Error("FileReader ne devrait jamais être construit ici");
+            }
+          },
+        );
+      }
+
+      it("Cas A — signature immédiate réussit : la conversion Blob→dataURL n'est JAMAIS nécessaire (FileReader cassé, la copie réussit quand même)", async () => {
+        breakFileReader();
+        const gateway = copyGateway({
+          listActiveModeleMedias: vi.fn(async () => ({ data: [modeleMediaRow({ id: "p1", kind: "photo", position: 0 })], error: null })),
+          createSignedMediaUrl: vi.fn(async () => ({ data: "https://signed.example/copied", error: null })),
+        });
+        const media = new SupabaseMediaRepository({ gateway, workshopId: "w1" });
+        await media.bootstrapped;
+
+        // Ne rejette PAS malgré FileReader cassé : la conversion n'est jamais
+        // évaluée quand la signature immédiate réussit (§6).
+        await expect(media.copyModeleMediaToFiche("mod1", "f1")).resolves.toBeUndefined();
+        expect(media.listFichePhotos("f1")[0].dataUrl).toBe("https://signed.example/copied");
+      });
+
+      it("Cas B — signature échoue : le fallback est réellement généré (lazy, APRÈS l'échec), upload/insert restent à 1, aucun duplicate", async () => {
+        // FileReader réel (non cassé) ici — la conversion doit RÉUSSIR pour
+        // prouver qu'elle est bien tentée quand nécessaire. `createSignedMediaUrl`
+        // doit réussir au BOOTSTRAP (signe "p1", sinon `modeleMediaMap` reste
+        // vide et la boucle de copie n'a rien à itérer) et échouer seulement
+        // pour la signature de la DESTINATION copiée (dans `commitRow`).
+        let signCall = 0;
+        const gateway = copyGateway({
+          listActiveModeleMedias: vi.fn(async () => ({ data: [modeleMediaRow({ id: "p1", kind: "photo", position: 0 })], error: null })),
+          createSignedMediaUrl: vi.fn(async () => {
+            signCall += 1;
+            if (signCall === 1) return { data: "https://signed.example/bootstrap", error: null };
+            return { data: null, error: { message: "signing down" } };
+          }),
+        });
+        const media = new SupabaseMediaRepository({ gateway, workshopId: "w1" });
+        await media.bootstrapped;
+
+        await media.copyModeleMediaToFiche("mod1", "f1");
+
+        expect(gateway.uploadMediaObject).toHaveBeenCalledTimes(1);
+        expect(gateway.insertMediaAsset).toHaveBeenCalledTimes(1);
+        // Le média reste visible via le repli de session (data URL générée
+        // après coup), preuve comportementale que la conversion a bien eu lieu.
+        expect(media.listFichePhotos("f1")[0].dataUrl).toMatch(/^data:/);
+      });
+
+      it("Cas C — signature ET fallback échouent tous les deux : la création serveur (upload+insert) n'est jamais reniée, aucun duplicate", async () => {
+        // `createSignedMediaUrl` doit réussir au BOOTSTRAP (signe "p1", même
+        // raison qu'au Cas B) avant de casser FileReader — sinon
+        // `modeleMediaMap` resterait vide et la boucle de copie n'itérerait
+        // rien.
+        let signCall = 0;
+        const gateway = copyGateway({
+          listActiveModeleMedias: vi.fn(async () => ({ data: [modeleMediaRow({ id: "p1", kind: "photo", position: 0 })], error: null })),
+          createSignedMediaUrl: vi.fn(async () => {
+            signCall += 1;
+            if (signCall === 1) return { data: "https://signed.example/bootstrap", error: null };
+            return { data: null, error: { message: "signing down" } };
+          }),
+        });
+        const media = new SupabaseMediaRepository({ gateway, workshopId: "w1" });
+        await media.bootstrapped;
+        breakFileReader(); // casse la conversion elle-même (2e échec), APRÈS le bootstrap
+
+        // La Promise de copie ne rejette PAS — l'échec du fallback d'affichage
+        // est non bloquant, jamais confondu avec un échec de création (§7).
+        await expect(media.copyModeleMediaToFiche("mod1", "f1")).resolves.toBeUndefined();
+
+        expect(gateway.uploadMediaObject).toHaveBeenCalledTimes(1); // aucun second upload
+        expect(gateway.insertMediaAsset).toHaveBeenCalledTimes(1); // aucun second INSERT
+        // La row créée reste dans le snapshot mémoire, simplement sans URL
+        // d'affichage temporaire tant qu'un refresh signé n'a pas réussi.
+        expect(media.listFichePhotos("f1")).toHaveLength(1);
+        expect(media.listFichePhotos("f1")[0].dataUrl).toBe("");
+      });
+
+      it("(sanity check) FileReader réel restauré après ce bloc", () => {
+        expect(globalThis.FileReader).toBe(realFileReader);
+      });
+    });
   });
 });
 

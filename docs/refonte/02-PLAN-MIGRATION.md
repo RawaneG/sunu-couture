@@ -719,11 +719,45 @@ L'ordre reprend celui du cahier des charges (§ « Ordre d'implémentation »).
     minimale `GRANT UPDATE (position, metadata) ON modele_medias TO authenticated`
     (+ politique RLS correspondante) sera introduite **à ce moment**, après
     tests RLS appropriés — **aucune migration créée dans ce gel documentaire**.
-- **Migrations SQL** : aucune dans ce document (voir note GRANT ci-dessus, à
-  trancher au moment de l'implémentation de 8B si le besoin se confirme).
-- **Tests** : CRUD modèle en ligne ; upload/lecture photo et patron ; « ouvrir
-  puis abandonner `ModeleNew` → 0 modèle créé » ; isolation atelier A/B.
-- **Rollback** : build `local` (catalogue conservé dans le backup Phase 6A).
+- **Migrations SQL — CORRECTION FACTUELLE post-implémentation** : ce gel
+  disait « aucune migration SQL 8B sauf éventuel GRANT ». L'implémentation
+  réelle a révélé qu'une migration TECHNIQUE Storage était en réalité
+  obligatoire : les 2 policies `storage.objects` créées en Phase 8A
+  (`media_objects_select_member`/`media_objects_insert_member`) n'acceptaient
+  QUE le path fiche `workshops/{workshopId}/fiches/{ficheId}/{fileId}` — un
+  upload vers le nouveau path modèle `workshops/{workshopId}/modeles/
+  {modeleId}/{fileId}` aurait été refusé par une policy qui ne le reconnaît
+  pas. `20260906161045_phase_8b_catalog_storage_policies.sql` DROP puis
+  RECREATE ces 2 MÊMES policies (jamais 2 policies supplémentaires — évite
+  l'advisor `multiple_permissive_policies`) avec une condition acceptant la
+  branche fiche OU la branche modèle. Précisions :
+  - **Aucun changement de schéma** `public.modeles`/`public.modele_medias` —
+    ces tables et leurs colonnes existaient déjà, inchangées, depuis la
+    Phase 2/4.
+  - **Aucun nouveau GRANT** sur `modele_medias` — le GRANT UPDATE
+    conditionnel évoqué ci-dessus s'est avéré non nécessaire : détacher une
+    photo/patron est un DELETE physique de la ligne (déjà accordé), jamais
+    un UPDATE de `position`/`metadata`/`deleted_at`.
+  - Le graphe cloud (7A → 9A → 7B → 8A → 8B → 11A → Gate) reste inchangé —
+    cette migration est un ajustement technique interne à 8B, pas un
+    nouveau jalon.
+- **`ModeleNew.tsx`** — corrigé comme prévu : n'appelle plus
+  `modeleRepository.add()` au montage. L'écran est un vrai brouillon local
+  (`nomDraft` en state React) ; `add({ nom })` n'est appelé qu'au clic
+  explicite sur « Créer le modèle », avec un nom validé (1 à 200 caractères
+  après suppression des espaces, jamais un fallback inventé).
+- **Tests** : CRUD modèle en ligne (cloud + local) ; upload/lecture photo et
+  patron (MIME image strict, `image/jpeg`/`image/png` uniquement, plus
+  restrictif que le bucket global) ; « ouvrir puis abandonner `ModeleNew` →
+  0 modèle créé » ; isolation atelier A/B (structurel via `10_schema_tests.sql`
+  T62-T69, fonctionnel réel via `scripts/test-phase-8b-catalog.mjs`,
+  21/21 localement) ; copie modèle → fiche via la primitive dédiée
+  `MediaRepository.copyModeleMediaToFiche()` (jamais une URL signée repassée
+  à `parseDataUrl()`).
+- **Rollback** : build `local` (catalogue conservé dans le backup Phase 6A) ;
+  migration Storage réversible via `supabase/migrations_down/
+  20260906161045_phase_8b_catalog_storage_policies.down.sql` (revient aux 2
+  policies fiche-only de Phase 8A, ne touche jamais le bucket ni les objets).
 
 ---
 

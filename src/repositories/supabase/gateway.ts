@@ -27,6 +27,8 @@ export interface GatewayResult<T> {
 type ClientInsert = Database["public"]["Tables"]["clients"]["Insert"];
 type FicheUpdate = Database["public"]["Tables"]["fiches"]["Update"];
 type MediaAssetInsert = Database["public"]["Tables"]["media_assets"]["Insert"];
+type ModeleInsert = Database["public"]["Tables"]["modeles"]["Insert"];
+type ModeleMediaInsert = Database["public"]["Tables"]["modele_medias"]["Insert"];
 
 export interface SupabaseGateway {
   listActiveClients(workshopId: string): Promise<GatewayResult<unknown[]>>;
@@ -72,6 +74,31 @@ export interface SupabaseGateway {
   /** URL signée, bucket privé — jamais `getPublicUrl()`. `expiresInSeconds`
    * ≤ 300 (§28). */
   createSignedMediaUrl(path: string, expiresInSeconds: number): Promise<GatewayResult<string>>;
+  /** Téléchargement du contenu réel d'un objet — session utilisateur, policy
+   * SELECT (Phase 8B, `copyModeleMediaToFiche`). Jamais via secret/service
+   * role dans le frontend (§50). */
+  downloadMediaObject(path: string): Promise<GatewayResult<Blob>>;
+
+  // ── Catalogue modèle (Phase 8B) — CRUD PostgREST normal, comme les
+  // médias FICHE : Phase 4 accorde déjà SELECT/INSERT/UPDATE(nom, deleted_at)
+  // à `authenticated` sur `modeles`, et SELECT/INSERT/DELETE sur
+  // `modele_medias` — aucune Edge Function ici. ─────────────────────────
+  listActiveModeles(workshopId: string): Promise<GatewayResult<unknown[]>>;
+  getModeleById(workshopId: string, id: string): Promise<GatewayResult<unknown>>;
+  insertModele(payload: ModeleInsert): Promise<GatewayResult<unknown>>;
+  updateModeleNom(workshopId: string, id: string, nom: string): Promise<GatewayResult<unknown>>;
+  /** `deleted_at = now()` — jamais de DELETE physique du modèle (§28). */
+  softDeleteModeles(workshopId: string, ids: string[]): Promise<GatewayResult<null>>;
+
+  /** Exclut les lignes dont le modèle parent est soft-deleted (jointure
+   * `modeles!inner` + filtre `modeles.deleted_at IS NULL`, §29) — jamais un
+   * filtrage frontend qui laisserait passer une ligne dont la policy Storage
+   * refuserait ensuite la signature. */
+  listActiveModeleMedias(workshopId: string): Promise<GatewayResult<unknown[]>>;
+  insertModeleMedia(payload: ModeleMediaInsert): Promise<GatewayResult<unknown>>;
+  /** DELETE physique de la LIGNE `modele_medias` (le GRANT Phase 4 n'accorde
+   * aucun UPDATE sur cette table, §6/§44) — jamais `storage.remove()` (§45). */
+  deleteModeleMedia(workshopId: string, id: string): Promise<GatewayResult<null>>;
 }
 
 function toGatewayError(error: { message: string } | null): GatewayError | null {
@@ -225,6 +252,78 @@ export function createSupabaseGateway(client: SupabaseClient<Database>): Supabas
       const { data, error } = await client.storage.from(MEDIA_BUCKET).createSignedUrl(path, expiresInSeconds);
       if (error) return { data: null, error: toGatewayError(error) };
       return { data: data.signedUrl, error: null };
+    },
+
+    async downloadMediaObject(path) {
+      const { data, error } = await client.storage.from(MEDIA_BUCKET).download(path);
+      return { data, error: toGatewayError(error) };
+    },
+
+    async listActiveModeles(workshopId) {
+      const { data, error } = await client
+        .from("modeles")
+        .select("*")
+        .eq("workshop_id", workshopId)
+        .is("deleted_at", null);
+      return { data, error: toGatewayError(error) };
+    },
+
+    async getModeleById(workshopId, id) {
+      const { data, error } = await client
+        .from("modeles")
+        .select("*")
+        .eq("workshop_id", workshopId)
+        .eq("id", id)
+        .single();
+      return { data, error: toGatewayError(error) };
+    },
+
+    async insertModele(payload) {
+      const { data, error } = await client.from("modeles").insert(payload).select().single();
+      return { data, error: toGatewayError(error) };
+    },
+
+    async updateModeleNom(workshopId, id, nom) {
+      const { error } = await client.from("modeles").update({ nom }).eq("workshop_id", workshopId).eq("id", id);
+      if (error) return { data: null, error: toGatewayError(error) };
+      return this.getModeleById(workshopId, id);
+    },
+
+    async softDeleteModeles(workshopId, ids) {
+      if (ids.length === 0) return { data: null, error: null };
+      const { error } = await client
+        .from("modeles")
+        .update({ deleted_at: new Date().toISOString() })
+        .eq("workshop_id", workshopId)
+        .in("id", ids);
+      return { data: null, error: toGatewayError(error) };
+    },
+
+    async listActiveModeleMedias(workshopId) {
+      // `modeles!inner(deleted_at)` force la jointure (au lieu d'un embed
+      // optionnel) pour que `.is("modeles.deleted_at", null)` exclue
+      // réellement les lignes dont le parent est soft-deleted, plutôt que de
+      // se contenter d'un champ imbriqué non filtrant. Le champ `modeles`
+      // ainsi embarqué n'a pas de sens applicatif : `modeleMediaRowSchema`
+      // (objet Zod SANS `.passthrough()`) le supprime silencieusement à la
+      // validation, jamais surfacé au domaine.
+      const { data, error } = await client
+        .from("modele_medias")
+        .select("*, modeles!inner(deleted_at)")
+        .eq("workshop_id", workshopId)
+        .is("deleted_at", null)
+        .is("modeles.deleted_at", null);
+      return { data, error: toGatewayError(error) };
+    },
+
+    async insertModeleMedia(payload) {
+      const { data, error } = await client.from("modele_medias").insert(payload).select().single();
+      return { data, error: toGatewayError(error) };
+    },
+
+    async deleteModeleMedia(workshopId, id) {
+      const { error } = await client.from("modele_medias").delete().eq("workshop_id", workshopId).eq("id", id);
+      return { data: null, error: toGatewayError(error) };
     },
   };
 }

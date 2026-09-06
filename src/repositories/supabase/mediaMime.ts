@@ -22,3 +22,15 @@ export function normalizeMediaMime(rawMime: string): NormalizedMediaMime {
 export function isAllowedMediaBucketMime(bucketMime: string): bucketMime is AllowedMediaBucketMimeType {
   return (ALLOWED_MEDIA_BUCKET_MIME_TYPES as readonly string[]).includes(bucketMime);
 }
+
+// Phase 8B — un média MODÈLE n'accepte que des images, même si le bucket
+// (partagé avec les médias FICHE) autorise aussi l'audio pour la voix (§38) :
+// un vocal/patron audio n'a pas de sens pour une photo de modèle ou un
+// patron de coupe. Restriction applicative, PAS une restriction du bucket
+// lui-même (qui reste commun aux deux domaines).
+export const ALLOWED_MODELE_MEDIA_MIME_TYPES = ["image/jpeg", "image/png"] as const;
+export type AllowedModeleMediaMimeType = (typeof ALLOWED_MODELE_MEDIA_MIME_TYPES)[number];
+
+export function isAllowedModeleMediaMime(bucketMime: string): bucketMime is AllowedModeleMediaMimeType {
+  return (ALLOWED_MODELE_MEDIA_MIME_TYPES as readonly string[]).includes(bucketMime);
+}

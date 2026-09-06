@@ -1,5 +1,5 @@
 import { useCallback, useRef, useSyncExternalStore } from "react";
-import type { Client, Fiche, TissuPhoto, VoiceNote } from "../lib/types";
+import type { Client, Fiche, Modele, TissuPhoto, VoiceNote } from "../lib/types";
 import type { CarnetSlot } from "./CarnetRepository";
 import type { Payment } from "./PaymentRepository";
 import { READY_STATUS } from "./RepositoryStatus";
@@ -102,6 +102,88 @@ export function useModele(id: string) {
     useCallback((onStoreChange) => modeles.subscribe(onStoreChange), [modeles]),
     () => modeles.get(id),
   );
+}
+
+// ── Catalogue combiné (Phase 8B) ────────────────────────────────────────
+// `ModeleRepository` (métadonnées : nom, dates) et `MediaRepository`
+// (photos/patrons autoritatifs dès qu'un backend cloud existe, voir
+// `mappers/modele.ts`) sont deux Repository DISTINCTS — l'UI catalogue a
+// besoin des deux combinés en un seul `Modele[]` enrichi, sans jamais
+// confondre "pas encore chargé" (loading) et "chargé et vide" (ready, 0
+// modèle) — même exigence que `useFicheMedia` pour une fiche.
+export type CatalogueModelesState =
+  | { status: "loading" }
+  | { status: "ready"; data: Modele[] }
+  | { status: "error"; error: Error; data: Modele[] };
+
+/** Combine `ModeleRepository.list()` (métadonnées) avec
+ * `MediaRepository.listModelePhotos`/`listModelePatronPhotos` (médias
+ * autoritatifs) en un seul tableau `Modele[]` enrichi — SANS jamais
+ * reconstruire une référence différente si rien n'a changé (§63, même bug
+ * de boucle de rendu infinie déjà corrigé en Phase 8A pour `useFicheMedia`) :
+ * tant que la liste de base ET les collections média de CHAQUE modèle
+ * gardent leur référence, le tableau composite renvoyé reste le même. */
+export function useCatalogueModeles(): CatalogueModelesState {
+  const { modeles: modeleRepository, media: mediaRepository } = useRepositories();
+  const cacheRef = useRef<{ baseModeles: Modele[]; snapshot: Modele[] } | null>(null);
+
+  const subscribe = useCallback(
+    (onStoreChange: () => void) => {
+      const unsubModeles = modeleRepository.subscribe(onStoreChange);
+      const unsubMedia = mediaRepository.subscribe(onStoreChange);
+      return () => {
+        unsubModeles();
+        unsubMedia();
+      };
+    },
+    [modeleRepository, mediaRepository],
+  );
+
+  const getSnapshot = useCallback((): Modele[] => {
+    const baseModeles = modeleRepository.list();
+    const cached = cacheRef.current;
+    if (cached && cached.baseModeles === baseModeles && cached.snapshot.length === baseModeles.length) {
+      let changed = false;
+      for (let i = 0; i < baseModeles.length; i++) {
+        const base = baseModeles[i];
+        const prev = cached.snapshot[i];
+        const photos = mediaRepository.listModelePhotos(base.id);
+        const patronPhotos = mediaRepository.listModelePatronPhotos(base.id);
+        if (prev.id !== base.id || prev.nom !== base.nom || prev.photos !== photos || prev.patronPhotos !== patronPhotos) {
+          changed = true;
+          break;
+        }
+      }
+      if (!changed) return cached.snapshot;
+    }
+    const snapshot = baseModeles.map((m) => ({
+      ...m,
+      photos: mediaRepository.listModelePhotos(m.id),
+      patronPhotos: mediaRepository.listModelePatronPhotos(m.id),
+    }));
+    cacheRef.current = { baseModeles, snapshot };
+    return snapshot;
+  }, [modeleRepository, mediaRepository]);
+
+  const data = useSyncExternalStore(subscribe, getSnapshot);
+  const modeleStatus = useSyncExternalStore(subscribe, () => modeleRepository.getStatus?.() ?? READY_STATUS);
+  const mediaStatus = useSyncExternalStore(subscribe, () => mediaRepository.getStatus?.() ?? READY_STATUS);
+
+  if (modeleStatus.status === "loading" || mediaStatus.status === "loading") return { status: "loading" };
+  if (modeleStatus.status === "error") return { status: "error", error: modeleStatus.error, data };
+  if (mediaStatus.status === "error") return { status: "error", error: mediaStatus.error, data };
+  return { status: "ready", data };
+}
+
+/** Un seul modèle enrichi, dérivé de `useCatalogueModeles()` — évite de
+ * dupliquer la logique de composition/stabilité ci-dessus. `loading` ne
+ * doit jamais être confondu avec "introuvable" (voir `ModeleDetail.tsx`). */
+export function useCatalogueModele(id: string): EntityLoadState<Modele> {
+  const catalogueState = useCatalogueModeles();
+  if (catalogueState.status === "loading") return { status: "loading" };
+  const data = catalogueState.data.find((m) => m.id === id);
+  if (catalogueState.status === "error") return { status: "error", error: catalogueState.error, data };
+  return { status: "ready", data };
 }
 
 // ── Médias fiche (Phase 8A) — photos/vocal/signature deviennent NON

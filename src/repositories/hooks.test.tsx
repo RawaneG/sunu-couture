@@ -1,13 +1,15 @@
 import { describe, expect, it, vi, beforeEach } from "vitest";
 import { render, screen, act } from "@testing-library/react";
-import type { Client, TissuPhoto, VoiceNote } from "../lib/types";
+import type { Client, Modele, TissuPhoto, VoiceNote } from "../lib/types";
 import type { ClientRepository, NewClientInput } from "./ClientRepository";
 import type { MediaRepository } from "./MediaRepository";
+import type { ModeleRepository, NewModeleInput } from "./ModeleRepository";
 import type { RepositoryStatus } from "./RepositoryStatus";
+import { READY_STATUS } from "./RepositoryStatus";
 import { createRepositoryContainerFor } from "./RepositoryContainer";
 import { RepositoryProvider } from "./RepositoryProvider";
 import { useStore } from "../lib/store";
-import { useClients, useClient, useFicheMedia } from "./hooks";
+import { useClients, useClient, useFicheMedia, useCatalogueModeles, useCatalogueModele } from "./hooks";
 import { SupabaseMediaRepository } from "./supabase/SupabaseMediaRepository";
 import type { SupabaseGateway } from "./supabase/gateway";
 
@@ -273,6 +275,7 @@ class FakeLocalMediaRepository implements MediaRepository {
   }
   async addModelePatronPhoto(): Promise<void> {}
   async removeModelePatronPhoto(): Promise<void> {}
+  async copyModeleMediaToFiche(): Promise<void> {}
   subscribe(listener: () => void): () => void {
     this.listeners.add(listener);
     return () => this.listeners.delete(listener);
@@ -480,6 +483,15 @@ function fakeGatewayForMediaIntegration(overrides: Partial<SupabaseGateway> = {}
     restoreMediaAsset: vi.fn(async () => ({ data: null, error: null })),
     uploadMediaObject: vi.fn(async () => ({ data: null, error: null })),
     createSignedMediaUrl: vi.fn(async () => ({ data: "https://signed.example/p1", error: null })),
+    downloadMediaObject: vi.fn(async () => ({ data: new Blob(), error: null })),
+    listActiveModeles: vi.fn(async () => ({ data: [], error: null })),
+    getModeleById: vi.fn(async () => ({ data: null, error: null })),
+    insertModele: vi.fn(async () => ({ data: null, error: null })),
+    updateModeleNom: vi.fn(async () => ({ data: null, error: null })),
+    softDeleteModeles: vi.fn(async () => ({ data: null, error: null })),
+    listActiveModeleMedias: vi.fn(async () => ({ data: [], error: null })),
+    insertModeleMedia: vi.fn(async () => ({ data: null, error: null })),
+    deleteModeleMedia: vi.fn(async () => ({ data: null, error: null })),
     ...overrides,
   };
 }
@@ -515,5 +527,326 @@ describe("useFicheMedia() — intégration avec le VRAI SupabaseMediaRepository 
     expect(media.listFichePhotos("f1")).toBe(firstSnapshot);
 
     media.dispose();
+  });
+});
+
+// ── useCatalogueModeles()/useCatalogueModele() — Phase 8B ──────────────────
+class FakeModeleRepository implements ModeleRepository {
+  private listeners = new Set<() => void>();
+  private status: RepositoryStatus = READY_STATUS;
+  private modeles: Modele[] = [];
+
+  list(): Modele[] {
+    return this.modeles;
+  }
+  get(id: string): Modele | undefined {
+    return this.modeles.find((m) => m.id === id);
+  }
+  getStatus(): RepositoryStatus {
+    return this.status;
+  }
+  setStatus(status: RepositoryStatus) {
+    this.status = status;
+    this.notify();
+  }
+  setModeles(modeles: Modele[]) {
+    this.modeles = modeles;
+    this.notify();
+  }
+  async add(input: NewModeleInput): Promise<string> {
+    const id = `m${this.modeles.length + 1}`;
+    this.modeles = [...this.modeles, { id, nom: input.nom, photos: [], patronPhotos: [], createdAt: "2026-01-01T00:00:00.000Z" }];
+    this.notify();
+    return id;
+  }
+  async setNom(id: string, nom: string): Promise<void> {
+    this.modeles = this.modeles.map((m) => (m.id === id ? { ...m, nom } : m));
+    this.notify();
+  }
+  async remove(id: string): Promise<void> {
+    this.modeles = this.modeles.filter((m) => m.id !== id);
+    this.notify();
+  }
+  async removeMany(ids: string[]): Promise<void> {
+    const idSet = new Set(ids);
+    this.modeles = this.modeles.filter((m) => !idSet.has(m.id));
+    this.notify();
+  }
+  subscribe(listener: () => void): () => void {
+    this.listeners.add(listener);
+    return () => this.listeners.delete(listener);
+  }
+  listenerCount(): number {
+    return this.listeners.size;
+  }
+  private notify() {
+    for (const listener of this.listeners) listener();
+  }
+}
+
+const CATALOGUE_EMPTY_PHOTOS: TissuPhoto[] = [];
+
+class FakeCatalogueMediaRepository implements MediaRepository {
+  private listeners = new Set<() => void>();
+  private status: RepositoryStatus = READY_STATUS;
+  private photosMap = new Map<string, TissuPhoto[]>();
+  private patronMap = new Map<string, TissuPhoto[]>();
+
+  listFichePhotos(): TissuPhoto[] {
+    return CATALOGUE_EMPTY_PHOTOS;
+  }
+  async addFichePhoto(): Promise<void> {}
+  async removeFichePhoto(): Promise<void> {}
+  getFicheVoiceNote(): VoiceNote | null {
+    return null;
+  }
+  async setFicheVoiceNote(): Promise<void> {}
+  getFicheSignature(): string | null {
+    return null;
+  }
+  async setFicheSignature(): Promise<void> {}
+
+  listModelePhotos(modeleId: string): TissuPhoto[] {
+    return this.photosMap.get(modeleId) ?? CATALOGUE_EMPTY_PHOTOS;
+  }
+  async addModelePhoto(modeleId: string, dataUrl: string): Promise<void> {
+    const current = this.photosMap.get(modeleId) ?? [];
+    this.photosMap.set(modeleId, [...current, { id: `p${current.length + 1}`, dataUrl }]);
+    this.notify();
+  }
+  async removeModelePhoto(): Promise<void> {}
+  listModelePatronPhotos(modeleId: string): TissuPhoto[] {
+    return this.patronMap.get(modeleId) ?? CATALOGUE_EMPTY_PHOTOS;
+  }
+  async addModelePatronPhoto(): Promise<void> {}
+  async removeModelePatronPhoto(): Promise<void> {}
+  async copyModeleMediaToFiche(): Promise<void> {}
+
+  getStatus(): RepositoryStatus {
+    return this.status;
+  }
+  setStatus(status: RepositoryStatus) {
+    this.status = status;
+    this.notify();
+  }
+  subscribe(listener: () => void): () => void {
+    this.listeners.add(listener);
+    return () => this.listeners.delete(listener);
+  }
+  listenerCount(): number {
+    return this.listeners.size;
+  }
+  private notify() {
+    for (const listener of this.listeners) listener();
+  }
+}
+
+function CatalogueProbe() {
+  const state = useCatalogueModeles();
+  if (state.status === "loading") return <p>Chargement catalogue…</p>;
+  if (state.status === "error") return <p>Erreur catalogue</p>;
+  return (
+    <ul>
+      {state.data.map((m) => (
+        <li key={m.id}>
+          {m.nom} — {m.photos.length} photo(s)
+        </li>
+      ))}
+    </ul>
+  );
+}
+
+function CatalogueOneProbe({ id }: { id: string }) {
+  const state = useCatalogueModele(id);
+  if (state.status === "loading") return <p>Chargement modèle…</p>;
+  if (state.status === "error") return <p>Erreur modèle</p>;
+  if (!state.data) return <p>Introuvable</p>;
+  return (
+    <p>
+      {state.data.nom} — {state.data.photos.length} photo(s)
+    </p>
+  );
+}
+
+describe("useCatalogueModeles()/useCatalogueModele() — Phase 8B", () => {
+  it("backend local (sans getStatus) : toujours 'ready' immédiatement", () => {
+    const modeles = new FakeModeleRepository();
+    modeles.setModeles([{ id: "m1", nom: "Robe wax", photos: [], patronPhotos: [], createdAt: "2026-01-01T00:00:00.000Z" }]);
+    const media = new FakeCatalogueMediaRepository();
+    const container = { ...createRepositoryContainerFor("local"), modeles, media };
+    render(
+      <RepositoryProvider repositories={container}>
+        <CatalogueProbe />
+      </RepositoryProvider>,
+    );
+    expect(screen.getByText("Robe wax — 0 photo(s)")).toBeInTheDocument();
+  });
+
+  it("cloud : loading tant que le Repository MODÈLE n'est pas prêt", () => {
+    const modeles = new FakeModeleRepository();
+    modeles.setStatus({ status: "loading" });
+    const media = new FakeCatalogueMediaRepository();
+    const container = { ...createRepositoryContainerFor("local"), modeles, media };
+    render(
+      <RepositoryProvider repositories={container}>
+        <CatalogueProbe />
+      </RepositoryProvider>,
+    );
+    expect(screen.getByText("Chargement catalogue…")).toBeInTheDocument();
+  });
+
+  it("cloud : loading tant que le Repository MÉDIA n'est pas prêt — jamais confondu avec 'catalogue vide'", () => {
+    const modeles = new FakeModeleRepository();
+    modeles.setModeles([{ id: "m1", nom: "Robe wax", photos: [], patronPhotos: [], createdAt: "x" }]);
+    const media = new FakeCatalogueMediaRepository();
+    media.setStatus({ status: "loading" });
+    const container = { ...createRepositoryContainerFor("local"), modeles, media };
+    render(
+      <RepositoryProvider repositories={container}>
+        <CatalogueProbe />
+      </RepositoryProvider>,
+    );
+    expect(screen.getByText("Chargement catalogue…")).toBeInTheDocument();
+  });
+
+  it("ready combiné : métadonnées modèle + photos autoritatives assemblées en un seul Modele[]", async () => {
+    const modeles = new FakeModeleRepository();
+    modeles.setModeles([{ id: "m1", nom: "Robe wax", photos: [], patronPhotos: [], createdAt: "x" }]);
+    const media = new FakeCatalogueMediaRepository();
+    await media.addModelePhoto("m1", "data:image/png;base64,AAAA");
+    const container = { ...createRepositoryContainerFor("local"), modeles, media };
+    render(
+      <RepositoryProvider repositories={container}>
+        <CatalogueProbe />
+      </RepositoryProvider>,
+    );
+    expect(screen.getByText("Robe wax — 1 photo(s)")).toBeInTheDocument();
+  });
+
+  it("error MODÈLE -> catalogue en erreur", () => {
+    const modeles = new FakeModeleRepository();
+    modeles.setStatus({ status: "error", error: new Error("hors ligne") });
+    const media = new FakeCatalogueMediaRepository();
+    const container = { ...createRepositoryContainerFor("local"), modeles, media };
+    render(
+      <RepositoryProvider repositories={container}>
+        <CatalogueProbe />
+      </RepositoryProvider>,
+    );
+    expect(screen.getByText("Erreur catalogue")).toBeInTheDocument();
+  });
+
+  it("error MÉDIA -> catalogue en erreur", () => {
+    const modeles = new FakeModeleRepository();
+    modeles.setModeles([{ id: "m1", nom: "Robe wax", photos: [], patronPhotos: [], createdAt: "x" }]);
+    const media = new FakeCatalogueMediaRepository();
+    media.setStatus({ status: "error", error: new Error("hors ligne") });
+    const container = { ...createRepositoryContainerFor("local"), modeles, media };
+    render(
+      <RepositoryProvider repositories={container}>
+        <CatalogueProbe />
+      </RepositoryProvider>,
+    );
+    expect(screen.getByText("Erreur catalogue")).toBeInTheDocument();
+  });
+
+  it("mutation du NOM se répercute sur le composant", async () => {
+    const modeles = new FakeModeleRepository();
+    modeles.setModeles([{ id: "m1", nom: "Ancien nom", photos: [], patronPhotos: [], createdAt: "x" }]);
+    const media = new FakeCatalogueMediaRepository();
+    const container = { ...createRepositoryContainerFor("local"), modeles, media };
+    render(
+      <RepositoryProvider repositories={container}>
+        <CatalogueProbe />
+      </RepositoryProvider>,
+    );
+    expect(screen.getByText("Ancien nom — 0 photo(s)")).toBeInTheDocument();
+    await act(async () => {
+      await modeles.setNom("m1", "Nouveau nom");
+    });
+    expect(screen.getByText("Nouveau nom — 0 photo(s)")).toBeInTheDocument();
+  });
+
+  it("mutation d'une PHOTO se répercute sur le composant", async () => {
+    const modeles = new FakeModeleRepository();
+    modeles.setModeles([{ id: "m1", nom: "Robe wax", photos: [], patronPhotos: [], createdAt: "x" }]);
+    const media = new FakeCatalogueMediaRepository();
+    const container = { ...createRepositoryContainerFor("local"), modeles, media };
+    render(
+      <RepositoryProvider repositories={container}>
+        <CatalogueProbe />
+      </RepositoryProvider>,
+    );
+    expect(screen.getByText("Robe wax — 0 photo(s)")).toBeInTheDocument();
+    await act(async () => {
+      await media.addModelePhoto("m1", "data:image/png;base64,AAAA");
+    });
+    expect(screen.getByText("Robe wax — 1 photo(s)")).toBeInTheDocument();
+  });
+
+  it("un rerender SANS mutation renvoie le même tableau Modele[] par référence (§63)", () => {
+    const modeles = new FakeModeleRepository();
+    modeles.setModeles([{ id: "m1", nom: "Robe wax", photos: [], patronPhotos: [], createdAt: "x" }]);
+    const media = new FakeCatalogueMediaRepository();
+    const container = { ...createRepositoryContainerFor("local"), modeles, media };
+    let captured: Modele[] | null = null;
+    function CaptureProbe() {
+      const state = useCatalogueModeles();
+      if (state.status === "ready") captured = state.data;
+      return null;
+    }
+    const { rerender } = render(
+      <RepositoryProvider repositories={container}>
+        <CaptureProbe />
+      </RepositoryProvider>,
+    );
+    const first = captured;
+    rerender(
+      <RepositoryProvider repositories={container}>
+        <CaptureProbe />
+      </RepositoryProvider>,
+    );
+    expect(captured).toBe(first);
+  });
+
+  it("useCatalogueModele(id) : loading distinct de 'introuvable'", () => {
+    const modeles = new FakeModeleRepository();
+    modeles.setStatus({ status: "loading" });
+    const media = new FakeCatalogueMediaRepository();
+    const container = { ...createRepositoryContainerFor("local"), modeles, media };
+    render(
+      <RepositoryProvider repositories={container}>
+        <CatalogueOneProbe id="absent" />
+      </RepositoryProvider>,
+    );
+    expect(screen.getByText("Chargement modèle…")).toBeInTheDocument();
+  });
+
+  it("useCatalogueModele(id) : ready + absent -> 'Introuvable' (jamais pendant loading)", () => {
+    const modeles = new FakeModeleRepository();
+    const media = new FakeCatalogueMediaRepository();
+    const container = { ...createRepositoryContainerFor("local"), modeles, media };
+    render(
+      <RepositoryProvider repositories={container}>
+        <CatalogueOneProbe id="absent" />
+      </RepositoryProvider>,
+    );
+    expect(screen.getByText("Introuvable")).toBeInTheDocument();
+  });
+
+  it("démonter le composant désabonne des DEUX Repository (modèle et média)", () => {
+    const modeles = new FakeModeleRepository();
+    const media = new FakeCatalogueMediaRepository();
+    const container = { ...createRepositoryContainerFor("local"), modeles, media };
+    const { unmount } = render(
+      <RepositoryProvider repositories={container}>
+        <CatalogueProbe />
+      </RepositoryProvider>,
+    );
+    expect(modeles.listenerCount()).toBeGreaterThan(0);
+    expect(media.listenerCount()).toBeGreaterThan(0);
+    unmount();
+    expect(modeles.listenerCount()).toBe(0);
+    expect(media.listenerCount()).toBe(0);
   });
 });

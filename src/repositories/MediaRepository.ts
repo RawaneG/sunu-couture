@@ -40,5 +40,19 @@ export interface MediaRepository extends ObservableRepositoryStatus {
   addModelePatronPhoto(modeleId: string, dataUrl: string): Promise<void>;
   removeModelePatronPhoto(modeleId: string, photoId: string): Promise<void>;
 
+  /** Copie les photos + patrons d'un modèle vers les photos tissu d'une
+   * fiche (Phase 8B) — primitive dédiée, remplace la boucle historique
+   * `for (photo of [...modele.photos, ...modele.patronPhotos]) addFichePhoto
+   * (ficheId, photo.dataUrl)` : celle-ci fonctionnait en local (data URL),
+   * mais `photo.dataUrl` cloud est une URL HTTPS SIGNÉE, jamais repassable à
+   * `addFichePhoto()` (qui appelle `parseDataUrl()`). L'implémentation cloud
+   * télécharge l'objet Storage source avec la session utilisateur et ré-
+   * uploade son `Blob` vers la fiche — jamais de conversion URL signée →
+   * pseudo-data-URL. Photos ET patrons deviennent tous deux `fabric_photo`
+   * sur la fiche, dans l'ordre historique (photos puis patrons). Copie
+   * séquentielle et factuelle : un échec intermédiaire rejette la Promise
+   * sans annuler les copies déjà réussies ni en retenter aucune. */
+  copyModeleMediaToFiche(modeleId: string, ficheId: string): Promise<void>;
+
   subscribe(listener: () => void): () => void;
 }

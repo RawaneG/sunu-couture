@@ -116,3 +116,41 @@ export const mediaAssetRowSchema = z.object({
   deleted_at: z.string().nullable(),
 });
 export type MediaAssetRow = z.infer<typeof mediaAssetRowSchema>;
+
+// ── modeles (Phase 8B — catalogue cloud) ────────────────────────────────
+// `nom` revalidé ici avec la même règle que la contrainte SQL réelle
+// (`length(btrim(nom)) BETWEEN 1 AND 200`) — une ligne serveur qui violerait
+// sa propre contrainte (ne devrait jamais arriver) est rejetée comme toute
+// autre ligne réseau invalide, jamais mappée silencieusement.
+export const modeleRowSchema = z.object({
+  id: z.string(),
+  workshop_id: z.string(),
+  nom: z.string().refine((v) => {
+    const trimmed = v.trim();
+    return trimmed.length >= 1 && trimmed.length <= 200;
+  }, "nom de modèle invalide"),
+  created_at: z.string(),
+  updated_at: z.string(),
+  deleted_at: z.string().nullable(),
+});
+export type ModeleRow = z.infer<typeof modeleRowSchema>;
+
+// ── modele_medias (Phase 8B — médias MODÈLE uniquement, jamais dans
+// `media_assets` — voir le mapping canonique dans la spec Phase 8B) ────────
+export const modeleMediaKindSchema = z.enum(["photo", "patron"]);
+export type ModeleMediaKind = z.infer<typeof modeleMediaKindSchema>;
+
+export const modeleMediaRowSchema = z.object({
+  id: z.string(),
+  workshop_id: z.string(),
+  modele_id: z.string(),
+  kind: modeleMediaKindSchema,
+  storage_path: z.string(),
+  mime_type: z.string(),
+  size_bytes: z.number().int().nonnegative(),
+  position: z.number().int(),
+  metadata: z.record(z.string(), z.unknown()).nullable(),
+  created_at: z.string(),
+  deleted_at: z.string().nullable(),
+});
+export type ModeleMediaRow = z.infer<typeof modeleMediaRowSchema>;
