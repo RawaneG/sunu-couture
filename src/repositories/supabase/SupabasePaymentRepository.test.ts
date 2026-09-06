@@ -267,6 +267,56 @@ describe("SupabasePaymentRepository — refreshBalance() ciblé (§28, price →
     expect(repo2.getBalance("f1")).toEqual(before);
     expect(repo2.getLastBalanceRefreshError()).not.toBeNull();
   });
+
+  it("refreshBalance(f1) est un upsert CIBLÉ — ne détruit PAS la balance déjà connue de f2 (régression corr. ciblée)", async () => {
+    const gateway = fakeGateway({
+      listFicheBalances: vi.fn(async () => ({
+        data: [
+          balanceRow({ fiche_id: "f1", total_price: 10000, total_paid: 5000, reste: 5000 }),
+          balanceRow({ fiche_id: "f2", total_price: 20000, total_paid: 2000, reste: 18000 }),
+        ],
+        error: null,
+      })),
+    });
+    const repo = new SupabasePaymentRepository({ gateway, workshopId: "w1", cache: emptyCache() });
+    await repo.bootstrapped;
+    expect(repo.getBalance("f1")).toEqual({ price: 10000, paid: 5000, reste: 5000 });
+    expect(repo.getBalance("f2")).toEqual({ price: 20000, paid: 2000, reste: 18000 });
+    const f2Before = repo.getBalance("f2");
+
+    gateway.getFicheBalance = vi.fn(async () => ({
+      data: balanceRow({ fiche_id: "f1", total_price: 12000, total_paid: 5000, reste: 7000 }),
+      error: null,
+    }));
+    await repo.refreshBalance("f1");
+
+    expect(repo.getBalance("f1")).toEqual({ price: 12000, paid: 5000, reste: 7000 });
+    expect(repo.getBalance("f2")).toEqual({ price: 20000, paid: 2000, reste: 18000 });
+    expect(repo.getBalance("f2")).toBe(f2Before); // référence inchangée — f2 n'a jamais été retouchée
+  });
+
+  it("add() (chemin réel INSERT → refreshBalance interne) ne détruit pas les balances des autres fiches", async () => {
+    const gateway = fakeGateway({
+      listFicheBalances: vi.fn(async () => ({
+        data: [
+          balanceRow({ fiche_id: "f1", total_price: 10000, total_paid: 5000, reste: 5000 }),
+          balanceRow({ fiche_id: "f2", total_price: 20000, total_paid: 2000, reste: 18000 }),
+        ],
+        error: null,
+      })),
+      insertClientPayment: vi.fn(async () => ({ data: paymentRow({ id: "new-id", fiche_id: "f1", amount: 3000 }), error: null })),
+      getFicheBalance: vi.fn(async () => ({ data: balanceRow({ fiche_id: "f1", total_price: 10000, total_paid: 8000, reste: 2000 }), error: null })),
+    });
+    const repo = new SupabasePaymentRepository({ gateway, workshopId: "w1", cache: emptyCache() });
+    await repo.bootstrapped;
+    const f2Before = repo.getBalance("f2");
+
+    await repo.add({ ficheId: "f1", amount: 3000 });
+
+    expect(repo.getBalance("f1")).toEqual({ price: 10000, paid: 8000, reste: 2000 });
+    expect(repo.getBalance("f2")).toEqual({ price: 20000, paid: 2000, reste: 18000 });
+    expect(repo.getBalance("f2")).toBe(f2Before);
+  });
 });
 
 describe("SupabasePaymentRepository — cache IndexedDB", () => {

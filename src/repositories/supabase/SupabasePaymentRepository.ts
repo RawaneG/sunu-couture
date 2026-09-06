@@ -111,15 +111,32 @@ export class SupabasePaymentRepository implements PaymentRepository {
     this.balances = next;
   }
 
+  /** Upsert CIBLÉ d'UNE seule entrée — copie TOUTES les autres fiches déjà
+   * connues sans y toucher (jamais un remplacement intégral comme
+   * `commitBalances()`, réservé au snapshot complet de `refreshAllBalances()`).
+   * Préserve aussi la référence de la fiche mise à jour si sa valeur n'a pas
+   * réellement changé, même contrat de stabilité que `commitBalances()`. */
+  private commitBalance(ficheId: string, balance: FicheBalance): void {
+    const prev = this.balances.get(ficheId);
+    const unchanged = prev && prev.price === balance.price && prev.paid === balance.paid && prev.reste === balance.reste;
+    const next = new Map(this.balances);
+    next.set(ficheId, unchanged ? prev : balance);
+    this.balances = next;
+  }
+
   /** Rafraîchissement CIBLÉ d'UNE fiche (§28) — appelé par la page après un
    * événement externe qui affecte la balance (ex. `total_price` modifié via
-   * `FicheRepository`), sans jamais recalculer le solde côté client. */
+   * `FicheRepository`), sans jamais recalculer le solde côté client. Doit
+   * IMPÉRATIVEMENT passer par `commitBalance()` (upsert) et non
+   * `commitBalances()` (remplacement intégral) : sinon chaque appel — y
+   * compris celui déclenché par `add()` à CHAQUE versement — effacerait les
+   * balances déjà connues de toutes les AUTRES fiches en cache. */
   async refreshBalance(ficheId: string): Promise<void> {
     try {
       const { data, error } = await this.gateway.getFicheBalance(this.workshopId, ficheId);
       if (error || !data) throw new Error(error?.message ?? "réponse vide");
       const row = parseRowOrThrow(ficheBalanceRowSchema, data, "SupabasePaymentRepository.refreshBalance");
-      this.commitBalances([[ficheId, mapFicheBalanceRowToDomain(row)]]);
+      this.commitBalance(ficheId, mapFicheBalanceRowToDomain(row));
       this.lastBalanceRefreshError = null;
       this.notify();
     } catch (err) {
