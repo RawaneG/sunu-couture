@@ -4,6 +4,7 @@
 // `RemoteRowValidationError`) : elle ne remplace jamais un cache valide
 // existant et ne devient jamais une valeur métier inventée.
 import { z } from "zod";
+import { PAYMENT_METHODS } from "../PaymentRepository";
 
 export class RemoteRowValidationError extends Error {
   readonly issues: z.core.$ZodIssue[];
@@ -154,3 +155,34 @@ export const modeleMediaRowSchema = z.object({
   deleted_at: z.string().nullable(),
 });
 export type ModeleMediaRow = z.infer<typeof modeleMediaRowSchema>;
+
+// ── client_payments (Phase 11A — ledger append-only, jamais UPDATE/DELETE) ─
+export const clientPaymentRowSchema = z.object({
+  id: z.string(),
+  workshop_id: z.string(),
+  fiche_id: z.string(),
+  amount: z.number().int().positive(),
+  paid_at: z.string().nullable(),
+  method: z.enum(PAYMENT_METHODS).nullable(),
+  note: z.string().nullable(),
+  metadata: z.record(z.string(), z.unknown()).nullable(),
+  recorded_at: z.string(),
+  created_at: z.string(),
+});
+export type ClientPaymentRow = z.infer<typeof clientPaymentRowSchema>;
+
+// ── fiche_balances (vue AUTORITATIVE, Phase 4/11A) — toutes les colonnes
+// sont générées "nullable" par Supabase pour une VUE (même remarque que
+// `ficheViewRowSchema`), revalidées ici comme non nulles pour une ligne
+// réelle. `reste` peut être NÉGATIF (surpaiement) — jamais forcé `>= 0`,
+// contrairement à `total_price`/`total_paid` qui ne peuvent légitimement pas
+// l'être. ───────────────────────────────────────────────────────────────
+export const ficheBalanceRowSchema = z.object({
+  workshop_id: z.string(),
+  fiche_id: z.string(),
+  total_price: z.number().int().nonnegative(),
+  total_paid: z.number().int().nonnegative(),
+  reste: z.number().int(),
+  is_settled: z.boolean(),
+});
+export type FicheBalanceRow = z.infer<typeof ficheBalanceRowSchema>;

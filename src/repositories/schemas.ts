@@ -11,6 +11,7 @@
 // avertissement console pour la visibilité (voir chaque Local*Repository).
 import { z } from "zod";
 import { FICHE_MESURE_KEYS, FICHE_INFO_KEYS } from "../lib/types";
+import { PAYMENT_METHODS } from "./PaymentRepository";
 
 export class RepositoryValidationError extends Error {
   readonly issues: z.core.$ZodIssue[];
@@ -82,6 +83,22 @@ export const champValeurSchema = z.string();
 
 export const amountSchema = z.number().int().min(0);
 
+// Phase 11A — un NOUVEAU versement (ledger `client_payments`) exige un
+// entier strictement positif : `amountSchema` (0 accepté) reste réservé aux
+// champs historiques (`price`/`avance` en tant que TOTAUX, qui peuvent
+// légitimement être 0 avant toute saisie). `0`/négatif/décimal/`NaN`/
+// `Infinity` sont tous rejetés (z.number().int() rejette déjà NaN/Infinity).
+export const paymentAmountSchema = z.number().int().positive();
+
+export const addPaymentInputSchema = z.object({
+  ficheId: z.string(),
+  amount: paymentAmountSchema,
+  paidAt: z.string().nullable().optional(),
+  method: z.enum(PAYMENT_METHODS).nullable().optional(),
+  note: z.string().nullable().optional(),
+});
+export type AddPaymentInputParsed = z.infer<typeof addPaymentInputSchema>;
+
 // Aligné sur la contrainte SQL réelle (Phase 8B, `public.modeles` :
 // `length(btrim(nom)) BETWEEN 1 AND 200`) — la valeur elle-même n'est PAS
 // trimmée ici (le schéma valide la longueur du nom TRIMMÉ, comme SQL, mais
@@ -147,6 +164,19 @@ export const storedModeleSchema = z.object({
   photos: z.array(tissuPhotoSchema),
   patronPhotos: z.array(tissuPhotoSchema),
   createdAt: z.string(),
+});
+
+// Phase 11A — cache IndexedDB du ledger `client_payments` côté cloud (voir
+// `SupabasePaymentRepository`). Ne stocke jamais `FicheBalance` (vue
+// autoritative, gardée en mémoire uniquement, jamais persistée).
+export const storedPaymentSchema = z.object({
+  id: z.string(),
+  ficheId: z.string(),
+  amount: z.number(),
+  paidAt: z.string().nullable(),
+  method: z.enum(PAYMENT_METHODS).nullable(),
+  note: z.string().nullable(),
+  recordedAt: z.string(),
 });
 
 /** Vérifie chaque élément de `items` contre `schema` et journalise (une seule

@@ -12,14 +12,17 @@
 // validée par l'appelant (`CloudCollectionStore`) avant tout affichage.
 //
 // DB_VERSION 1 → 2 (ajout de "carnets"), 2 → 3 (Phase 8B, ajout de
-// "modeles") : le upgrade n'ajoute QUE les magasins manquants
-// (`if (!contains(storeName))`) — les données déjà présentes dans
-// "clients"/"fiches"/"carnets" ne sont jamais touchées ni supprimées. Le
-// cache "modeles" ne stocke QUE les métadonnées (`nom`, dates) — jamais les
-// photos/patrons (non autoritatifs ici, voir `mappers/modele.ts`).
+// "modeles"), 3 → 4 (Phase 11A, ajout de "payments") : le upgrade n'ajoute
+// QUE les magasins manquants (`if (!contains(storeName))`) — les données
+// déjà présentes dans les magasins existants ne sont jamais touchées ni
+// supprimées. Le cache "modeles" ne stocke QUE les métadonnées (`nom`,
+// dates) — jamais les photos/patrons (non autoritatifs, voir
+// `mappers/modele.ts`). Le cache "payments" ne stocke QUE les lignes
+// `client_payments` (le ledger) — JAMAIS `fiche_balances` (vue autoritative,
+// gardée en mémoire uniquement, voir `SupabasePaymentRepository`).
 const DB_NAME = "tayoo-cloud-cache";
-const DB_VERSION = 3;
-export const CACHE_STORE_NAMES = ["clients", "fiches", "carnets", "modeles"] as const;
+const DB_VERSION = 4;
+export const CACHE_STORE_NAMES = ["clients", "fiches", "carnets", "modeles", "payments"] as const;
 export type CacheStoreName = (typeof CACHE_STORE_NAMES)[number];
 
 interface StoredRow {

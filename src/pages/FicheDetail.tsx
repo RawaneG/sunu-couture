@@ -2,7 +2,7 @@ import { useState } from "react";
 import { Navigate, useNavigate, useParams } from "react-router-dom";
 import { motion } from "framer-motion";
 import clsx from "clsx";
-import { useFiche, useClient, useFicheMedia } from "../repositories/hooks";
+import { useFiche, useClient, useFicheMedia, useFichePayments } from "../repositories/hooks";
 import { useRepositories } from "../repositories/RepositoryProvider";
 import PageHeader from "../components/ui/PageHeader";
 import VoiceRecorder from "../components/ui/VoiceRecorder";
@@ -44,6 +44,13 @@ export default function FicheDetail() {
   // vide" — jamais confondus (§10) : tant que `loading`/`error`, aucun
   // contrôle d'écriture média n'est rendu.
   const mediaState = useFicheMedia(ficheState.status === "ready" ? (ficheState.data?.id ?? "") : "");
+  // Phase 11A — `PaymentRepository` devient la source de vérité pour le
+  // ledger de versements + la balance autoritative (`fiche_balances`) ;
+  // `Fiche.avance` reste dans le modèle domaine (compat locale/legacy) mais
+  // n'est plus lu ici. `paymentsState.status` distingue "pas encore chargé"
+  // de "chargé et vide" — jamais confondu avec un solde à 0 F réel (§18).
+  const paymentsState = useFichePayments(ficheState.status === "ready" ? (ficheState.data?.id ?? "") : "");
+  const [balanceStaleMessage, setBalanceStaleMessage] = useState<string | null>(null);
 
   if (ficheState.status === "loading") {
     return (
@@ -77,6 +84,29 @@ export default function FicheDetail() {
     ficheRepository.setInfo(fiche.id, patch).catch(() => {
       setWriteError("Une modification n'a pas pu être enregistrée. Réessaie.");
     });
+  };
+  // Phase 11A §28 — un `total_price` confirmé côté serveur peut changer la
+  // balance autoritative (`fiche_balances`) : jamais recalculé côté client,
+  // un rafraîchissement CIBLÉ est déclenché ici (absent en local, où le
+  // solde est déjà recalculé en direct à chaque lecture).
+  const handlePriceChange = (price: number) => {
+    ficheRepository.setInfo(fiche.id, { price }).then(
+      () => paymentRepository.refreshBalance?.(fiche.id),
+      () => setWriteError("Une modification n'a pas pu être enregistrée. Réessaie."),
+    );
+  };
+  // Phase 11A §23/§24 — INSERT confirmé serveur AVANT tout commit (voir
+  // `SupabasePaymentRepository.add`). Si l'INSERT lui-même échoue, l'erreur
+  // remonte à `AvanceChampCell` (son propre message inline). Si l'INSERT
+  // réussit mais que le refresh de balance qui suit échoue,
+  // `getLastBalanceRefreshError()` (absent en local) le signale ICI par un
+  // message DISTINCT — jamais "le versement n'a pas été enregistré" (§35).
+  const handleAddPayment = async (amount: number) => {
+    setBalanceStaleMessage(null);
+    await paymentRepository.add({ ficheId: fiche.id, amount });
+    if (paymentRepository.getLastBalanceRefreshError?.()) {
+      setBalanceStaleMessage("Versement enregistré. Le solde n'a pas pu être actualisé.");
+    }
   };
   const writeFicheChamp = (key: FicheChampKey, valeur: string) => {
     ficheRepository.setChamp(fiche.id, key, valeur).catch(() => {
@@ -263,9 +293,26 @@ export default function FicheDetail() {
                 />
               ))}
 
-              <PrixChampCell value={fiche.price} onChange={(price) => writeFicheInfo({ price })} />
-              <AvanceChampCell value={fiche.avance} onChange={(avance) => writeFicheInfo({ avance })} />
-              <ResteChampCell reste={paymentRepository.getBalance(fiche.id).reste} />
+              <PrixChampCell value={fiche.price} onChange={handlePriceChange} />
+              {paymentsState.status === "loading" ? (
+                <p role="status" aria-live="polite" className="border-b border-dotted border-line-strong py-2.5 text-[13px] font-semibold text-ink-faint">
+                  Chargement du solde…
+                </p>
+              ) : paymentsState.status === "error" ? (
+                <p role="alert" className="border-b border-dotted border-line-strong py-2.5 text-[13px] font-semibold text-terracotta">
+                  Le solde n'a pas pu être chargé. Vérifie ta connexion et réessaie.
+                </p>
+              ) : (
+                <>
+                  <AvanceChampCell totalVerse={paymentsState.data.balance.paid} onAdd={handleAddPayment} />
+                  {balanceStaleMessage && (
+                    <p role="alert" className="py-1 text-[12.5px] font-semibold text-terracotta">
+                      {balanceStaleMessage}
+                    </p>
+                  )}
+                  <ResteChampCell reste={paymentsState.data.balance.reste} />
+                </>
+              )}
 
               <FicheDateField label="Retrait le" value={fiche.dueDate} onChange={(v) => writeFicheInfo({ dueDate: v })} />
               <FicheDateField label="Soldé le" value={fiche.soldeLe} onChange={(v) => writeFicheInfo({ soldeLe: v })} />

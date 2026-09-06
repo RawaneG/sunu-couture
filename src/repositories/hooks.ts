@@ -1,7 +1,7 @@
 import { useCallback, useRef, useSyncExternalStore } from "react";
 import type { Client, Fiche, Modele, TissuPhoto, VoiceNote } from "../lib/types";
 import type { CarnetSlot } from "./CarnetRepository";
-import type { Payment } from "./PaymentRepository";
+import type { FicheBalance, Payment } from "./PaymentRepository";
 import { READY_STATUS } from "./RepositoryStatus";
 import { useRepositories } from "./RepositoryProvider";
 
@@ -72,6 +72,53 @@ export function usePayments(ficheId: string): Payment[] {
     useCallback((onStoreChange) => payments.subscribe(onStoreChange), [payments]),
     () => payments.list(ficheId),
   );
+}
+
+// ── Paiements + balance combinés (Phase 11A) ────────────────────────────
+// `usePayments()` seul ne distingue pas "pas encore chargé" de "chargé et
+// vide" et n'expose pas la balance — même limite que `useModeles()` avant la
+// Phase 8B (`useCatalogueModeles`). `useFichePayments()` combine
+// `PaymentRepository.list()`/`getBalance()`/`getStatus()` en un seul
+// snapshot `useSyncExternalStore`, avec la même exigence de stabilité
+// référentielle que `useFicheMedia` (Phase 8A) : ni `payments` ni `balance`
+// ne doivent changer de référence si rien n'a réellement changé.
+export interface FichePaymentsSnapshot {
+  payments: Payment[];
+  balance: FicheBalance;
+}
+
+export type FichePaymentsState =
+  | { status: "loading" }
+  | { status: "ready"; data: FichePaymentsSnapshot }
+  | { status: "error"; error: Error; data: FichePaymentsSnapshot };
+
+export function useFichePayments(ficheId: string): FichePaymentsState {
+  const { payments } = useRepositories();
+  const cacheRef = useRef<{ payments: Payment[]; balance: FicheBalance; snapshot: FichePaymentsSnapshot } | null>(null);
+
+  const getSnapshot = useCallback((): FichePaymentsSnapshot => {
+    const list = payments.list(ficheId);
+    const balance = payments.getBalance(ficheId);
+    const cached = cacheRef.current;
+    if (cached && cached.payments === list && cached.balance === balance) {
+      return cached.snapshot;
+    }
+    const snapshot: FichePaymentsSnapshot = { payments: list, balance };
+    cacheRef.current = { payments: list, balance, snapshot };
+    return snapshot;
+  }, [payments, ficheId]);
+
+  const data = useSyncExternalStore(
+    useCallback((onStoreChange) => payments.subscribe(onStoreChange), [payments]),
+    getSnapshot,
+  );
+  const repoStatus = useSyncExternalStore(
+    useCallback((onStoreChange) => payments.subscribe(onStoreChange), [payments]),
+    () => payments.getStatus?.() ?? READY_STATUS,
+  );
+  if (repoStatus.status === "loading") return { status: "loading" };
+  if (repoStatus.status === "error") return { status: "error", error: repoStatus.error, data };
+  return { status: "ready", data };
 }
 
 export function useCarnet(): { activeCarnetNumero: number; nextSlot: CarnetSlot } {

@@ -828,6 +828,28 @@ L'ordre reprend celui du cahier des charges (§ « Ordre d'implémentation »).
   fiche réellement payée ; taper un montant multi-chiffres ne crée **jamais**
   plus d'une ligne `client_payments` ; l'ajout respecte `CHECK(amount > 0)`.
 - **Rollback** : build `local`.
+- **Implémentation (2026-09-06)** — conforme au plan ci-dessus, **aucune
+  migration SQL** (seule phase du graphe cloud à ce jour n'ayant révélé aucun
+  besoin technique non anticipé) : `SupabasePaymentRepository` (payments +
+  balance, deux sources distinctes, `getStatus()` combiné) ; `add()` valide
+  côté client (`paymentAmountSchema`, entier `> 0`) puis INSERT confirmé
+  serveur avant tout commit mémoire, jamais optimiste ; un INSERT réussi suivi
+  d'un échec du rafraîchissement de `fiche_balances` ne fait jamais dire que
+  le versement n'existe pas (`getLastBalanceRefreshError()`, distinct d'un
+  échec d'INSERT) ; `reste` négatif (surpaiement) affiché fidèlement, plus
+  jamais tronqué à 0 (`ResteChampCell`) ; un changement de `total_price`
+  confirmé déclenche un rafraîchissement CIBLÉ de la balance
+  (`refreshBalance(ficheId)`), jamais un recalcul côté client. Validé en
+  local : `npm test` **603/603**, SQL **69/69** (inchangé), scripts
+  d'intégration Storage/RLS `test-phase-8a-media.mjs` **14/14** et
+  `test-phase-8b-catalog.mjs` **21/21** toujours verts (aucune régression),
+  nouveau `scripts/test-phase-11a-payments.mjs` **21/21** (isolation atelier
+  A/B réelle, ledger immuable — UPDATE/DELETE refusés, vue `fiche_balances`
+  vérifiée avec un vrai surpaiement `reste=-2000`). Aucun déploiement
+  distant, aucune activation de `VITE_BACKEND=supabase` (le gate reste
+  bloqué : 7B+8A+8B+11A codées, mais le Gate lui-même est une étape séparée
+  après merge/vérification). **Statut : « Phase 11A implémentée localement —
+  PR non créée, distant non touché »**.
 
 ---
 

@@ -1,6 +1,8 @@
 import { describe, expect, it, vi } from "vitest";
-import { createPhase8ACloudRepositories, disposePhase8ACloudRepositories } from "./createPhase8ACloudRepositories";
+import { createPhase11ACloudRepositories, disposePhase11ACloudRepositories } from "./createPhase11ACloudRepositories";
 import { SupabaseMediaRepository } from "./SupabaseMediaRepository";
+import { SupabaseModeleRepository } from "./SupabaseModeleRepository";
+import { SupabasePaymentRepository } from "./SupabasePaymentRepository";
 import type { SupabaseGateway } from "./gateway";
 
 function fakeGateway(): SupabaseGateway {
@@ -36,18 +38,29 @@ function fakeGateway(): SupabaseGateway {
   };
 }
 
-describe("createPhase8ACloudRepositories", () => {
-  it("construit les 4 repositories (7A + media), tous scopés au même atelier", async () => {
+describe("createPhase11ACloudRepositories", () => {
+  it("construit les 6 repositories (7A + media + modeles + payments), tous scopés au même atelier", async () => {
     const gateway = fakeGateway();
-    const repos = createPhase8ACloudRepositories({ gateway, workshopId: "w1" });
+    const repos = createPhase11ACloudRepositories({ gateway, workshopId: "w1" });
 
     expect(repos.media).toBeInstanceOf(SupabaseMediaRepository);
-    await Promise.all([repos.clients.bootstrapped, repos.carnets.bootstrapped, repos.fiches.bootstrapped, repos.media.bootstrapped]);
+    expect(repos.modeles).toBeInstanceOf(SupabaseModeleRepository);
+    expect(repos.payments).toBeInstanceOf(SupabasePaymentRepository);
+    await Promise.all([
+      repos.clients.bootstrapped,
+      repos.carnets.bootstrapped,
+      repos.fiches.bootstrapped,
+      repos.media.bootstrapped,
+      repos.modeles.bootstrapped,
+      repos.payments.bootstrapped,
+    ]);
+    expect(gateway.listClientPayments).toHaveBeenCalledWith("w1");
+    expect(gateway.listFicheBalances).toHaveBeenCalledWith("w1");
 
-    disposePhase8ACloudRepositories(repos);
+    disposePhase11ACloudRepositories(repos);
   });
 
   it("refuse un workshopId vide", () => {
-    expect(() => createPhase8ACloudRepositories({ gateway: fakeGateway(), workshopId: "" })).toThrow(/workshopId requis/);
+    expect(() => createPhase11ACloudRepositories({ gateway: fakeGateway(), workshopId: "" })).toThrow(/workshopId requis/);
   });
 });
