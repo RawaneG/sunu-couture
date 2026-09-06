@@ -712,6 +712,109 @@ describe("SupabaseMediaRepository — médias modèle (Phase 8B)", () => {
       expect(uploadMediaObject).toHaveBeenCalledTimes(2); // pas de 3ᵉ tentative / retry
       expect(gateway.insertMediaAsset).toHaveBeenCalledTimes(1); // le 1er est resté créé
     });
+
+    describe("fallback lazy (correctif review PR #11 — finding 2 : Blob → data URL générée trop tôt)", () => {
+      const realFileReader = globalThis.FileReader;
+      afterEach(() => {
+        vi.unstubAllGlobals();
+        vi.restoreAllMocks();
+      });
+
+      // Casse `FileReader` GLOBALEMENT (pas un spy sur le module réimporté
+      // dans ce fichier de test — un import nommé transpilé ne garantit pas
+      // qu'un tel spy intercepte l'appel fait depuis `SupabaseMediaRepository.
+      // ts`, vérifié empiriquement). `blobToDataUrl()` utilise `new
+      // FileReader()` en interne : si le code appelait encore la conversion
+      // de façon EAGER (la régression exacte visée par ce correctif), la
+      // construction lèverait immédiatement, avant même que `commitRow`
+      // ait pu tenter la signature — preuve directe, indépendante du bundler.
+      function breakFileReader() {
+        vi.stubGlobal(
+          "FileReader",
+          class {
+            constructor() {
+              throw new Error("FileReader ne devrait jamais être construit ici");
+            }
+          },
+        );
+      }
+
+      it("Cas A — signature immédiate réussit : la conversion Blob→dataURL n'est JAMAIS nécessaire (FileReader cassé, la copie réussit quand même)", async () => {
+        breakFileReader();
+        const gateway = copyGateway({
+          listActiveModeleMedias: vi.fn(async () => ({ data: [modeleMediaRow({ id: "p1", kind: "photo", position: 0 })], error: null })),
+          createSignedMediaUrl: vi.fn(async () => ({ data: "https://signed.example/copied", error: null })),
+        });
+        const media = new SupabaseMediaRepository({ gateway, workshopId: "w1" });
+        await media.bootstrapped;
+
+        // Ne rejette PAS malgré FileReader cassé : la conversion n'est jamais
+        // évaluée quand la signature immédiate réussit (§6).
+        await expect(media.copyModeleMediaToFiche("mod1", "f1")).resolves.toBeUndefined();
+        expect(media.listFichePhotos("f1")[0].dataUrl).toBe("https://signed.example/copied");
+      });
+
+      it("Cas B — signature échoue : le fallback est réellement généré (lazy, APRÈS l'échec), upload/insert restent à 1, aucun duplicate", async () => {
+        // FileReader réel (non cassé) ici — la conversion doit RÉUSSIR pour
+        // prouver qu'elle est bien tentée quand nécessaire. `createSignedMediaUrl`
+        // doit réussir au BOOTSTRAP (signe "p1", sinon `modeleMediaMap` reste
+        // vide et la boucle de copie n'a rien à itérer) et échouer seulement
+        // pour la signature de la DESTINATION copiée (dans `commitRow`).
+        let signCall = 0;
+        const gateway = copyGateway({
+          listActiveModeleMedias: vi.fn(async () => ({ data: [modeleMediaRow({ id: "p1", kind: "photo", position: 0 })], error: null })),
+          createSignedMediaUrl: vi.fn(async () => {
+            signCall += 1;
+            if (signCall === 1) return { data: "https://signed.example/bootstrap", error: null };
+            return { data: null, error: { message: "signing down" } };
+          }),
+        });
+        const media = new SupabaseMediaRepository({ gateway, workshopId: "w1" });
+        await media.bootstrapped;
+
+        await media.copyModeleMediaToFiche("mod1", "f1");
+
+        expect(gateway.uploadMediaObject).toHaveBeenCalledTimes(1);
+        expect(gateway.insertMediaAsset).toHaveBeenCalledTimes(1);
+        // Le média reste visible via le repli de session (data URL générée
+        // après coup), preuve comportementale que la conversion a bien eu lieu.
+        expect(media.listFichePhotos("f1")[0].dataUrl).toMatch(/^data:/);
+      });
+
+      it("Cas C — signature ET fallback échouent tous les deux : la création serveur (upload+insert) n'est jamais reniée, aucun duplicate", async () => {
+        // `createSignedMediaUrl` doit réussir au BOOTSTRAP (signe "p1", même
+        // raison qu'au Cas B) avant de casser FileReader — sinon
+        // `modeleMediaMap` resterait vide et la boucle de copie n'itérerait
+        // rien.
+        let signCall = 0;
+        const gateway = copyGateway({
+          listActiveModeleMedias: vi.fn(async () => ({ data: [modeleMediaRow({ id: "p1", kind: "photo", position: 0 })], error: null })),
+          createSignedMediaUrl: vi.fn(async () => {
+            signCall += 1;
+            if (signCall === 1) return { data: "https://signed.example/bootstrap", error: null };
+            return { data: null, error: { message: "signing down" } };
+          }),
+        });
+        const media = new SupabaseMediaRepository({ gateway, workshopId: "w1" });
+        await media.bootstrapped;
+        breakFileReader(); // casse la conversion elle-même (2e échec), APRÈS le bootstrap
+
+        // La Promise de copie ne rejette PAS — l'échec du fallback d'affichage
+        // est non bloquant, jamais confondu avec un échec de création (§7).
+        await expect(media.copyModeleMediaToFiche("mod1", "f1")).resolves.toBeUndefined();
+
+        expect(gateway.uploadMediaObject).toHaveBeenCalledTimes(1); // aucun second upload
+        expect(gateway.insertMediaAsset).toHaveBeenCalledTimes(1); // aucun second INSERT
+        // La row créée reste dans le snapshot mémoire, simplement sans URL
+        // d'affichage temporaire tant qu'un refresh signé n'a pas réussi.
+        expect(media.listFichePhotos("f1")).toHaveLength(1);
+        expect(media.listFichePhotos("f1")[0].dataUrl).toBe("");
+      });
+
+      it("(sanity check) FileReader réel restauré après ce bloc", () => {
+        expect(globalThis.FileReader).toBe(realFileReader);
+      });
+    });
   });
 });
 

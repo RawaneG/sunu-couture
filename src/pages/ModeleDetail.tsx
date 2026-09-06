@@ -183,7 +183,11 @@ export default function ModeleDetail() {
         className="px-4 lg:px-10 py-4 lg:py-8 max-w-2xl lg:mx-auto"
       >
         <div className="glass-card rounded-2xl p-4 lg:rounded-3xl lg:shadow-soft lg:p-8">
-          <ModeleNomEditor key={modele.id} modele={modele} modeleRepository={modeleRepository} />
+          {/* Clé = id + nom (pas seulement id) : un refresh réseau qui change
+              `modele.nom` (même modèle, id inchangé) doit REMONTER l'éditeur
+              plutôt que laisser un `draft` local obsolète écraser la valeur
+              serveur au prochain blur/Enter (correctif review PR #11). */}
+          <ModeleNomEditor key={`${modele.id}:${modele.nom}`} modele={modele} modeleRepository={modeleRepository} />
 
           <div>
             <p className="mb-2 text-[13px] font-bold text-ink-soft">Photos du modèle</p>

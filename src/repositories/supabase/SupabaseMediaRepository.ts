@@ -420,16 +420,34 @@ export class SupabaseMediaRepository implements MediaRepository {
 
   /** Signe la nouvelle ligne et met à jour le snapshot mémoire. Un échec de
    * signature immédiatement après création n'efface jamais le média : repli
-   * sur la data URL source pour CETTE session, un refresh périodique
-   * retentera la signature — jamais un second upload automatique (§30). */
-  private async commitRow(row: MediaAssetRow, sourceDataUrl: string): Promise<void> {
+   * sur une data URL de session pour CETTE session, un refresh périodique
+   * retentera la signature — jamais un second upload automatique (§30).
+   *
+   * `fallbackSource` accepte soit une data URL DÉJÀ disponible (les créations
+   * fiche normales — aucun coût supplémentaire), soit une fonction LAZY
+   * (`copyModeleMediaToFiche` — conversion `Blob` → data URL coûteuse en
+   * CPU/mémoire) : elle n'est appelée QUE si la signature immédiate échoue
+   * réellement, jamais de façon eager (correctif review PR #11 — finding 2).
+   * Si la construction de CE fallback échoue à son tour, l'échec reste non
+   * bloquant : la row (déjà réellement créée côté serveur) reste dans
+   * `mediaMap` sans URL d'affichage temporaire, jamais une transformation de
+   * cet échec secondaire en faux échec de création (aucun second upload, aucun
+   * second INSERT — le prochain refresh signé périodique retentera la
+   * signature normalement). */
+  private async commitRow(row: MediaAssetRow, fallbackSource: string | (() => Promise<string>)): Promise<void> {
     this.mediaMap.set(row.id, row);
     try {
       const { data, error } = await this.gateway.createSignedMediaUrl(row.storage_path, SIGNED_URL_TTL_SECONDS);
       if (error || !data) throw new Error(error?.message ?? "URL signée vide");
       this.signedUrls.set(row.storage_path, { signedUrl: data, expiresAt: Date.now() + SIGNED_URL_TTL_SECONDS * 1000 });
     } catch {
-      this.sessionFallback.set(row.id, sourceDataUrl);
+      try {
+        const fallback = typeof fallbackSource === "function" ? await fallbackSource() : fallbackSource;
+        this.sessionFallback.set(row.id, fallback);
+      } catch {
+        // Fallback indisponible (ex. FileReader down) — non bloquant, voir
+        // le commentaire de tête : la création serveur reste réelle.
+      }
     }
     this.epoch += 1;
     this.notify();
@@ -765,8 +783,12 @@ export class SupabaseMediaRepository implements MediaRepository {
         throw new Error(`SupabaseMediaRepository: enregistrement de la copie échoué après upload : ${insertError.message}`);
       }
       const row = parseRowOrThrow(mediaAssetRowSchema, data, "SupabaseMediaRepository.copy");
-      const fallbackDataUrl = await blobToDataUrl(blob);
-      await this.commitRow(row, fallbackDataUrl);
+      // Fallback LAZY (correctif review PR #11 — finding 2) : la conversion
+      // `Blob` → data URL n'a de sens que si la signature immédiate échoue —
+      // l'exécuter systématiquement ici gaspillerait CPU/mémoire à chaque
+      // copie réussie, et un échec de CETTE conversion ne doit jamais être
+      // confondu avec un échec de la création serveur déjà actée (§7).
+      await this.commitRow(row, () => blobToDataUrl(blob));
     }
   }
 }
