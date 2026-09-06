@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { useModeles } from "../repositories/hooks";
+import { useCatalogueModeles } from "../repositories/hooks";
 import { useRepositories } from "../repositories/RepositoryProvider";
 import PageHeader from "../components/ui/PageHeader";
 import ModeleGrid from "../components/ui/ModeleGrid";
@@ -9,7 +9,8 @@ import { IconPlus, IconScissors } from "../lib/icons";
 import { haptic } from "../lib/haptics";
 
 export default function Catalogue() {
-  const modeles = useModeles();
+  const catalogueState = useCatalogueModeles();
+  const modeles = catalogueState.status === "loading" ? [] : catalogueState.data;
   const { modeles: modeleRepository } = useRepositories();
   const navigate = useNavigate();
   const [selectMode, setSelectMode] = useState(false);
@@ -88,7 +89,16 @@ export default function Catalogue() {
       )}
 
       <div className="px-4 lg:px-10 py-2 lg:py-4 max-w-3xl lg:mx-auto">
-        {modeles.length === 0 ? (
+        {catalogueState.status === "loading" ? (
+          <div role="status" aria-live="polite" className="mt-10 flex flex-col items-center gap-3 text-ink-faint">
+            <p className="text-sm font-semibold">Chargement du catalogue…</p>
+          </div>
+        ) : catalogueState.status === "error" ? (
+          <p role="alert" className="mt-10 text-center text-sm font-semibold text-terracotta">
+            Le catalogue n'a pas pu être chargé. Vérifie ta connexion et réessaie.
+          </p>
+        ) : modeles.length === 0 ? (
+          // Uniquement ici (§66) : ready + 0 modèle, jamais confondu avec loading.
           <div className="mt-10 flex flex-col items-center gap-3 text-ink-faint">
             <span className="glass-chip flex h-14 w-14 items-center justify-center rounded-full">
               <IconScissors size={24} />

@@ -52,6 +52,15 @@ function fakeGateway(workshopId: string, overrides: Partial<SupabaseGateway> = {
     restoreMediaAsset: vi.fn(async () => ({ data: null, error: null })),
     uploadMediaObject: vi.fn(async () => ({ data: null, error: null })),
     createSignedMediaUrl: vi.fn(async () => ({ data: "https://example.test/signed", error: null })),
+    downloadMediaObject: vi.fn(async () => ({ data: new Blob(), error: null })),
+    listActiveModeles: vi.fn(async () => ({ data: [], error: null })),
+    getModeleById: vi.fn(async () => ({ data: null, error: null })),
+    insertModele: vi.fn(async () => ({ data: null, error: null })),
+    updateModeleNom: vi.fn(async () => ({ data: null, error: null })),
+    softDeleteModeles: vi.fn(async () => ({ data: null, error: null })),
+    listActiveModeleMedias: vi.fn(async () => ({ data: [], error: null })),
+    insertModeleMedia: vi.fn(async () => ({ data: null, error: null })),
+    deleteModeleMedia: vi.fn(async () => ({ data: null, error: null })),
     ...overrides,
   };
 }

@@ -78,10 +78,10 @@ export function createRepositoryContainerFor(
       // partielle de la Phase 7A existe (`src/repositories/supabase/`) mais
       // n'est pas activable globalement.
       throw new Error(
-        'Backend "supabase" : infrastructure cloud partielle disponible (Phase 7A — ' +
-          "clients/fiches en lecture-écriture limitée, carnets en lecture seule), " +
-          "mais l'activation globale reste interdite avant le gate cloud " +
-          "(Phase 7B + 8A + 8B + 11A terminées, voir docs/refonte/03-DECISIONS.md corr. R).",
+        'Backend "supabase" : infrastructure cloud partielle disponible (Phase 7B + 8A + 8B ' +
+          "terminées — clients/fiches/médias fiche/catalogue de modèles en lecture-écriture, " +
+          "carnets en lecture seule), mais l'activation globale reste interdite avant le gate " +
+          "cloud complet (11A encore manquante, voir docs/refonte/03-DECISIONS.md corr. R).",
       );
     default: {
       // Exhaustivité : toute valeur de `Backend` non gérée ci-dessus est une

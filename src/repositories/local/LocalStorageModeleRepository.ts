@@ -1,6 +1,6 @@
 import { useStore } from "../../lib/store";
-import type { ModeleRepository } from "../ModeleRepository";
-import { modeleNomSchema, parseOrThrow, storedModeleSchema, warnIfInvalid } from "../schemas";
+import type { ModeleRepository, NewModeleInput } from "../ModeleRepository";
+import { modeleNomSchema, newModeleInputSchema, parseOrThrow, storedModeleSchema, warnIfInvalid } from "../schemas";
 import { subscribeToSlice } from "./subscribeToSlice";
 
 export class LocalStorageModeleRepository implements ModeleRepository {
@@ -15,8 +15,10 @@ export class LocalStorageModeleRepository implements ModeleRepository {
   }
 
   // Mutations asynchrones (corr. R, Phase 7A) — voir LocalStorageClientRepository.
-  async add(): Promise<string> {
-    return useStore.getState().addModele();
+  // Phase 8B : `nom` requis, validé ici (jamais un fallback inventé si vide).
+  async add(input: NewModeleInput): Promise<string> {
+    const parsed = parseOrThrow(newModeleInputSchema, input, "ModeleRepository.add");
+    return useStore.getState().addModele(parsed.nom);
   }
 
   async setNom(id: string, nom: string): Promise<void> {

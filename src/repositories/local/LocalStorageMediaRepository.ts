@@ -71,6 +71,28 @@ export class LocalStorageMediaRepository implements MediaRepository {
     useStore.getState().removeModelePatronPhoto(modeleId, photoId);
   }
 
+  // Phase 8B — comportement visible identique à l'ancienne boucle inline de
+  // `FicheDetail.handlePickModele` : photos du modèle puis patrons, dans cet
+  // ordre, copiés vers `fiche.tissuPhotos`. Ce backend local n'a pas de
+  // distinction data URL / URL signée (tout est déjà une data URL) — la
+  // primitive existe surtout pour que `FicheDetail.tsx` ait UN SEUL appel
+  // valable pour les deux backends (voir la version cloud dans
+  // `SupabaseMediaRepository`, qui télécharge/ré-uploade réellement).
+  async copyModeleMediaToFiche(modeleId: string, ficheId: string): Promise<void> {
+    const modele = useStore.getState().getModele(modeleId);
+    if (!modele) {
+      throw new Error(`LocalStorageMediaRepository: modèle ${modeleId} introuvable — aucun média copié.`);
+    }
+    const fiche = useStore.getState().fiches.find((f) => f.id === ficheId);
+    if (!fiche) {
+      throw new Error(`LocalStorageMediaRepository: fiche ${ficheId} introuvable — aucun média copié.`);
+    }
+    for (const photo of [...modele.photos, ...modele.patronPhotos]) {
+      const parsed = parseOrThrow(dataUrlSchema, photo.dataUrl, "MediaRepository.copyModeleMediaToFiche");
+      useStore.getState().addFicheTissuPhoto(ficheId, parsed);
+    }
+  }
+
   subscribe(listener: () => void): () => void {
     const unsubFiches = subscribeToSlice("fiches", listener);
     const unsubModeles = subscribeToSlice("modeles", listener);

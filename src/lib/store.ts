@@ -308,7 +308,7 @@ export interface StoreState {
   advanceFiche: (id: string) => void;
   deleteFiche: (id: string) => void;
   deleteFiches: (ids: string[]) => void;
-  addModele: () => string;
+  addModele: (nom: string) => string;
   getModele: (id: string) => Modele | undefined;
   setModeleNom: (id: string, nom: string) => void;
   addModelePhoto: (id: string, dataUrl: string) => void;
@@ -699,9 +699,13 @@ export const useStore = create<StoreState>()(
         set({ fiches: get().fiches.filter((f) => !idSet.has(f.id)) });
       },
 
-      addModele: () => {
+      // Phase 8B — `nom` requis (le Repository valide en amont, voir
+      // `LocalStorageModeleRepository.add`/`newModeleInputSchema`) : un
+      // modèle cloud ne peut structurellement pas exister sans nom, ce
+      // backend local ne doit plus créer un modèle vide silencieusement.
+      addModele: (nom) => {
         const id = uid("m");
-        const modele: Modele = { id, nom: "", photos: [], patronPhotos: [], createdAt: new Date().toISOString() };
+        const modele: Modele = { id, nom, photos: [], patronPhotos: [], createdAt: new Date().toISOString() };
         set({ modeles: [modele, ...get().modeles] });
         return id;
       },

@@ -1,7 +1,7 @@
 import { createPortal } from "react-dom";
 import { Link } from "react-router-dom";
 import { motion } from "framer-motion";
-import { useModeles } from "../../repositories/hooks";
+import { useCatalogueModeles } from "../../repositories/hooks";
 import ModeleGrid from "./ModeleGrid";
 import { IconScissors } from "../../lib/icons";
 import { haptic } from "../../lib/haptics";
@@ -11,9 +11,17 @@ import type { Modele } from "../../lib/types";
  * Bottom sheet used from a fiche's photo section — tapping a modèle drops its
  * look photos and its patron de coupe straight into that fiche's photos, in
  * one tap, and closes. No typing, no intermediate confirmation screen.
+ *
+ * Phase 8B — migré vers le catalogue combiné (`useCatalogueModeles`) : les
+ * photos/patrons filtrés ici sont désormais les médias AUTORITATIFS cloud
+ * (`MediaRepository`/`modele_medias`), jamais `Modele.photos` lu seul. Le
+ * filtre "au moins une photo ou un patron" reste inchangé.
  */
 export default function ModelePickerSheet({ onSelect, onClose }: { onSelect: (modele: Modele) => void; onClose: () => void }) {
-  const modeles = useModeles().filter((m) => m.photos.length > 0 || m.patronPhotos.length > 0);
+  const catalogueState = useCatalogueModeles();
+  const loading = catalogueState.status === "loading";
+  const error = catalogueState.status === "error";
+  const modeles = loading ? [] : catalogueState.data.filter((m) => m.photos.length > 0 || m.patronPhotos.length > 0);
 
   return createPortal(
     <div className="fixed inset-0 z-[70] flex items-end justify-center lg:items-center">
@@ -33,7 +41,15 @@ export default function ModelePickerSheet({ onSelect, onClose }: { onSelect: (mo
         <div className="mx-auto mb-2 h-1.5 w-10 rounded-full bg-line-strong lg:hidden" />
         <p className="px-2 pb-2 pt-1 text-[13px] font-bold text-ink-soft">Choisir un modèle</p>
 
-        {modeles.length === 0 ? (
+        {loading ? (
+          <p role="status" aria-live="polite" className="px-3 py-6 text-center text-[12.5px] font-semibold text-ink-faint">
+            Chargement du catalogue…
+          </p>
+        ) : error ? (
+          <p role="alert" className="px-3 py-6 text-center text-[12.5px] font-semibold text-terracotta">
+            Le catalogue n'a pas pu être chargé. Réessaie.
+          </p>
+        ) : modeles.length === 0 ? (
           <div className="flex flex-col items-center gap-2 px-3 py-6 text-ink-faint">
             <IconScissors size={22} />
             <p className="text-center text-[12.5px] font-semibold">Le catalogue est vide.</p>

@@ -71,7 +71,7 @@ supabase/
                                       #   [db.seed].enabled = false ; [api].schemas = public, graphql_public
   seeds/
     draft_subscription_plans.sql       # BROUILLON is_active=false — NON câblé dans config.toml
-  migrations/                          # format horodaté, 14 fichiers (Phase 2 : 9 ; Phase 3B : 2 ; Phase 4 : 1 ; Phase 9A : 1 ; Phase 8A : 1)
+  migrations/                          # format horodaté, 15 fichiers (Phase 2 : 9 ; Phase 3B : 2 ; Phase 4 : 1 ; Phase 9A : 1 ; Phase 8A : 1 ; Phase 8B : 1)
     20260829120000_enable_extensions_and_enums.sql     pgcrypto, schéma privé app_hidden, 10 enums
     20260829120100_create_core_schema.sql              15 tables ; UNIQUE(workshop_id,id) + FK composites
     20260829120200_create_subscription_schema.sql      tables abonnement, AUCUN seed
@@ -86,13 +86,14 @@ supabase/
     20260830231638_grants_and_rls_policies.sql          REVOKE normalisé + GRANT colonne par colonne + 27 politiques RLS (Phase 4)
     20260905144612_create_fiche_from_draft_api.sql      wrapper public SECURITY INVOKER → app_hidden.create_fiche_from_draft (Phase 9A)
     20260905184439_phase_8a_media_storage.sql           bucket privé "media" + policies storage.objects SELECT/INSERT authenticated (Phase 8A)
+    20260906161045_phase_8b_catalog_storage_policies.sql  MÊMES 2 policies étendues (DROP+RECREATE) : branche fiche (inchangée) OU branche modèle (Phase 8B)
   migrations_down/                     # <ts>_<nom>.down.sql — rollback manuel (le CLI est forward-only)
   functions/
     provision-workshop/                # Edge Function Phase 3A — voir index.ts pour le contrat de sécurité complet
     create-fiche-from-draft/           # Edge Function Phase 9A — voir index.ts pour le contrat de sécurité complet
   tests/
     00_local_auth_shim.sql             # auth.users + auth.uid() + rôles + default privileges — POSTGRES NU SEULEMENT
-    10_schema_tests.sql                # 61 groupes d'assertions, tx + ROLLBACK (35 Phase 2 + 5 Phase 3A/3B + 15 Phase 4 + 2 Phase 9A + 4 Phase 8A)
+    10_schema_tests.sql                # 69 groupes d'assertions, tx + ROLLBACK (35 Phase 2 + 5 Phase 3A/3B + 15 Phase 4 + 2 Phase 9A + 4 Phase 8A + 8 Phase 8B)
     run.sh / run.ps1                   # orchestrateurs base jetable (voie COMPLÉMENTAIRE)
 ```
 
@@ -229,24 +230,42 @@ limite locale documentée pour le CORS : Kong réécrit
 statut sont vérifiables ici, les valeurs d'en-tête restent à vérifier une fois
 déployé (voir le commentaire de tête de chaque `index.ts`).
 
-### Storage média (Phase 8A) — validation locale
+### Storage média — bucket privé `media` (Phase 8A + Phase 8B)
+
+Le bucket `media` (privé, `allowed_mime_types` restreint à `image/jpeg`,
+`image/png`, `audio/webm`, `audio/mp4`, `audio/ogg`) porte **deux** paths
+canoniques, sans PII, tous deux couverts par les MÊMES 2 policies
+`storage.objects` (`media_objects_select_member`/`media_objects_insert_member`,
+`SELECT`/`INSERT to authenticated` uniquement — jamais `UPDATE`/`DELETE`/`anon`) :
+
+```
+workshops/{workshopId}/fiches/{ficheId}/{fileId}     médias FICHE   (Phase 8A, media_assets)
+workshops/{workshopId}/modeles/{modeleId}/{fileId}   médias MODÈLE  (Phase 8B, modele_medias)
+```
 
 Aucune Edge Function ici : `create-fiche-from-draft`/`provision-workshop`
-n'ont pas besoin de tourner pour ce script (§57 — CRUD `media_assets` en
-PostgREST direct, Storage en upload/signature uniquement).
+n'ont pas besoin de tourner pour ces scripts (CRUD `media_assets`/`modeles`/
+`modele_medias` en PostgREST direct, Storage en upload/signature uniquement).
 
 ```bash
 npx supabase start
-node scripts/test-phase-8a-media.mjs    # 14/14 — isolation bucket "media"
+node scripts/test-phase-8a-media.mjs    # 14/14 — isolation bucket "media", branche FICHE
+node scripts/test-phase-8b-catalog.mjs  # 21/21 — isolation bucket "media", branche MODÈLE
 ```
-Construit deux ateliers/fiches de test (mêmes deux numéros
+Chaque script construit deux ateliers de test (mêmes deux numéros
 `[auth.sms.test_otp]` que `test-create-fiche-from-draft.mjs`) directement via
 la clé secrète, puis vérifie avec de vrais clients `supabase-js` par
-utilisateur : upload/lecture dans sa propre fiche, refus d'upload/lecture
-inter-ateliers, refus `anon`, persistance du fichier Storage après un
-soft-delete de la ligne `media_assets`, et le code HTTP réel d'une URL signée
-expirée (jamais présumé `403` — observé `400` en local). Nettoyage des
-ateliers de test après coup.
+utilisateur. Phase 8A : upload/lecture dans sa propre fiche, refus
+d'upload/lecture inter-ateliers, refus `anon`, persistance du fichier Storage
+après un soft-delete de la ligne `media_assets`, code HTTP réel d'une URL
+signée expirée (jamais présumé `403` — observé `400` en local). Phase 8B, en
+plus : isolation `modeles` elle-même (RLS, pas seulement Storage), couple
+`workshop`/`modèle` incohérent refusé, détachement (`DELETE modele_medias`)
+sans suppression Storage physique, et surtout — vérifié contre le **vrai**
+PostgREST local, jamais seulement supposé côté frontend — qu'un modèle
+soft-deleted rend son média à la fois inaccessible en Storage (policy) et
+absent de la requête `!inner(deleted_at)` que `SupabaseMediaRepository`
+utilise réellement. Nettoyage des ateliers de test après coup dans les deux cas.
 `auth.uid()` réel de Supabase lit `request.jwt.claim.sub` **avant** `request.jwt.claims`
 (`coalesce`) — les tests (`set_config('request.jwt.claim.sub', …)`) s'exécutent donc
 sans adaptation, aussi bien sur la stack Docker que sur le shim de repli.

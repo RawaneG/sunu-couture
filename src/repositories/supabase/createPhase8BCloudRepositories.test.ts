@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
-import { createPhase8ACloudRepositories, disposePhase8ACloudRepositories } from "./createPhase8ACloudRepositories";
+import { createPhase8BCloudRepositories, disposePhase8BCloudRepositories } from "./createPhase8BCloudRepositories";
 import { SupabaseMediaRepository } from "./SupabaseMediaRepository";
+import { SupabaseModeleRepository } from "./SupabaseModeleRepository";
 import type { SupabaseGateway } from "./gateway";
 
 function fakeGateway(): SupabaseGateway {
@@ -32,18 +33,26 @@ function fakeGateway(): SupabaseGateway {
   };
 }
 
-describe("createPhase8ACloudRepositories", () => {
-  it("construit les 4 repositories (7A + media), tous scopés au même atelier", async () => {
+describe("createPhase8BCloudRepositories", () => {
+  it("construit les 5 repositories (7A + media + modeles), tous scopés au même atelier", async () => {
     const gateway = fakeGateway();
-    const repos = createPhase8ACloudRepositories({ gateway, workshopId: "w1" });
+    const repos = createPhase8BCloudRepositories({ gateway, workshopId: "w1" });
 
     expect(repos.media).toBeInstanceOf(SupabaseMediaRepository);
-    await Promise.all([repos.clients.bootstrapped, repos.carnets.bootstrapped, repos.fiches.bootstrapped, repos.media.bootstrapped]);
+    expect(repos.modeles).toBeInstanceOf(SupabaseModeleRepository);
+    await Promise.all([
+      repos.clients.bootstrapped,
+      repos.carnets.bootstrapped,
+      repos.fiches.bootstrapped,
+      repos.media.bootstrapped,
+      repos.modeles.bootstrapped,
+    ]);
+    expect(gateway.listActiveModeles).toHaveBeenCalledWith("w1");
 
-    disposePhase8ACloudRepositories(repos);
+    disposePhase8BCloudRepositories(repos);
   });
 
   it("refuse un workshopId vide", () => {
-    expect(() => createPhase8ACloudRepositories({ gateway: fakeGateway(), workshopId: "" })).toThrow(/workshopId requis/);
+    expect(() => createPhase8BCloudRepositories({ gateway: fakeGateway(), workshopId: "" })).toThrow(/workshopId requis/);
   });
 });

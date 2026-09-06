@@ -147,11 +147,15 @@ export default function FicheDetail() {
     });
   };
 
+  // Phase 8B — remplace l'ancienne boucle `photo.dataUrl → addFichePhoto()` :
+  // celle-ci fonctionnait en local (data URL) mais ne peut PAS fonctionner en
+  // cloud (`photo.dataUrl` y est une URL HTTPS signée, jamais repassable à
+  // `addFichePhoto()`/`parseDataUrl()`). `copyModeleMediaToFiche()` est la
+  // primitive dédiée, valable pour les deux backends (voir `MediaRepository.ts`).
   const handlePickModele = async (modele: Modele) => {
     haptic(16);
-    const photos = [...modele.photos, ...modele.patronPhotos];
     try {
-      for (const photo of photos) await mediaRepository.addFichePhoto(fiche.id, photo.dataUrl);
+      await mediaRepository.copyModeleMediaToFiche(modele.id, fiche.id);
     } catch {
       setWriteError("Certaines photos n'ont pas pu être ajoutées. Réessaie.");
     }

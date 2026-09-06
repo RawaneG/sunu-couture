@@ -3,7 +3,7 @@
 // SIGNÉE en paramètre séparé (jamais persistée, voir `SupabaseMediaRepository`
 // et corr. R §13) plutôt que de la lire depuis la ligne elle-même.
 import type { TissuPhoto, VoiceNote } from "../../../lib/types";
-import type { MediaAssetRow } from "../schemas";
+import type { MediaAssetRow, ModeleMediaRow } from "../schemas";
 
 /** `TissuPhoto.dataUrl` garde son nom historique pour éviter un refactor
  * produit — mais sa VALEUR change de nature selon le backend : une data URL
@@ -35,4 +35,12 @@ export function mapVoiceNoteRowToDomain(row: MediaAssetRow, signedUrl: string): 
 
 export function mapSignatureRowToDomain(_row: MediaAssetRow, signedUrl: string): string {
   return signedUrl;
+}
+
+/** `modele_medias` row (`kind='photo'|'patron'`) → `TissuPhoto` (Phase 8B) —
+ * même remarque que `mapFabricPhotoRowToDomain` : `dataUrl` reste le nom de
+ * champ historique, sa valeur est l'URL signée éphémère fournie par
+ * `SupabaseMediaRepository`, jamais persistée. */
+export function mapModeleMediaRowToDomain(row: ModeleMediaRow, signedUrl: string): TissuPhoto {
+  return { id: row.id, dataUrl: signedUrl };
 }

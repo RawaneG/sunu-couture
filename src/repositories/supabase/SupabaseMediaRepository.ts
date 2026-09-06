@@ -11,19 +11,39 @@
 // `signedUrls` (`storage_path → {signedUrl, expiresAt}`), reconstruits à
 // chaque bootstrap/refresh.
 //
-// Médias MODÈLE (`listModelePhotos`/...) : PAS implémentés ici (Phase 8B) —
-// voir `modeleUnsupported()`. Ce Repository n'est branché nulle part dans
-// `RepositoryContainer` (voir `createPhase8ACloudRepositories.ts`).
+// Médias MODÈLE (Phase 8B, `public.modele_medias`) : partagent le MÊME
+// bucket Storage privé `media`, le même cache de signatures (`signedUrls`,
+// clé = `storage_path`, jamais confondu avec les clés fiche/modèle car les
+// paths ne se recoupent jamais — préfixes `.../fiches/...` vs
+// `.../modeles/...`), et le même timer de rafraîchissement — mais un domaine
+// mémoire séparé (`modeleMediaMap`) : jamais une ligne `modele_medias`
+// mélangée à une ligne `media_assets`.
 import type { TissuPhoto, VoiceNote } from "../../lib/types";
 import type { Json } from "../../lib/supabase/database.types";
 import type { MediaRepository } from "../MediaRepository";
 import type { RepositoryStatus } from "../RepositoryStatus";
 import { READY_STATUS } from "../RepositoryStatus";
-import { parseDataUrl, readImageDimensions, sha256Hex } from "../../lib/dataUrl";
-import { ALLOWED_MEDIA_BUCKET_MIME_TYPES, isAllowedMediaBucketMime, normalizeMediaMime } from "./mediaMime";
-import { buildMediaObjectPath } from "./mediaPath";
-import { mapFabricPhotoRowToDomain, mapSignatureRowToDomain, mapVoiceNoteRowToDomain } from "./mappers/media";
-import { ficheViewRowSchema, mediaAssetRowSchema, parseRowOrThrow, type FicheMediaType, type MediaAssetRow } from "./schemas";
+import { blobToDataUrl, parseDataUrl, readImageDimensions, sha256Hex } from "../../lib/dataUrl";
+import {
+  ALLOWED_MEDIA_BUCKET_MIME_TYPES,
+  ALLOWED_MODELE_MEDIA_MIME_TYPES,
+  isAllowedMediaBucketMime,
+  isAllowedModeleMediaMime,
+  normalizeMediaMime,
+} from "./mediaMime";
+import { buildMediaObjectPath, buildModeleMediaObjectPath } from "./mediaPath";
+import { mapFabricPhotoRowToDomain, mapModeleMediaRowToDomain, mapSignatureRowToDomain, mapVoiceNoteRowToDomain } from "./mappers/media";
+import {
+  ficheViewRowSchema,
+  mediaAssetRowSchema,
+  modeleMediaRowSchema,
+  modeleRowSchema,
+  parseRowOrThrow,
+  type FicheMediaType,
+  type MediaAssetRow,
+  type ModeleMediaKind,
+  type ModeleMediaRow,
+} from "./schemas";
 import type { SupabaseGateway } from "./gateway";
 
 /** ≤ 300 s (§28) — bucket privé, jamais `getPublicUrl()`. */
@@ -54,6 +74,12 @@ export class SupabaseMediaRepository implements MediaRepository {
   private readonly workshopId: string;
 
   private mediaMap = new Map<string, MediaAssetRow>();
+  /** Domaine séparé pour les médias MODÈLE (Phase 8B) — jamais mélangé avec
+   * `mediaMap` (médias FICHE), voir le commentaire de tête du fichier. */
+  private modeleMediaMap = new Map<string, ModeleMediaRow>();
+  /** Cache de signatures PARTAGÉ entre médias fiche et médias modèle — clé
+   * = `storage_path`, jamais ambiguë entre les deux domaines (préfixes de
+   * path disjoints, §31). */
   private signedUrls = new Map<string, SignedUrlEntry>();
   /** Repli d'affichage SESSION UNIQUEMENT (§30) — pour un média ajouté cette
    * session dont la signature immédiate a échoué, jamais persisté. */
@@ -119,49 +145,61 @@ export class SupabaseMediaRepository implements MediaRepository {
     }
   }
 
-  /** Signe TOUTES les lignes d'un lot — une seule signature échouée fait
-   * échouer le lot entier (§14/§28), jamais un résultat partiel. */
-  private async signAll(rows: MediaAssetRow[]): Promise<Map<string, SignedUrlEntry>> {
+  /** Signe TOUS les paths d'un lot — une seule signature échouée fait
+   * échouer le lot entier (§14/§28), jamais un résultat partiel. Générique
+   * sur le path (pas sur `MediaAssetRow`) depuis la Phase 8B : un refresh
+   * signe fiche ET modèle en un seul appel atomique (§33). */
+  private async signAllPaths(paths: string[]): Promise<Map<string, SignedUrlEntry>> {
     const entries = await Promise.all(
-      rows.map(async (row): Promise<readonly [string, SignedUrlEntry]> => {
-        const { data, error } = await this.gateway.createSignedMediaUrl(row.storage_path, SIGNED_URL_TTL_SECONDS);
+      paths.map(async (path): Promise<readonly [string, SignedUrlEntry]> => {
+        const { data, error } = await this.gateway.createSignedMediaUrl(path, SIGNED_URL_TTL_SECONDS);
         if (error || !data) {
-          throw new Error(`Signature URL échouée pour ${row.storage_path} : ${error?.message ?? "réponse vide"}`);
+          throw new Error(`Signature URL échouée pour ${path} : ${error?.message ?? "réponse vide"}`);
         }
-        return [row.storage_path, { signedUrl: data, expiresAt: Date.now() + SIGNED_URL_TTL_SECONDS * 1000 }];
+        return [path, { signedUrl: data, expiresAt: Date.now() + SIGNED_URL_TTL_SECONDS * 1000 }];
       }),
     );
     return new Map(entries);
   }
 
   /** Bootstrap ET rejoue périodique passent par la même méthode — un
-   * refresh est un snapshot atomique (fetch + validation Zod + règle
-   * anti-doublon voice_note + signature de toutes les URLs) : la moindre
-   * étape invalide fait échouer TOUT le refresh, jamais un résultat partiel
-   * silencieusement accepté (§14). En cas d'échec, l'ancien snapshot en
-   * mémoire est conservé tel quel (comme `CloudCollectionStore.refresh()`). */
+   * refresh est un snapshot ATOMIQUE couvrant fiche ET modèle (Phase 8B,
+   * §33) : fetch des deux collections + validation Zod + règle anti-doublon
+   * voice_note + signature de TOUTES les URLs (fiche + modèle) avant de
+   * remplacer quoi que ce soit — la moindre étape invalide (une seule ligne,
+   * fiche ou modèle, ou une seule signature) fait échouer TOUT le refresh,
+   * jamais un résultat partiel silencieusement accepté (§14). En cas
+   * d'échec, l'ancien snapshot en mémoire (les deux domaines) est conservé
+   * tel quel (comme `CloudCollectionStore.refresh()`). */
   async refresh(): Promise<void> {
     try {
-      const { data, error } = await this.gateway.listActiveMediaAssets(this.workshopId);
-      if (error) throw new Error(error.message);
-      const rows = (data ?? []).map((raw) => parseRowOrThrow(mediaAssetRowSchema, raw, "SupabaseMediaRepository"));
-      this.assertAtMostOneVoiceNotePerFiche(rows);
+      const { data: ficheData, error: ficheError } = await this.gateway.listActiveMediaAssets(this.workshopId);
+      if (ficheError) throw new Error(ficheError.message);
+      const ficheRows = (ficheData ?? []).map((raw) => parseRowOrThrow(mediaAssetRowSchema, raw, "SupabaseMediaRepository"));
+      this.assertAtMostOneVoiceNotePerFiche(ficheRows);
       // Validation eager de la cohérence domaine (pas seulement la forme
       // réseau) — une voice_note sans durée valide fait échouer tout le
       // refresh, jamais une fiche silencieusement dégradée à la première
       // lecture (§16).
-      for (const row of rows) if (row.type === "voice_note") mapVoiceNoteRowToDomain(row, "");
-      const signed = await this.signAll(rows);
+      for (const row of ficheRows) if (row.type === "voice_note") mapVoiceNoteRowToDomain(row, "");
 
-      this.mediaMap = new Map(rows.map((r) => [r.id, r]));
+      const { data: modeleData, error: modeleError } = await this.gateway.listActiveModeleMedias(this.workshopId);
+      if (modeleError) throw new Error(modeleError.message);
+      const modeleRows = (modeleData ?? []).map((raw) => parseRowOrThrow(modeleMediaRowSchema, raw, "SupabaseMediaRepository"));
+
+      const allPaths = [...ficheRows.map((r) => r.storage_path), ...modeleRows.map((r) => r.storage_path)];
+      const signed = await this.signAllPaths(allPaths);
+
+      this.mediaMap = new Map(ficheRows.map((r) => [r.id, r]));
+      this.modeleMediaMap = new Map(modeleRows.map((r) => [r.id, r]));
       // REMPLACE le cache signé (pas un merge) : un refresh complet réussi
       // reflète le snapshot serveur COURANT — une entrée pour un média
       // absent de ce snapshot (supprimé/remplacé entre-temps) ne doit jamais
       // survivre, sinon `signedUrls` grossit indéfiniment et cesse d'être un
-      // miroir fidèle de `mediaMap`.
+      // miroir fidèle des deux Map ci-dessus.
       this.signedUrls = signed;
       // Un média resynchronisé n'a plus besoin de son repli de session.
-      for (const row of rows) if (this.signedUrls.has(row.storage_path)) this.sessionFallback.delete(row.id);
+      for (const row of [...ficheRows, ...modeleRows]) if (this.signedUrls.has(row.storage_path)) this.sessionFallback.delete(row.id);
       this.epoch += 1;
       this.lastRefreshError = null;
       this.setStatus(READY_STATUS);
@@ -169,7 +207,7 @@ export class SupabaseMediaRepository implements MediaRepository {
     } catch (err) {
       const error = err instanceof Error ? err : new Error(String(err));
       this.lastRefreshError = error;
-      if (this.mediaMap.size === 0) {
+      if (this.mediaMap.size === 0 && this.modeleMediaMap.size === 0) {
         this.setStatus({ status: "error", error });
         this.notify();
       }
@@ -206,16 +244,17 @@ export class SupabaseMediaRepository implements MediaRepository {
    * §21 inchangés). */
   private async refreshSignedUrls(): Promise<void> {
     if (this.disposed) return;
-    const rows = [...this.mediaMap.values()];
+    // Couvre fiche ET modèle (Phase 8B) — même cache `signedUrls` partagé.
+    const rows: { storage_path: string; id: string }[] = [...this.mediaMap.values(), ...this.modeleMediaMap.values()];
     if (rows.length === 0) {
       this.scheduleUrlRefresh();
       return;
     }
     let nextDelayMs = NOMINAL_REFRESH_DELAY_MS;
     try {
-      const signed = await this.signAll(rows);
+      const signed = await this.signAllPaths(rows.map((r) => r.storage_path));
       // REMPLACE (pas un merge) — même raison que dans `refresh()` : aucune
-      // entrée pour une row absente de `mediaMap` ne doit survivre.
+      // entrée pour une row absente de `mediaMap`/`modeleMediaMap` ne doit survivre.
       this.signedUrls = signed;
       for (const row of rows) if (this.signedUrls.has(row.storage_path)) this.sessionFallback.delete(row.id);
       this.lastRefreshError = null;
@@ -229,7 +268,8 @@ export class SupabaseMediaRepository implements MediaRepository {
     }
   }
 
-  private resolveDisplayUrl(row: MediaAssetRow): string {
+  /** Générique (fiche OU modèle) — les deux partagent `storage_path`/`id`. */
+  private resolveDisplayUrl(row: { storage_path: string; id: string }): string {
     return this.signedUrls.get(row.storage_path)?.signedUrl ?? this.sessionFallback.get(row.id) ?? "";
   }
 
@@ -486,32 +526,205 @@ export class SupabaseMediaRepository implements MediaRepository {
     await this.replaceSingletonMedia(ficheId, "signature", dataUrl === null ? null : { dataUrl, metadataExtra: {} });
   }
 
-  // ── Médias MODÈLE — Phase 8B, PAS implémentés ici (§41). Ce Repository
-  // n'est branché nulle part dans `RepositoryContainer` (§42) : un rejet
-  // explicite est préférable à une collection vide qui laisserait croire à
-  // une vérité cloud "aucun modèle n'a de photo".
-  private modeleUnsupported(method: string): never {
-    throw new Error(
-      `SupabaseMediaRepository.${method}: médias modèle non implémentés avant la Phase 8B — ` +
-        "ce Repository ne couvre que les médias FICHE (Phase 8A).",
+  // ── Médias MODÈLE — Phase 8B ────────────────────────────────────────────
+
+  private rowsForModele(modeleId: string): ModeleMediaRow[] {
+    const rows: ModeleMediaRow[] = [];
+    for (const row of this.modeleMediaMap.values()) if (row.modele_id === modeleId) rows.push(row);
+    return rows;
+  }
+
+  /** `position ASC`, tie-break déterministe `created_at` puis `id` (§35) —
+   * deux positions égales ne sont PAS une corruption (aucune contrainte
+   * UNIQUE en base), jamais traitées comme une erreur bloquante. */
+  private sortModeleRows(rows: ModeleMediaRow[]): ModeleMediaRow[] {
+    return [...rows].sort(
+      (a, b) => a.position - b.position || a.created_at.localeCompare(b.created_at) || a.id.localeCompare(b.id),
     );
   }
-  listModelePhotos(_modeleId: string): TissuPhoto[] {
-    return this.modeleUnsupported("listModelePhotos");
+
+  private nextModelePosition(modeleId: string, kind: ModeleMediaKind): number {
+    return this.rowsForModele(modeleId).filter((r) => r.kind === kind).length;
   }
-  async addModelePhoto(_modeleId: string, _dataUrl: string): Promise<void> {
-    this.modeleUnsupported("addModelePhoto");
+
+  /** Même contrat de stabilité de référence que `getDerived()` (fiche) —
+   * voir son commentaire de tête. Mémoïsé par modèle, invalidé uniquement
+   * quand `epoch` avance. */
+  private derivedModeleCache = new Map<string, { epoch: number; photos: TissuPhoto[]; patronPhotos: TissuPhoto[] }>();
+
+  private getDerivedModele(modeleId: string): { photos: TissuPhoto[]; patronPhotos: TissuPhoto[] } {
+    const cached = this.derivedModeleCache.get(modeleId);
+    if (cached && cached.epoch === this.epoch) return cached;
+
+    const rows = this.rowsForModele(modeleId);
+    const photos = this.sortModeleRows(rows.filter((r) => r.kind === "photo")).map((r) => mapModeleMediaRowToDomain(r, this.resolveDisplayUrl(r)));
+    const patronPhotos = this.sortModeleRows(rows.filter((r) => r.kind === "patron")).map((r) => mapModeleMediaRowToDomain(r, this.resolveDisplayUrl(r)));
+
+    const derived = { epoch: this.epoch, photos, patronPhotos };
+    this.derivedModeleCache.set(modeleId, derived);
+    return derived;
   }
-  async removeModelePhoto(_modeleId: string, _photoId: string): Promise<void> {
-    this.modeleUnsupported("removeModelePhoto");
+
+  listModelePhotos(modeleId: string): TissuPhoto[] {
+    return this.getDerivedModele(modeleId).photos;
   }
-  listModelePatronPhotos(_modeleId: string): TissuPhoto[] {
-    return this.modeleUnsupported("listModelePatronPhotos");
+
+  listModelePatronPhotos(modeleId: string): TissuPhoto[] {
+    return this.getDerivedModele(modeleId).patronPhotos;
   }
-  async addModelePatronPhoto(_modeleId: string, _dataUrl: string): Promise<void> {
-    this.modeleUnsupported("addModelePatronPhoto");
+
+  /** §25 : un modèle inaccessible (inexistant, hors atelier, soft-deleted)
+   * doit être détecté AVANT tout upload Storage / toute copie — jamais après. */
+  private async assertModeleAccessible(modeleId: string): Promise<void> {
+    const { data, error } = await this.gateway.getModeleById(this.workshopId, modeleId);
+    if (error || !data) {
+      throw new Error(`SupabaseMediaRepository: modèle ${modeleId} inaccessible dans cet atelier — aucun média ajouté.`);
+    }
+    const row = parseRowOrThrow(modeleRowSchema, data, "SupabaseMediaRepository.assertModeleAccessible");
+    if (row.deleted_at !== null) {
+      throw new Error(`SupabaseMediaRepository: modèle ${modeleId} supprimé — aucun média ajouté.`);
+    }
   }
-  async removeModelePatronPhoto(_modeleId: string, _photoId: string): Promise<void> {
-    this.modeleUnsupported("removeModelePatronPhoto");
+
+  /** Signe la nouvelle ligne MODÈLE et met à jour le snapshot mémoire —
+   * même logique que `commitRow()` (fiche), domaine séparé. */
+  private async commitModeleRow(row: ModeleMediaRow, sourceDataUrl: string): Promise<void> {
+    this.modeleMediaMap.set(row.id, row);
+    try {
+      const { data, error } = await this.gateway.createSignedMediaUrl(row.storage_path, SIGNED_URL_TTL_SECONDS);
+      if (error || !data) throw new Error(error?.message ?? "URL signée vide");
+      this.signedUrls.set(row.storage_path, { signedUrl: data, expiresAt: Date.now() + SIGNED_URL_TTL_SECONDS * 1000 });
+    } catch {
+      this.sessionFallback.set(row.id, sourceDataUrl);
+    }
+    this.epoch += 1;
+    this.notify();
+  }
+
+  /** Ordre imposé (§36/§42), identique à `uploadAndInsertRow` (fiche) :
+   * valider modèle → parser → MIME image STRICT (§38, plus restrictif que le
+   * bucket global) → metadata → path modèle dédié → upload Storage → INSERT
+   * `modele_medias` → signature (`commitModeleRow`). Aucun retry auto (§21). */
+  private async uploadAndCommitModeleMedia(modeleId: string, kind: ModeleMediaKind, dataUrl: string): Promise<void> {
+    await this.assertModeleAccessible(modeleId);
+    const parsed = parseDataUrl(dataUrl);
+    const { bucketMime } = normalizeMediaMime(parsed.mimeType);
+    if (!isAllowedModeleMediaMime(bucketMime)) {
+      throw new Error(
+        `SupabaseMediaRepository: type MIME "${bucketMime}" non autorisé pour un média modèle ` +
+          `(formats acceptés : ${ALLOWED_MODELE_MEDIA_MIME_TYPES.join(", ")}).`,
+      );
+    }
+    const checksum = await sha256Hex(parsed.blob);
+    const metadata: Record<string, Json> = { checksum };
+    try {
+      const { width, height } = await readImageDimensions(dataUrl);
+      metadata.width = width;
+      metadata.height = height;
+    } catch {
+      // Dimensions indisponibles (rare) — non bloquant.
+    }
+    const position = this.nextModelePosition(modeleId, kind);
+    const path = buildModeleMediaObjectPath(this.workshopId, modeleId, crypto.randomUUID());
+
+    const { error: uploadError } = await this.gateway.uploadMediaObject(path, parsed.blob, bucketMime);
+    if (uploadError) throw new Error(`SupabaseMediaRepository: upload échoué : ${uploadError.message}`);
+
+    const { data, error: insertError } = await this.gateway.insertModeleMedia({
+      workshop_id: this.workshopId,
+      modele_id: modeleId,
+      kind,
+      storage_path: path,
+      mime_type: bucketMime,
+      size_bytes: parsed.sizeBytes,
+      position,
+      metadata,
+    });
+    if (insertError) {
+      // Objet Storage potentiellement orphelin — jamais une seconde
+      // tentative d'upload automatique (§21, même règle que pour la fiche).
+      throw new Error(`SupabaseMediaRepository: enregistrement du média modèle échoué après upload : ${insertError.message}`);
+    }
+    const row = parseRowOrThrow(modeleMediaRowSchema, data, "SupabaseMediaRepository");
+    await this.commitModeleRow(row, dataUrl);
+  }
+
+  async addModelePhoto(modeleId: string, dataUrl: string): Promise<void> {
+    await this.uploadAndCommitModeleMedia(modeleId, "photo", dataUrl);
+  }
+
+  async addModelePatronPhoto(modeleId: string, dataUrl: string): Promise<void> {
+    await this.uploadAndCommitModeleMedia(modeleId, "patron", dataUrl);
+  }
+
+  /** GRANT Phase 4 : SELECT/INSERT/DELETE sur `modele_medias`, AUCUN UPDATE
+   * (§6/§44) — détacher une photo/patron est donc un DELETE physique de la
+   * LIGNE (jamais `deleted_at`), et jamais `storage.remove()` (§45) : le
+   * bucket n'a aucune policy DELETE utilisateur, l'objet devient
+   * simplement orphelin/inaccessible. */
+  private async removeModeleMedia(modeleId: string, mediaId: string, kind: ModeleMediaKind): Promise<void> {
+    const row = this.modeleMediaMap.get(mediaId);
+    if (!row || row.modele_id !== modeleId || row.kind !== kind) return;
+    const { error } = await this.gateway.deleteModeleMedia(this.workshopId, mediaId);
+    if (error) throw new Error(`SupabaseMediaRepository: suppression du média modèle échouée : ${error.message}`);
+    this.modeleMediaMap.delete(mediaId);
+    this.sessionFallback.delete(mediaId);
+    this.signedUrls.delete(row.storage_path);
+    this.epoch += 1;
+    this.notify();
+  }
+
+  async removeModelePhoto(modeleId: string, photoId: string): Promise<void> {
+    await this.removeModeleMedia(modeleId, photoId, "photo");
+  }
+
+  async removeModelePatronPhoto(modeleId: string, photoId: string): Promise<void> {
+    await this.removeModeleMedia(modeleId, photoId, "patron");
+  }
+
+  /** §47/§49 : copie les médias AUTORITATIFS (`modele_medias`, jamais
+   * `Modele.photos[].dataUrl`) d'un modèle vers les photos tissu d'une
+   * fiche — télécharge l'objet Storage source avec la session utilisateur
+   * (`downloadMediaObject`, policy SELECT réelle) puis ré-uploade le MÊME
+   * `Blob` vers un nouveau path fiche : AUCUN appel `parseDataUrl` sur une
+   * URL signée HTTPS (§82). Photos puis patrons, dans cet ordre (§48),
+   * deviennent tous deux `fabric_photo` (§49). Copie séquentielle et
+   * factuelle (§51/§84) : un échec intermédiaire rejette la Promise sans
+   * annuler les copies déjà réussies ni en retenter aucune. */
+  async copyModeleMediaToFiche(modeleId: string, ficheId: string): Promise<void> {
+    await this.assertModeleAccessible(modeleId);
+    await this.assertFicheAccessible(ficheId);
+
+    const photos = this.sortModeleRows(this.rowsForModele(modeleId).filter((r) => r.kind === "photo"));
+    const patrons = this.sortModeleRows(this.rowsForModele(modeleId).filter((r) => r.kind === "patron"));
+
+    for (const sourceRow of [...photos, ...patrons]) {
+      const { data: blob, error: downloadError } = await this.gateway.downloadMediaObject(sourceRow.storage_path);
+      if (downloadError || !blob) {
+        throw new Error(
+          `SupabaseMediaRepository: téléchargement du média modèle échoué (${sourceRow.storage_path}) : ${downloadError?.message ?? "réponse vide"}`,
+        );
+      }
+      const destPath = buildMediaObjectPath(this.workshopId, ficheId, crypto.randomUUID());
+      const { error: uploadError } = await this.gateway.uploadMediaObject(destPath, blob, sourceRow.mime_type);
+      if (uploadError) throw new Error(`SupabaseMediaRepository: upload de la copie échoué : ${uploadError.message}`);
+
+      const checksum = await sha256Hex(blob);
+      const { data, error: insertError } = await this.gateway.insertMediaAsset({
+        workshop_id: this.workshopId,
+        fiche_id: ficheId,
+        type: "fabric_photo",
+        storage_path: destPath,
+        mime_type: sourceRow.mime_type,
+        size_bytes: blob.size,
+        metadata: { checksum, copied_from_modele_media_id: sourceRow.id },
+      });
+      if (insertError) {
+        throw new Error(`SupabaseMediaRepository: enregistrement de la copie échoué après upload : ${insertError.message}`);
+      }
+      const row = parseRowOrThrow(mediaAssetRowSchema, data, "SupabaseMediaRepository.copy");
+      const fallbackDataUrl = await blobToDataUrl(blob);
+      await this.commitRow(row, fallbackDataUrl);
+    }
   }
 }
