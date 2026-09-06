@@ -29,6 +29,7 @@ type FicheUpdate = Database["public"]["Tables"]["fiches"]["Update"];
 type MediaAssetInsert = Database["public"]["Tables"]["media_assets"]["Insert"];
 type ModeleInsert = Database["public"]["Tables"]["modeles"]["Insert"];
 type ModeleMediaInsert = Database["public"]["Tables"]["modele_medias"]["Insert"];
+type ClientPaymentInsert = Database["public"]["Tables"]["client_payments"]["Insert"];
 
 export interface SupabaseGateway {
   listActiveClients(workshopId: string): Promise<GatewayResult<unknown[]>>;
@@ -99,6 +100,17 @@ export interface SupabaseGateway {
   /** DELETE physique de la LIGNE `modele_medias` (le GRANT Phase 4 n'accorde
    * aucun UPDATE sur cette table, §6/§44) — jamais `storage.remove()` (§45). */
   deleteModeleMedia(workshopId: string, id: string): Promise<GatewayResult<null>>;
+
+  // ── Paiements (Phase 11A) — ledger append-only `client_payments` + vue
+  // autoritative `fiche_balances`. Phase 4 accorde déjà SELECT/INSERT
+  // `authenticated` sur `client_payments` (aucun UPDATE/DELETE — immuable) et
+  // SELECT sur `fiche_balances` — aucune Edge Function ici. ─────────────────
+  listClientPayments(workshopId: string): Promise<GatewayResult<unknown[]>>;
+  listFicheBalances(workshopId: string): Promise<GatewayResult<unknown[]>>;
+  getFicheBalance(workshopId: string, ficheId: string): Promise<GatewayResult<unknown>>;
+  /** `client_payments` est immuable — jamais d'UPDATE/DELETE/retry
+   * automatique ici (§25) : un INSERT confirmé est un fait acquis. */
+  insertClientPayment(payload: ClientPaymentInsert): Promise<GatewayResult<unknown>>;
 }
 
 function toGatewayError(error: { message: string } | null): GatewayError | null {
@@ -324,6 +336,26 @@ export function createSupabaseGateway(client: SupabaseClient<Database>): Supabas
     async deleteModeleMedia(workshopId, id) {
       const { error } = await client.from("modele_medias").delete().eq("workshop_id", workshopId).eq("id", id);
       return { data: null, error: toGatewayError(error) };
+    },
+
+    async listClientPayments(workshopId) {
+      const { data, error } = await client.from("client_payments").select("*").eq("workshop_id", workshopId);
+      return { data, error: toGatewayError(error) };
+    },
+
+    async listFicheBalances(workshopId) {
+      const { data, error } = await client.from("fiche_balances").select("*").eq("workshop_id", workshopId);
+      return { data, error: toGatewayError(error) };
+    },
+
+    async getFicheBalance(workshopId, ficheId) {
+      const { data, error } = await client.from("fiche_balances").select("*").eq("workshop_id", workshopId).eq("fiche_id", ficheId).single();
+      return { data, error: toGatewayError(error) };
+    },
+
+    async insertClientPayment(payload) {
+      const { data, error } = await client.from("client_payments").insert(payload).select().single();
+      return { data, error: toGatewayError(error) };
     },
   };
 }

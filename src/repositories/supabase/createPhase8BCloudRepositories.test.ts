@@ -30,6 +30,10 @@ function fakeGateway(overrides: Partial<SupabaseGateway> = {}): SupabaseGateway 
     listActiveModeleMedias: vi.fn(async () => ({ data: [], error: null })),
     insertModeleMedia: vi.fn(async () => ({ data: null, error: null })),
     deleteModeleMedia: vi.fn(async () => ({ data: null, error: null })),
+    listClientPayments: vi.fn(async () => ({ data: [], error: null })),
+    listFicheBalances: vi.fn(async () => ({ data: [], error: null })),
+    getFicheBalance: vi.fn(async () => ({ data: null, error: null })),
+    insertClientPayment: vi.fn(async () => ({ data: null, error: null })),
     ...overrides,
   };
 }

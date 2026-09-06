@@ -156,3 +156,98 @@ describe("createSupabaseGateway() — Storage média (Phase 8A)", () => {
     expect(result).toEqual({ data: null, error: { message: "objet introuvable" } });
   });
 });
+
+// ── Paiements (Phase 11A) — client PostgREST minimal, thenable, qui trace
+// chaque appel de méthode par table (`select`/`eq`/`insert`/`update`/
+// `delete`) sans dépendre d'un mock `@supabase/supabase-js` complet.
+type TableCall = { method: string; args: unknown[] };
+function fakeTableClient(responses: Record<string, unknown>): { client: SupabaseClient<Database>; callsByTable: Record<string, TableCall[]> } {
+  const callsByTable: Record<string, TableCall[]> = {};
+  const from = vi.fn((table: string) => {
+    callsByTable[table] ??= [];
+    const record = (method: string, args: unknown[]) => callsByTable[table].push({ method, args });
+    const response = responses[table] ?? { data: [], error: null };
+    const builder = {
+      select: (...args: unknown[]) => {
+        record("select", args);
+        return builder;
+      },
+      eq: (...args: unknown[]) => {
+        record("eq", args);
+        return builder;
+      },
+      insert: (...args: unknown[]) => {
+        record("insert", args);
+        return builder;
+      },
+      update: (...args: unknown[]) => {
+        record("update", args);
+        return builder;
+      },
+      delete: (...args: unknown[]) => {
+        record("delete", args);
+        return builder;
+      },
+      single: () => Promise.resolve(response),
+      then: (resolve: (v: unknown) => void, reject?: (e: unknown) => void) => Promise.resolve(response).then(resolve, reject),
+    };
+    return builder;
+  });
+  return { client: { from } as unknown as SupabaseClient<Database>, callsByTable };
+}
+
+describe("createSupabaseGateway() — Paiements (Phase 11A)", () => {
+  it("listClientPayments filtre par workshop_id, jamais UPDATE/DELETE", async () => {
+    const { client, callsByTable } = fakeTableClient({ client_payments: { data: [{ id: "p1" }], error: null } });
+    const gateway = createSupabaseGateway(client);
+
+    const result = await gateway.listClientPayments("w1");
+
+    expect(client.from).toHaveBeenCalledWith("client_payments");
+    expect(callsByTable.client_payments).toContainEqual({ method: "eq", args: ["workshop_id", "w1"] });
+    expect(callsByTable.client_payments.some((c) => c.method === "update" || c.method === "delete")).toBe(false);
+    expect(result).toEqual({ data: [{ id: "p1" }], error: null });
+  });
+
+  it("listFicheBalances filtre par workshop_id", async () => {
+    const { client, callsByTable } = fakeTableClient({ fiche_balances: { data: [{ fiche_id: "f1" }], error: null } });
+    const gateway = createSupabaseGateway(client);
+
+    await gateway.listFicheBalances("w1");
+
+    expect(client.from).toHaveBeenCalledWith("fiche_balances");
+    expect(callsByTable.fiche_balances).toContainEqual({ method: "eq", args: ["workshop_id", "w1"] });
+  });
+
+  it("getFicheBalance filtre par workshop_id ET fiche_id, lit une seule ligne", async () => {
+    const { client, callsByTable } = fakeTableClient({ fiche_balances: { data: { fiche_id: "f1" }, error: null } });
+    const gateway = createSupabaseGateway(client);
+
+    const result = await gateway.getFicheBalance("w1", "f1");
+
+    expect(callsByTable.fiche_balances).toContainEqual({ method: "eq", args: ["workshop_id", "w1"] });
+    expect(callsByTable.fiche_balances).toContainEqual({ method: "eq", args: ["fiche_id", "f1"] });
+    expect(result).toEqual({ data: { fiche_id: "f1" }, error: null });
+  });
+
+  it("insertClientPayment insère sur client_payments, jamais UPDATE/DELETE introduits", async () => {
+    const { client, callsByTable } = fakeTableClient({ client_payments: { data: { id: "new-id" }, error: null } });
+    const gateway = createSupabaseGateway(client);
+    const payload = { workshop_id: "w1", fiche_id: "f1", amount: 5000, paid_at: null, method: null, note: null, metadata: {} };
+
+    const result = await gateway.insertClientPayment(payload);
+
+    expect(callsByTable.client_payments).toContainEqual({ method: "insert", args: [payload] });
+    expect(callsByTable.client_payments.some((c) => c.method === "update" || c.method === "delete")).toBe(false);
+    expect(result).toEqual({ data: { id: "new-id" }, error: null });
+  });
+
+  it("erreur PostgREST -> GatewayError, jamais un throw", async () => {
+    const { client } = fakeTableClient({ client_payments: { data: null, error: { message: "check_violation" } } });
+    const gateway = createSupabaseGateway(client);
+
+    const result = await gateway.insertClientPayment({ workshop_id: "w1", fiche_id: "f1", amount: 0, paid_at: null, method: null, note: null, metadata: {} });
+
+    expect(result).toEqual({ data: null, error: { message: "check_violation" } });
+  });
+});

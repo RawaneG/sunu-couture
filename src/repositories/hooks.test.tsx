@@ -4,12 +4,13 @@ import type { Client, Modele, TissuPhoto, VoiceNote } from "../lib/types";
 import type { ClientRepository, NewClientInput } from "./ClientRepository";
 import type { MediaRepository } from "./MediaRepository";
 import type { ModeleRepository, NewModeleInput } from "./ModeleRepository";
+import type { AddPaymentInput, FicheBalance, Payment, PaymentRepository } from "./PaymentRepository";
 import type { RepositoryStatus } from "./RepositoryStatus";
 import { READY_STATUS } from "./RepositoryStatus";
 import { createRepositoryContainerFor } from "./RepositoryContainer";
 import { RepositoryProvider } from "./RepositoryProvider";
 import { useStore } from "../lib/store";
-import { useClients, useClient, useFicheMedia, useCatalogueModeles, useCatalogueModele } from "./hooks";
+import { useClients, useClient, useFicheMedia, useCatalogueModeles, useCatalogueModele, useFichePayments } from "./hooks";
 import { SupabaseMediaRepository } from "./supabase/SupabaseMediaRepository";
 import type { SupabaseGateway } from "./supabase/gateway";
 
@@ -492,6 +493,10 @@ function fakeGatewayForMediaIntegration(overrides: Partial<SupabaseGateway> = {}
     listActiveModeleMedias: vi.fn(async () => ({ data: [], error: null })),
     insertModeleMedia: vi.fn(async () => ({ data: null, error: null })),
     deleteModeleMedia: vi.fn(async () => ({ data: null, error: null })),
+    listClientPayments: vi.fn(async () => ({ data: [], error: null })),
+    listFicheBalances: vi.fn(async () => ({ data: [], error: null })),
+    getFicheBalance: vi.fn(async () => ({ data: null, error: null })),
+    insertClientPayment: vi.fn(async () => ({ data: null, error: null })),
     ...overrides,
   };
 }
@@ -848,5 +853,176 @@ describe("useCatalogueModeles()/useCatalogueModele() — Phase 8B", () => {
     unmount();
     expect(modeles.listenerCount()).toBe(0);
     expect(media.listenerCount()).toBe(0);
+  });
+});
+
+// ── useFichePayments() — Phase 11A ──────────────────────────────────────
+const EMPTY_PAYMENTS: Payment[] = [];
+const ZERO_BALANCE: FicheBalance = { price: 0, paid: 0, reste: 0 };
+
+class FakePaymentRepository implements PaymentRepository {
+  private listeners = new Set<() => void>();
+  private status: RepositoryStatus = READY_STATUS;
+  private paymentsMap = new Map<string, Payment[]>();
+  private balances = new Map<string, FicheBalance>();
+
+  list(ficheId: string): Payment[] {
+    return this.paymentsMap.get(ficheId) ?? EMPTY_PAYMENTS;
+  }
+  getBalance(ficheId: string): FicheBalance {
+    return this.balances.get(ficheId) ?? ZERO_BALANCE;
+  }
+  getStatus(): RepositoryStatus {
+    return this.status;
+  }
+  setStatus(status: RepositoryStatus) {
+    this.status = status;
+    this.notify();
+  }
+  setPayments(ficheId: string, payments: Payment[]) {
+    this.paymentsMap.set(ficheId, payments);
+    this.notify();
+  }
+  setBalance(ficheId: string, balance: FicheBalance) {
+    this.balances.set(ficheId, balance);
+    this.notify();
+  }
+  async add(input: AddPaymentInput): Promise<Payment> {
+    const payment: Payment = {
+      id: `p${Math.random()}`,
+      ficheId: input.ficheId,
+      amount: input.amount,
+      paidAt: input.paidAt ?? null,
+      method: input.method ?? null,
+      note: input.note ?? null,
+      recordedAt: "2026-01-01T00:00:00.000Z",
+    };
+    const current = this.paymentsMap.get(input.ficheId) ?? [];
+    this.paymentsMap.set(input.ficheId, [...current, payment]);
+    this.notify();
+    return payment;
+  }
+  subscribe(listener: () => void): () => void {
+    this.listeners.add(listener);
+    return () => this.listeners.delete(listener);
+  }
+  listenerCount(): number {
+    return this.listeners.size;
+  }
+  private notify() {
+    for (const listener of this.listeners) listener();
+  }
+}
+
+function FichePaymentsProbe({ ficheId }: { ficheId: string }) {
+  const state = useFichePayments(ficheId);
+  if (state.status === "loading") return <p>Chargement paiements…</p>;
+  if (state.status === "error") return <p>Erreur paiements</p>;
+  return (
+    <p>
+      {state.data.payments.length} paiement(s) — reste {state.data.balance.reste}
+    </p>
+  );
+}
+
+describe("useFichePayments() — Phase 11A", () => {
+  it("backend local (sans getStatus) : toujours 'ready' immédiatement", () => {
+    const payments = new FakePaymentRepository();
+    const container = { ...createRepositoryContainerFor("local"), payments };
+    render(
+      <RepositoryProvider repositories={container}>
+        <FichePaymentsProbe ficheId="f1" />
+      </RepositoryProvider>,
+    );
+    expect(screen.getByText("0 paiement(s) — reste 0")).toBeInTheDocument();
+  });
+
+  it("cloud : loading tant que le Repository n'est pas prêt — jamais un faux 0 F", () => {
+    const payments = new FakePaymentRepository();
+    payments.setStatus({ status: "loading" });
+    const container = { ...createRepositoryContainerFor("local"), payments };
+    render(
+      <RepositoryProvider repositories={container}>
+        <FichePaymentsProbe ficheId="f1" />
+      </RepositoryProvider>,
+    );
+    expect(screen.getByText("Chargement paiements…")).toBeInTheDocument();
+  });
+
+  it("cloud : error -> état erreur affiché", () => {
+    const payments = new FakePaymentRepository();
+    payments.setStatus({ status: "error", error: new Error("hors ligne") });
+    const container = { ...createRepositoryContainerFor("local"), payments };
+    render(
+      <RepositoryProvider repositories={container}>
+        <FichePaymentsProbe ficheId="f1" />
+      </RepositoryProvider>,
+    );
+    expect(screen.getByText("Erreur paiements")).toBeInTheDocument();
+  });
+
+  it("ready combiné : payments + balance assemblés en un seul snapshot", () => {
+    const payments = new FakePaymentRepository();
+    payments.setPayments("f1", [{ id: "p1", ficheId: "f1", amount: 5000, paidAt: null, method: null, note: null, recordedAt: "x" }]);
+    payments.setBalance("f1", { price: 10000, paid: 5000, reste: 5000 });
+    const container = { ...createRepositoryContainerFor("local"), payments };
+    render(
+      <RepositoryProvider repositories={container}>
+        <FichePaymentsProbe ficheId="f1" />
+      </RepositoryProvider>,
+    );
+    expect(screen.getByText("1 paiement(s) — reste 5000")).toBeInTheDocument();
+  });
+
+  it("mutation via add() se répercute sur le composant", async () => {
+    const payments = new FakePaymentRepository();
+    const container = { ...createRepositoryContainerFor("local"), payments };
+    render(
+      <RepositoryProvider repositories={container}>
+        <FichePaymentsProbe ficheId="f1" />
+      </RepositoryProvider>,
+    );
+    expect(screen.getByText("0 paiement(s) — reste 0")).toBeInTheDocument();
+    await act(async () => {
+      await payments.add({ ficheId: "f1", amount: 3000 });
+    });
+    expect(screen.getByText("1 paiement(s) — reste 0")).toBeInTheDocument();
+  });
+
+  it("un rerender SANS mutation renvoie le MÊME snapshot combiné par référence (anti-boucle useSyncExternalStore)", () => {
+    const payments = new FakePaymentRepository();
+    payments.setPayments("f1", [{ id: "p1", ficheId: "f1", amount: 1000, paidAt: null, method: null, note: null, recordedAt: "x" }]);
+    const container = { ...createRepositoryContainerFor("local"), payments };
+    let captured: unknown = null;
+    function CaptureProbe() {
+      const state = useFichePayments("f1");
+      if (state.status === "ready") captured = state.data;
+      return null;
+    }
+    const { rerender } = render(
+      <RepositoryProvider repositories={container}>
+        <CaptureProbe />
+      </RepositoryProvider>,
+    );
+    const first = captured;
+    rerender(
+      <RepositoryProvider repositories={container}>
+        <CaptureProbe />
+      </RepositoryProvider>,
+    );
+    expect(captured).toBe(first);
+  });
+
+  it("démonter le composant désabonne du Repository", () => {
+    const payments = new FakePaymentRepository();
+    const container = { ...createRepositoryContainerFor("local"), payments };
+    const { unmount } = render(
+      <RepositoryProvider repositories={container}>
+        <FichePaymentsProbe ficheId="f1" />
+      </RepositoryProvider>,
+    );
+    expect(payments.listenerCount()).toBeGreaterThan(0);
+    unmount();
+    expect(payments.listenerCount()).toBe(0);
   });
 });
