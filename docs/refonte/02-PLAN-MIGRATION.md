@@ -235,7 +235,16 @@ L'ordre reprend celui du cahier des charges (§ « Ordre d'implémentation »).
 ---
 
 ### Phase 3 — Authentification & ateliers
-- **Objectif** : un pilote se connecte par **téléphone + OTP Supabase** (D5), un `workshop` + `workshop_member(owner)` est provisionné, la session persiste sur l'appareil ; PIN local = **verrou visuel** uniquement.
+> **Correction factuelle (pivot Gate Auth, voir plus bas)** : le parcours
+> **téléphone + OTP Supabase** décrit ci-dessous a été **implémenté puis
+> abandonné** — aucun fournisseur SMS réel n'a jamais été configuré (local :
+> numéros de test uniquement ; distant `sunu-couture-dev` : `external.phone`
+> resté désactivé). Remplacé par **téléphone + PIN 4 chiffres** géré
+> côté serveur (voir section « Pivot Auth » après le Gate). Le PIN local
+> "verrou visuel" mentionné ci-dessous n'a jamais été implémenté séparément —
+> le PIN EST désormais le mécanisme d'authentification réel, pas un verrou
+> d'écran superficiel.
+- **Objectif (historique, voir correction ci-dessus)** : un pilote se connecte par **téléphone + OTP Supabase** (D5), un `workshop` + `workshop_member(owner)` est provisionné, la session persiste sur l'appareil ; PIN local = **verrou visuel** uniquement.
 - **Changements** :
   - `src/lib/auth/` : **`AuthRepository`** (interface) + `SupabasePhoneOtpAuthRepository` ; une implémentation de repli `SupabaseMagicLinkAuthRepository` reste possible si le fournisseur SMS n'est pas prêt (D5).
   - Onboarding accompagné (numéro → OTP → création atelier). UI inclusive (icônes, audio, texte court).
@@ -907,6 +916,93 @@ L'ordre reprend celui du cahier des charges (§ « Ordre d'implémentation »).
   migration, aucun accès distant, aucune configuration Vercel, aucune PR pour
   ce tour. **Statut : « Gate implémenté localement — Preview E2E distant NON
   exécuté, aucune activation Vercel »**.
+
+---
+
+### Pivot Auth — téléphone + PIN 4 chiffres, atelier invisible *(remplace D5, corr. Gate Auth)*
+> Découvert bloquant EN COURS de Preview E2E du Gate (ci-dessus) : le
+> parcours **téléphone + OTP SMS** (D5, Phase 3) n'a jamais eu de fournisseur
+> SMS réel configuré, ni en local (`[auth.sms.test_otp]`, numéros de test
+> uniquement) ni sur `sunu-couture-dev` (`external.phone = false` constaté en
+> direct sur le projet distant) — **aucun SMS n'a jamais pu être envoyé en
+> dehors du stack local**. Continuer sur cette base aurait bloqué
+> indéfiniment le Preview réel. **Décision : abandon du SMS OTP au profit
+> d'une authentification téléphone + PIN 4 chiffres gérée côté serveur**,
+> motivée par la cible terrain (tailleur sénégalais, modèle mental déjà
+> familier — Wave/mobile money/PIN numérique), l'absence de budget fournisseur
+> SMS payant à ce stade, et une friction d'onboarding minimale.
+- **Objectif** : numéro + PIN suffisent — plus d'email, plus de mot de passe
+  alphanumérique, plus de SMS/OTP, plus de nom d'atelier demandé à
+  l'inscription. L'atelier est provisionné **automatiquement** côté serveur,
+  invisible pour l'utilisateur (nom technique interne, jamais affiché ni
+  demandé) — le modèle multi-atelier existant (Phase 2/3/4) ne change pas,
+  seule l'UX d'entrée change.
+- **Architecture (jamais un PIN = mot de passe Supabase directement — 10 000
+  combinaisons seulement)** : Edge Function `tayoo-pin-auth` (`verify_jwt =
+  false`, acceptable UNIQUEMENT parce qu'elle implémente elle-même une
+  authentification stricte) dérive par HMAC-SHA256 (secret serveur
+  `TAYOO_PIN_AUTH_SECRET`, jamais commité/VITE_*/navigateur/log) une identité
+  Supabase Auth **technique** (`u_<phoneKey>@auth.tayoo.invalid`, jamais vue
+  par l'utilisateur — le numéro brut n'apparaît jamais dans cette adresse) à
+  partir du numéro normalisé + PIN + un sel aléatoire propre au compte, puis
+  appelle `admin.auth.createUser()`/`signInWithPassword()` → une VRAIE session
+  Supabase Auth (jamais un JWT fabriqué à la main), compatible telle quelle
+  avec `auth.uid()`/RLS/`workshop_members`/Storage/repositories cloud déjà en
+  place. `app_hidden.pin_auth_accounts` (nouvelle table, migration
+  `20260907120000_pin_auth.sql`) ne stocke QUE `phone_key`/`password_salt`
+  (sorties HMAC/aléatoires opaques) — jamais le numéro brut, jamais le PIN,
+  jamais le mot de passe technique. Anti brute-force PERSISTANT (les Edge
+  Functions sont stateless — un `Map()` ne protège rien) :
+  `app_hidden.pin_auth_throttle`, verrouillage progressif scopé par clé
+  opaque (téléphone ET IP, jamais bruts), seuils 5/8/10 échecs → 1/5/30
+  minutes de blocage. Réutilise `public.provision_workshop_api` déjà
+  existant (Phase 3A) pour l'auto-provisioning, idempotent par construction —
+  aucune nouvelle porte d'écriture d'atelier.
+- **Changements front** : nouveaux écrans `Welcome`/`PhoneEntry`/`PinCreate`/
+  `PinConfirm`/`PinLogin` (`src/pages/auth/`), composants `PinPad`/`PinDots`
+  (`src/components/auth/`) — grandes zones tactiles (pavé ≥ 64px), retour
+  visuel par points (jamais le chiffre affiché), clavier physique ET tactile
+  supportés via un champ réel visuellement masqué. `AuthContextValue` gagne un
+  état `status` (`initializing`/`signed_out`/`provisioning`/`ready`/`error`,
+  remplace l'ancien `initializing: boolean` + `provisionWorkshop()` appelé par
+  les pages) ; `register()`/`login()` remplacent `sendPhoneOtp()`/
+  `verifyPhoneOtp()`. `OtpVerify`/`WorkshopName`/
+  `SupabasePhoneOtpAuthRepository` retirés (remplacés par `PinLogin`/
+  `PinCreate`+`PinConfirm`/`SupabasePinAuthRepository`) ; `/connexion/atelier`
+  redirige vers `/connexion` (compatibilité anciens liens, jamais un écran
+  mort). Dernier numéro utilisé mémorisé localement (`localStorage`, jamais le
+  PIN) pour sauter directement à l'écran PIN sur un appareil déjà reconnu.
+- **Migrations SQL** : **une seule** nouvelle migration
+  (`20260907120000_pin_auth.sql`) — 2 tables `app_hidden` (`pin_auth_accounts`,
+  `pin_auth_throttle`), 6 fonctions `app_hidden.pin_auth_*` (SECURITY DEFINER)
+  + 6 wrappers `public.pin_auth_*_api` (SECURITY INVOKER, EXECUTE réservé à
+  `service_role`, même schéma que `provision_workshop_api`/
+  `create_fiche_from_draft_api`) — aucun GRANT anon/authenticated.
+- **Validé en local** : `npx tsc -b` 0 erreur, `npm run lint` 0 erreur (5
+  avertissements pré-existants), `npm test` **670/670**, SQL **73/73**
+  (T70–T73 nouveaux : schéma tables privées sans donnée brute, privilèges
+  service_role-only, register/lookup/touch_login fonctionnels, throttle
+  progressif + déverrouillage après fenêtre prouvé par horloge injectée —
+  jamais une vraie attente), nouveau `scripts/test-pin-auth.mjs` **35/35**
+  (register/login réels, duplicate refusé, throttle réel déclenché,
+  compensation `createUser`/insertion partielle testée en révoquant
+  temporairement un privilège), `scripts/test-phase-8a-media.mjs` **14/14**,
+  `test-phase-8b-catalog.mjs` **21/21**, `test-phase-11a-payments.mjs`
+  **21/21** (aucune régression). Build réel `VITE_BACKEND=supabase` local :
+  `npm run build` **PASS**, scan bundle (`TAYOO_PIN_AUTH_SECRET`/
+  `service_role`/`technicalPassword`) : **0 occurrence** (la seule occurrence
+  de la sous-chaîne `sb_secret_` est le code de détection de préfixe propre au
+  SDK `supabase-js` lui-même, vérifiée, pas une clé injectée). Deux bugs
+  réels trouvés et corrigés PENDANT cette implémentation (pas seulement « les
+  tests passent ») : (1) `PinPad` remonté pendant l'état de chargement
+  retrouvait une valeur à 4 chiffres non réinitialisée côté parent → boucle de
+  resoumission infinie, corrigée en vidant l'état local AVANT de basculer vers
+  l'écran de chargement ; (2) la route protégée initialement demandée
+  (`from`) était perdue à l'écran `Welcome`, ramenant systématiquement à `/`
+  après connexion au lieu de la route d'origine.
+- **Aucun accès distant, aucune migration poussée, aucune PR pour ce tour.**
+  **Statut : « Pivot Auth PIN implémenté localement — Gate Preview E2E reste
+  en pause jusqu'au merge + déploiement de ce pivot »**.
 
 ---
 

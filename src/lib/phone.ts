@@ -34,3 +34,14 @@ export function formatPhoneSenegalDisplay(e164: string): string {
   const groups = local.match(/.{1,2}/g) ?? [local];
   return `${SENEGAL_PREFIX} ${groups.join(" ")}`;
 }
+
+/** Affichage PARTIELLEMENT masqué — écran "Bon retour" (corr. Gate Auth §46) :
+ * seuls le premier et le dernier groupe restent visibles, ex.
+ * +221 77 •• •• •• 99. Jamais utilisé comme donnée envoyée au serveur —
+ * uniquement pour rassurer visuellement sur l'appareil déjà reconnu. */
+export function maskPhoneSenegalDisplay(e164: string): string {
+  const local = e164.startsWith(SENEGAL_PREFIX) ? e164.slice(SENEGAL_PREFIX.length) : e164;
+  const groups = local.match(/.{1,2}/g) ?? [local];
+  const masked = groups.map((g, i) => (i === 0 || i === groups.length - 1 ? g : "•".repeat(g.length)));
+  return `${SENEGAL_PREFIX} ${masked.join(" ")}`;
+}

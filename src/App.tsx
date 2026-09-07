@@ -15,9 +15,11 @@ import Catalogue from "./pages/Catalogue";
 import ModeleNew from "./pages/ModeleNew";
 import ModeleDetail from "./pages/ModeleDetail";
 import LegacySauvegarde from "./pages/LegacySauvegarde";
+import ConnexionEntry from "./pages/auth/ConnexionEntry";
 import PhoneEntry from "./pages/auth/PhoneEntry";
-import OtpVerify from "./pages/auth/OtpVerify";
-import WorkshopName from "./pages/auth/WorkshopName";
+import PinCreate from "./pages/auth/PinCreate";
+import PinConfirm from "./pages/auth/PinConfirm";
+import PinLogin from "./pages/auth/PinLogin";
 import { AuthProvider } from "./lib/auth/AuthProvider";
 import RequireAuth from "./lib/auth/RequireAuth";
 import { RepositoryProvider } from "./repositories/RepositoryProvider";
@@ -99,9 +101,16 @@ export default function App() {
       <ScrollToTop />
       <Routes>
         <Route element={<AuthRoute />}>
-          <Route path="/connexion" element={<PhoneEntry />} />
-          <Route path="/connexion/code" element={<OtpVerify />} />
-          <Route path="/connexion/atelier" element={<WorkshopName />} />
+          <Route path="/connexion" element={<ConnexionEntry />} />
+          <Route path="/connexion/numero" element={<PhoneEntry />} />
+          <Route path="/connexion/creer-code" element={<PinCreate />} />
+          <Route path="/connexion/confirmer-code" element={<PinConfirm />} />
+          <Route path="/connexion/code" element={<PinLogin />} />
+          {/* Ancienne étape "nom de l'atelier" (pivot Gate Auth : l'atelier est
+              désormais créé automatiquement côté serveur, jamais demandé) —
+              redirection de compatibilité pour d'anciens liens, jamais un
+              écran mort. */}
+          <Route path="/connexion/atelier" element={<Navigate to="/connexion" replace />} />
         </Route>
 
         <Route element={<ProtectedAppRoute />}>

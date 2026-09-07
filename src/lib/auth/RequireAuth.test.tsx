@@ -21,7 +21,6 @@ function renderGuarded() {
           }
         />
         <Route path="/connexion" element={<div>ÉCRAN CONNEXION</div>} />
-        <Route path="/connexion/atelier" element={<div>ÉCRAN NOM ATELIER</div>} />
       </Routes>
     </MemoryRouter>,
   );
@@ -31,28 +30,35 @@ beforeEach(() => {
   vi.clearAllMocks();
 });
 
-describe("RequireAuth — garde de route (construite, non branchée sur l'app existante)", () => {
-  it("affiche un état de chargement accessible pendant la restauration de session", () => {
-    mockUseAuth.mockReturnValue({ initializing: true, session: null, workshop: null });
+describe("RequireAuth — garde de route (états AuthStatus, corr. Gate Auth §38)", () => {
+  it("affiche un état de chargement accessible pendant 'initializing'", () => {
+    mockUseAuth.mockReturnValue({ status: "initializing", session: null, workshop: null, error: null });
     renderGuarded();
     expect(screen.getByRole("status")).toHaveTextContent(/chargement/i);
     expect(screen.queryByText("CONTENU PROTÉGÉ")).not.toBeInTheDocument();
   });
 
-  it("redirige vers /connexion si aucune session (utilisateur non connecté)", () => {
-    mockUseAuth.mockReturnValue({ initializing: false, session: null, workshop: null });
+  it("affiche un état de chargement accessible pendant 'provisioning'", () => {
+    mockUseAuth.mockReturnValue({ status: "provisioning", session: { userId: "u1" }, workshop: null, error: null });
+    renderGuarded();
+    expect(screen.getByRole("status")).toHaveTextContent(/chargement/i);
+  });
+
+  it("redirige vers /connexion si 'signed_out'", () => {
+    mockUseAuth.mockReturnValue({ status: "signed_out", session: null, workshop: null, error: null });
     renderGuarded();
     expect(screen.getByText("ÉCRAN CONNEXION")).toBeInTheDocument();
   });
 
-  it("redirige vers /connexion/atelier si connecté mais sans atelier résolu", () => {
-    mockUseAuth.mockReturnValue({ initializing: false, session: { userId: "u1" }, workshop: null });
+  it("affiche un message d'erreur accessible si 'error' — jamais un écran mort", () => {
+    mockUseAuth.mockReturnValue({ status: "error", session: { userId: "u1" }, workshop: null, error: "Ton atelier n'a pas pu être préparé. Réessaie de te connecter." });
     renderGuarded();
-    expect(screen.getByText("ÉCRAN NOM ATELIER")).toBeInTheDocument();
+    expect(screen.getByRole("alert")).toHaveTextContent(/atelier/i);
+    expect(screen.queryByText("CONTENU PROTÉGÉ")).not.toBeInTheDocument();
   });
 
-  it("rend le contenu protégé si connecté ET atelier résolu", () => {
-    mockUseAuth.mockReturnValue({ initializing: false, session: { userId: "u1" }, workshop: { id: "w1" } });
+  it("rend le contenu protégé si 'ready'", () => {
+    mockUseAuth.mockReturnValue({ status: "ready", session: { userId: "u1" }, workshop: { id: "w1" }, error: null });
     renderGuarded();
     expect(screen.getByText("CONTENU PROTÉGÉ")).toBeInTheDocument();
   });

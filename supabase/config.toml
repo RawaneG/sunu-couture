@@ -94,3 +94,16 @@ enabled = true
 verify_jwt = false
 import_map = "./functions/create-fiche-from-draft/deno.json"
 entrypoint = "./functions/create-fiche-from-draft/index.ts"
+
+[functions.tayoo-pin-auth]
+enabled = true
+# Nécessairement accessible AVANT toute session (register/login) — jamais un
+# JWT à vérifier à ce stade. Acceptable UNIQUEMENT parce que la fonction
+# implémente elle-même une authentification stricte (dérivation
+# cryptographique + anti brute-force persistant). Voir
+# supabase/functions/tayoo-pin-auth/index.ts. Requiert `TAYOO_PIN_AUTH_SECRET`
+# (supabase/functions/.env en local, jamais commité — auto-chargé par
+# `supabase start`).
+verify_jwt = false
+import_map = "./functions/tayoo-pin-auth/deno.json"
+entrypoint = "./functions/tayoo-pin-auth/index.ts"
