@@ -1,8 +1,7 @@
 // Abstraction d'authentification — les écrans ne parlent jamais directement à
-// Supabase Auth. Aujourd'hui : SupabasePhoneOtpAuthRepository (téléphone +
-// OTP, décision D5). Une implémentation Magic Link reste possible plus tard
-// SANS changer cette interface ni les écrans (un seul parcours UI existe pour
-// l'instant : téléphone + OTP).
+// Supabase Auth. Pivot Gate Auth : téléphone + PIN à 4 chiffres (Edge
+// Function `tayoo-pin-auth`), plus de SMS OTP (`external.phone` reste
+// désactivé — voir `SupabasePhoneOtpAuthRepository`, retiré du parcours actif).
 
 export interface AuthSession {
   /** Identité `auth.users.id` — jamais une donnée que le front doit fabriquer. */
@@ -12,29 +11,22 @@ export interface AuthSession {
   expiresAt: number | null;
 }
 
-/** Erreur orientée UI : `code` pour la logique, `message` déjà en français simple. */
+/** Erreur orientée UI : `code` pour la logique, `message` déjà en français
+ * simple — jamais de jargon technique (PostgREST/JWT/Supabase/Edge Function/
+ * code HTTP/stack trace), corr. Gate Auth §18. */
 export interface AuthError {
-  code:
-    | "invalid_phone"
-    | "otp_send_failed"
-    | "otp_invalid"
-    | "otp_expired"
-    | "rate_limited"
-    | "offline"
-    | "service_unreachable"
-    | "unknown";
+  code: "invalid_phone" | "invalid_pin" | "phone_in_use" | "invalid_credentials" | "locked" | "offline" | "service_unreachable" | "unknown";
   message: string;
 }
 
 export interface AuthRepository {
-  /** Envoie un code par SMS au numéro E.164 donné. */
-  sendPhoneOtp(phoneE164: string): Promise<{ error: AuthError | null }>;
+  /** Inscription : numéro + PIN choisi -> compte + atelier créés côté
+   * serveur, session réelle ouverte. `phoneE164` doit déjà être normalisé
+   * (voir `src/lib/phone.ts`). */
+  register(phoneE164: string, pin: string): Promise<{ session: AuthSession | null; error: AuthError | null }>;
 
-  /** Vérifie le code reçu ; ouvre une session si valide. */
-  verifyPhoneOtp(
-    phoneE164: string,
-    code: string,
-  ): Promise<{ session: AuthSession | null; error: AuthError | null }>;
+  /** Connexion : numéro + PIN existants -> session réelle si valides. */
+  login(phoneE164: string, pin: string): Promise<{ session: AuthSession | null; error: AuthError | null }>;
 
   /** Session actuelle si elle existe (relecture au démarrage de l'app). */
   getSession(): Promise<AuthSession | null>;
@@ -45,7 +37,7 @@ export interface AuthRepository {
   /** Déconnecte uniquement cet appareil. */
   signOut(): Promise<void>;
 
-  /** Révoque les refresh tokens sur tous les appareils (D5) — le jeton d'accès
+  /** Révoque les refresh tokens sur tous les appareils — le jeton d'accès
    * courant d'un autre appareil peut rester valide jusqu'à son expiration. */
   signOutAllDevices(): Promise<void>;
 }

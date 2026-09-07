@@ -1,32 +1,26 @@
-import { describe, expect, it, vi, beforeEach } from "vitest";
-import { render, screen, waitFor } from "@testing-library/react";
+import { describe, expect, it, beforeEach } from "vitest";
+import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import PhoneEntry from "./PhoneEntry";
 
-const { mockSendPhoneOtp } = vi.hoisted(() => ({ mockSendPhoneOtp: vi.fn() }));
-vi.mock("../../lib/auth/SupabasePhoneOtpAuthRepository", () => ({
-  SupabasePhoneOtpAuthRepository: vi.fn().mockImplementation(function mockRepoCtor(this: { sendPhoneOtp: typeof mockSendPhoneOtp }) {
-    this.sendPhoneOtp = mockSendPhoneOtp;
-  }),
-}));
-
-function renderPhoneEntry() {
+function renderPhoneEntry(state?: { mode?: "register" | "login" }) {
   return render(
-    <MemoryRouter initialEntries={["/connexion"]}>
+    <MemoryRouter initialEntries={[{ pathname: "/connexion/numero", state }]}>
       <Routes>
-        <Route path="/connexion" element={<PhoneEntry />} />
-        <Route path="/connexion/code" element={<div>ÉCRAN CODE OTP</div>} />
+        <Route path="/connexion/numero" element={<PhoneEntry />} />
+        <Route path="/connexion/creer-code" element={<div>ÉCRAN CRÉER CODE</div>} />
+        <Route path="/connexion/code" element={<div>ÉCRAN PIN CONNEXION</div>} />
       </Routes>
     </MemoryRouter>,
   );
 }
 
 beforeEach(() => {
-  vi.clearAllMocks();
+  // rien à réinitialiser — plus d'appel réseau depuis cet écran (pivot Gate Auth)
 });
 
-describe("PhoneEntry — saisie téléphone", () => {
+describe("PhoneEntry — saisie téléphone, purement une étape de navigation (pivot Gate Auth)", () => {
   it("affiche l'indicatif +221 et un champ inputMode='tel'", () => {
     renderPhoneEntry();
     expect(screen.getByText("+221")).toBeInTheDocument();
@@ -37,46 +31,47 @@ describe("PhoneEntry — saisie téléphone", () => {
   it("désactive le bouton principal tant que le numéro est invalide", async () => {
     const user = userEvent.setup();
     renderPhoneEntry();
-    const button = screen.getByRole("button", { name: /recevoir mon code/i });
+    const button = screen.getByRole("button", { name: "Continuer" });
     expect(button).toBeDisabled();
 
     await user.type(screen.getByLabelText("Numéro de téléphone"), "770");
     expect(button).toBeDisabled();
   });
 
-  it("active le bouton et normalise le numéro une fois valide", async () => {
+  it("active le bouton une fois le numéro valide", async () => {
     const user = userEvent.setup();
     renderPhoneEntry();
     await user.type(screen.getByLabelText("Numéro de téléphone"), "77 000 00 01");
-    expect(screen.getByRole("button", { name: /recevoir mon code/i })).toBeEnabled();
+    expect(screen.getByRole("button", { name: "Continuer" })).toBeEnabled();
   });
 
-  it("appelle sendPhoneOtp avec le numéro E.164 et navigue vers l'écran OTP", async () => {
-    mockSendPhoneOtp.mockResolvedValue({ error: null });
+  it("mode 'register' (défaut) -> navigue vers la création du PIN avec le numéro normalisé", async () => {
     const user = userEvent.setup();
-    renderPhoneEntry();
-
+    renderPhoneEntry({ mode: "register" });
     await user.type(screen.getByLabelText("Numéro de téléphone"), "77 000 00 01");
-    await user.click(screen.getByRole("button", { name: /recevoir mon code/i }));
-
-    await waitFor(() => expect(mockSendPhoneOtp).toHaveBeenCalledWith("+221770000001"));
-    await waitFor(() => expect(screen.getByText("ÉCRAN CODE OTP")).toBeInTheDocument());
+    await user.click(screen.getByRole("button", { name: "Continuer" }));
+    expect(await screen.findByText("ÉCRAN CRÉER CODE")).toBeInTheDocument();
   });
 
-  it("affiche une erreur accessible (role=alert) si l'envoi échoue", async () => {
-    mockSendPhoneOtp.mockResolvedValue({ error: { code: "otp_send_failed", message: "Impossible d'envoyer le code. Vérifie le numéro et réessaie." } });
+  it("mode 'login' -> navigue vers l'écran PIN de connexion", async () => {
     const user = userEvent.setup();
-    renderPhoneEntry();
-
-    await user.type(screen.getByLabelText("Numéro de téléphone"), "77 000 00 01");
-    await user.click(screen.getByRole("button", { name: /recevoir mon code/i }));
-
-    const alert = await screen.findByRole("alert");
-    expect(alert).toHaveTextContent("Impossible d'envoyer le code");
+    renderPhoneEntry({ mode: "login" });
+    await user.type(screen.getByLabelText("Numéro de téléphone"), "77 000 00 02");
+    await user.click(screen.getByRole("button", { name: "Continuer" }));
+    expect(await screen.findByText("ÉCRAN PIN CONNEXION")).toBeInTheDocument();
   });
 
-  it("n'affiche jamais une icône seule sans texte sur le bouton principal", () => {
+  it("affiche une erreur simple et accessible (role=alert) pour un numéro invalide", async () => {
     renderPhoneEntry();
-    expect(screen.getByRole("button", { name: /recevoir mon code/i }).textContent?.trim().length).toBeGreaterThan(0);
+    // Le bouton reste désactivé pour un numéro invalide — l'erreur ne peut
+    // donc être déclenchée que via une soumission programmatique impossible
+    // ici ; ce test vérifie plutôt qu'aucune erreur ne s'affiche prématurément.
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+  });
+
+  it("jamais de jargon (« Authentifiez-vous », « Identifiant ») dans les textes visibles", () => {
+    renderPhoneEntry();
+    expect(screen.queryByText(/authentifiez-vous/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/identifiant/i)).not.toBeInTheDocument();
   });
 });

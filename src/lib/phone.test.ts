@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { formatPhoneSenegalDisplay, normalizePhoneSenegal } from "./phone";
+import { formatPhoneSenegalDisplay, maskPhoneSenegalDisplay, normalizePhoneSenegal } from "./phone";
 
 describe("normalizePhoneSenegal", () => {
   it("accepte un numéro local à 9 chiffres avec espaces", () => {
@@ -35,5 +35,18 @@ describe("normalizePhoneSenegal", () => {
 describe("formatPhoneSenegalDisplay", () => {
   it("regroupe les chiffres par paires pour l'affichage", () => {
     expect(formatPhoneSenegalDisplay("+221770000001")).toBe("+221 77 00 00 00 1");
+  });
+});
+
+describe("maskPhoneSenegalDisplay — écran 'Bon retour' (corr. Gate Auth §46)", () => {
+  it("conserve le premier et le dernier groupe visibles, masque le reste", () => {
+    expect(maskPhoneSenegalDisplay("+221770000099")).toBe("+221 77 •• •• •• 9");
+  });
+
+  it("ne renvoie jamais le numéro complet en clair pour un numéro masqué", () => {
+    const masked = maskPhoneSenegalDisplay("+221771234567");
+    expect(masked).not.toContain("1234567");
+    expect(masked).not.toContain("123456");
+    expect(masked).toBe("+221 77 •• •• •• 7");
   });
 });

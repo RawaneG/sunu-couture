@@ -75,13 +75,15 @@ function fakeGateway(): SupabaseGateway {
 
 function fakeAuthValue(workshopId: string | null): AuthContextValue {
   return {
-    initializing: false,
+    status: workshopId ? "ready" : "signed_out",
     session: workshopId ? { userId: "u1", phoneE164: null, expiresAt: 9999999999 } : null,
     user: workshopId ? { id: "u1", phoneE164: null } : null,
     workshop: workshopId
       ? { id: workshopId, name: "Atelier Test", ownerId: "u1", isDemo: false, createdAt: "2026-01-01T00:00:00.000Z", updatedAt: "2026-01-01T00:00:00.000Z" }
       : null,
-    provisionWorkshop: vi.fn(),
+    error: null,
+    register: vi.fn(),
+    login: vi.fn(),
     signOut: vi.fn(),
     signOutAllDevices: vi.fn(),
   };

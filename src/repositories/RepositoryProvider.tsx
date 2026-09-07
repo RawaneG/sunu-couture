@@ -1,7 +1,7 @@
 import { createContext, useContext, useEffect, useMemo, useState, type ReactNode } from "react";
 import { createRepositoryContainer, createRepositoryContainerFor, type RepositoryContainer } from "./RepositoryContainer";
 // Import depuis `AuthContext.ts` (PAS `AuthProvider.tsx`) : ce dernier
-// importe `SupabasePhoneOtpAuthRepository` → le client Supabase réel, qui
+// importe `SupabasePinAuthRepository` → le client Supabase réel, qui
 // lève au chargement du module sans `VITE_SUPABASE_*` — une chaîne que ce
 // fichier, monté par de nombreux tests sans `<AuthProvider>` ni mock
 // Supabase, ne doit jamais tirer (corr. R, Phase 7A §12).

@@ -1941,6 +1941,265 @@ begin
 end;
 $$;
 
-do $$ begin raise notice '════════  SCHÉMA PHASE 2 + WRAPPER PHASE 3A + CORRECTIFS GRANT + PHASE 4 GRANT/RLS + WRAPPER PHASE 9A + STORAGE PHASE 8A + STORAGE PHASE 8B : 69 groupes de tests OK  ════════'; end; $$;
+-- ══════════════════════════════════════════════════════════════════════════
+-- Corr. Gate Auth — pivot téléphone + PIN 4 chiffres, atelier invisible
+-- (migration 20260907120000_pin_auth.sql). `app_hidden.pin_auth_accounts`/
+-- `pin_auth_throttle` ne stockent JAMAIS de téléphone brut, PIN, ni mot de
+-- passe technique — seuls des identifiants opaques dérivés par HMAC côté
+-- Edge Function `tayoo-pin-auth`. Mêmes principes que Phase 3A/9A :
+-- `app_hidden` non exposé, wrappers `public.pin_auth_*_api` SECURITY
+-- INVOKER réservés à `service_role`, fonctions internes SECURITY DEFINER.
+-- ══════════════════════════════════════════════════════════════════════════
+
+-- ── T70 — schéma des tables privées : aucune colonne sensible, unicité,
+-- cascade FK vers auth.users ─────────────────────────────────────────────
+do $$
+declare
+  v_owner constant uuid := 'a0000000-0000-0000-0000-000000000001';
+  v_n int;
+begin
+  if to_regclass('app_hidden.pin_auth_accounts') is null then
+    raise exception 'T70 FAIL: app_hidden.pin_auth_accounts absente';
+  end if;
+  if to_regclass('app_hidden.pin_auth_throttle') is null then
+    raise exception 'T70 FAIL: app_hidden.pin_auth_throttle absente';
+  end if;
+
+  -- Aucune colonne portant un nom évoquant une donnée brute/sensible.
+  if exists (
+    select 1 from information_schema.columns
+    where table_schema = 'app_hidden' and table_name = 'pin_auth_accounts'
+      and column_name in ('phone', 'phone_number', 'phone_e164', 'pin', 'password', 'technical_password', 'technical_email')
+  ) then
+    raise exception 'T70 FAIL: pin_auth_accounts porte une colonne sensible interdite';
+  end if;
+  if exists (
+    select 1 from information_schema.columns
+    where table_schema = 'app_hidden' and table_name = 'pin_auth_throttle'
+      and column_name in ('phone', 'phone_number', 'ip', 'ip_address')
+  ) then
+    raise exception 'T70 FAIL: pin_auth_throttle porte une colonne IP/téléphone brute interdite';
+  end if;
+
+  -- phone_key unique.
+  insert into auth.users (id, phone) values (v_owner, null);
+  insert into app_hidden.pin_auth_accounts (user_id, phone_key, password_salt) values (v_owner, 'phonekey-t70', 'salt-t70');
+  begin
+    insert into app_hidden.pin_auth_accounts (user_id, phone_key, password_salt)
+    values ('a0000000-0000-0000-0000-000000000002', 'phonekey-t70', 'salt-autre');
+    raise exception 'T70 FAIL: deuxième phone_key identique acceptée (devrait violer l''unicité)';
+  exception when unique_violation then
+    null; -- attendu
+  end;
+
+  -- Cascade : supprimer l'utilisateur Auth supprime la ligne pin_auth_accounts.
+  delete from auth.users where id = v_owner;
+  select count(*) into v_n from app_hidden.pin_auth_accounts where user_id = v_owner;
+  if v_n <> 0 then
+    raise exception 'T70 FAIL: pin_auth_accounts non supprimée après suppression de auth.users (FK cascade manquante)';
+  end if;
+
+  raise notice 'T70 OK — tables privées : aucune colonne brute/sensible, phone_key unique, cascade FK auth.users -> pin_auth_accounts';
+end;
+$$;
+
+-- ── T71 — privilèges : PUBLIC/anon/authenticated refusés partout,
+-- service_role seul (wrappers ET fonctions internes), INVOKER/DEFINER
+-- corrects, search_path verrouillé ───────────────────────────────────────
+do $$
+declare
+  v_api_sigs text[] := array[
+    'public.pin_auth_register_account_api(uuid, text, text)',
+    'public.pin_auth_lookup_account_api(text)',
+    'public.pin_auth_touch_login_api(uuid)',
+    'public.pin_auth_throttle_status_api(text)',
+    'public.pin_auth_throttle_record_failure_api(text)',
+    'public.pin_auth_throttle_reset_api(text)'
+  ];
+  v_hidden_sigs text[] := array[
+    'app_hidden.pin_auth_register_account(uuid, text, text)',
+    'app_hidden.pin_auth_lookup_account(text)',
+    'app_hidden.pin_auth_touch_login(uuid)',
+    'app_hidden.pin_auth_throttle_status(text, timestamptz)',
+    'app_hidden.pin_auth_throttle_record_failure(text, timestamptz)',
+    'app_hidden.pin_auth_throttle_reset(text)'
+  ];
+  v_sig text;
+begin
+  foreach v_sig in array v_api_sigs loop
+    if has_function_privilege('anon', v_sig, 'execute') then
+      raise exception 'T71 FAIL: anon a EXECUTE sur %', v_sig;
+    end if;
+    if has_function_privilege('authenticated', v_sig, 'execute') then
+      raise exception 'T71 FAIL: authenticated a EXECUTE sur %', v_sig;
+    end if;
+    if not has_function_privilege('service_role', v_sig, 'execute') then
+      raise exception 'T71 FAIL: service_role SANS EXECUTE sur %', v_sig;
+    end if;
+  end loop;
+
+  foreach v_sig in array v_hidden_sigs loop
+    if has_function_privilege('anon', v_sig, 'execute') then
+      raise exception 'T71 FAIL: anon a EXECUTE sur %', v_sig;
+    end if;
+    if has_function_privilege('authenticated', v_sig, 'execute') then
+      raise exception 'T71 FAIL: authenticated a EXECUTE sur %', v_sig;
+    end if;
+    if not has_function_privilege('service_role', v_sig, 'execute') then
+      raise exception 'T71 FAIL: service_role SANS EXECUTE sur % (nécessaire — les wrappers sont SECURITY INVOKER)', v_sig;
+    end if;
+  end loop;
+
+  -- Aucun accès direct table (anon/authenticated) — accès uniquement via les
+  -- fonctions SECURITY DEFINER ci-dessus, jamais un GRANT table.
+  if has_table_privilege('anon', 'app_hidden.pin_auth_accounts', 'select')
+     or has_table_privilege('authenticated', 'app_hidden.pin_auth_accounts', 'select')
+     or has_table_privilege('service_role', 'app_hidden.pin_auth_accounts', 'select') then
+    raise exception 'T71 FAIL: un rôle a un GRANT table direct sur pin_auth_accounts (attendu : aucun, uniquement via fonctions DEFINER)';
+  end if;
+  if has_table_privilege('anon', 'app_hidden.pin_auth_throttle', 'select')
+     or has_table_privilege('authenticated', 'app_hidden.pin_auth_throttle', 'select')
+     or has_table_privilege('service_role', 'app_hidden.pin_auth_throttle', 'select') then
+    raise exception 'T71 FAIL: un rôle a un GRANT table direct sur pin_auth_throttle (attendu : aucun)';
+  end if;
+
+  -- Wrappers public.*_api : SECURITY INVOKER (jamais DEFINER), search_path verrouillé.
+  if exists (
+    select 1 from pg_proc p join pg_namespace n on n.oid = p.pronamespace
+    where n.nspname = 'public' and p.proname like 'pin_auth_%_api' and p.prosecdef
+  ) then
+    raise exception 'T71 FAIL: au moins un wrapper public.pin_auth_*_api est SECURITY DEFINER (attendu INVOKER)';
+  end if;
+  if exists (
+    select 1 from pg_proc p join pg_namespace n on n.oid = p.pronamespace
+    where n.nspname = 'public' and p.proname like 'pin_auth_%_api'
+      and (p.proconfig is null or array_to_string(p.proconfig, ',') not like '%search_path=%')
+  ) then
+    raise exception 'T71 FAIL: au moins un wrapper public.pin_auth_*_api sans search_path verrouillé';
+  end if;
+
+  -- Fonctions internes app_hidden.pin_auth_* : SECURITY DEFINER (sauf throttle_status
+  -- en lecture seule, qui peut aussi être DEFINER — toutes le sont ici), search_path verrouillé.
+  if exists (
+    select 1 from pg_proc p join pg_namespace n on n.oid = p.pronamespace
+    where n.nspname = 'app_hidden' and p.proname like 'pin_auth_%' and not p.prosecdef
+  ) then
+    raise exception 'T71 FAIL: au moins une fonction app_hidden.pin_auth_* n''est pas SECURITY DEFINER';
+  end if;
+  if exists (
+    select 1 from pg_proc p join pg_namespace n on n.oid = p.pronamespace
+    where n.nspname = 'app_hidden' and p.proname like 'pin_auth_%'
+      and (p.proconfig is null or array_to_string(p.proconfig, ',') not like '%search_path=%')
+  ) then
+    raise exception 'T71 FAIL: au moins une fonction app_hidden.pin_auth_* sans search_path verrouillé';
+  end if;
+
+  raise notice 'T71 OK — pin_auth_* : PUBLIC/anon/authenticated refusés partout, service_role seul (wrappers + fonctions internes), aucun GRANT table direct, INVOKER/DEFINER corrects, search_path verrouillé';
+end;
+$$;
+
+-- ── T72 — register/lookup fonctionnels via les wrappers service_role,
+-- duplicate refusé avec le code attendu (23505) ──────────────────────────
+do $$
+declare
+  v_owner constant uuid := 'a0000000-0000-0000-0000-000000000003';
+  v_found_user uuid;
+  v_found_salt text;
+  v_n int;
+begin
+  insert into auth.users (id, phone) values (v_owner, null);
+
+  set local role service_role;
+  perform public.pin_auth_register_account_api(v_owner, 'phonekey-t72', 'salt-t72');
+
+  select user_id, password_salt into v_found_user, v_found_salt
+  from public.pin_auth_lookup_account_api('phonekey-t72');
+  reset role;
+
+  if v_found_user <> v_owner or v_found_salt <> 'salt-t72' then
+    raise exception 'T72 FAIL: lookup_account_api n''a pas renvoyé le compte inséré (user=%, salt=%)', v_found_user, v_found_salt;
+  end if;
+
+  set local role service_role;
+  begin
+    perform public.pin_auth_register_account_api('a0000000-0000-0000-0000-000000000004', 'phonekey-t72', 'salt-autre');
+    reset role;
+    raise exception 'T72 FAIL: un second register avec la même phone_key a été accepté (devrait violer l''unicité)';
+  exception when unique_violation then
+    reset role;
+  end;
+
+  -- touch_login met bien à jour last_login_at.
+  set local role service_role;
+  perform public.pin_auth_touch_login_api(v_owner);
+  reset role;
+  select count(*) into v_n from app_hidden.pin_auth_accounts where user_id = v_owner and last_login_at is not null;
+  if v_n <> 1 then
+    raise exception 'T72 FAIL: pin_auth_touch_login_api n''a pas mis à jour last_login_at';
+  end if;
+
+  raise notice 'T72 OK — register/lookup/touch_login fonctionnels via les wrappers service_role, duplicate phone_key refusé';
+end;
+$$;
+
+-- ── T73 — throttle : verrouillage progressif ET déverrouillage après
+-- fenêtre PROUVÉ par injection d'horloge (jamais une vraie attente) ──────
+do $$
+declare
+  v_key constant text := 'throttle-key-t73';
+  v_locked boolean; v_locked_until timestamptz; v_fail_count int;
+  v_i int;
+begin
+  set local role service_role;
+
+  -- 1-4 échecs : jamais verrouillé.
+  for v_i in 1..4 loop
+    select locked, locked_until, fail_count into v_locked, v_locked_until, v_fail_count
+    from public.pin_auth_throttle_record_failure_api(v_key);
+  end loop;
+  if v_locked then
+    raise exception 'T73 FAIL: verrouillé après seulement % échecs (attendu : pas avant 5)', v_fail_count;
+  end if;
+
+  -- 5e échec : verrouillé.
+  select locked, locked_until, fail_count into v_locked, v_locked_until, v_fail_count
+  from public.pin_auth_throttle_record_failure_api(v_key);
+  if not v_locked or v_fail_count <> 5 then
+    raise exception 'T73 FAIL: pas verrouillé au 5e échec (fail_count=%, locked=%)', v_fail_count, v_locked;
+  end if;
+
+  select locked into v_locked from public.pin_auth_throttle_status_api(v_key);
+  if not v_locked then
+    raise exception 'T73 FAIL: throttle_status_api ne reflète pas le verrouillage juste posé';
+  end if;
+
+  reset role;
+
+  -- Déverrouillage après fenêtre — CLOCK INJECTION directe sur la fonction
+  -- interne (jamais exposée aux wrappers publics, corr. Gate Auth §61) :
+  -- jamais une vraie attente de plusieurs minutes dans un test.
+  select locked into v_locked from app_hidden.pin_auth_throttle_status(v_key, v_locked_until + interval '1 second');
+  if v_locked then
+    raise exception 'T73 FAIL: toujours verrouillé après la fenêtre (horloge injectée après locked_until)';
+  end if;
+  select locked into v_locked from app_hidden.pin_auth_throttle_status(v_key, v_locked_until - interval '1 second');
+  if not v_locked then
+    raise exception 'T73 FAIL: déjà déverrouillé AVANT la fin de la fenêtre (horloge injectée avant locked_until)';
+  end if;
+
+  -- reset() efface complètement le compteur.
+  set local role service_role;
+  perform public.pin_auth_throttle_reset_api(v_key);
+  reset role;
+  select locked, locked_until into v_locked, v_locked_until from app_hidden.pin_auth_throttle_status(v_key);
+  if v_locked or v_locked_until is not null then
+    raise exception 'T73 FAIL: throttle_reset_api n''a pas effacé le verrou/compteur';
+  end if;
+
+  raise notice 'T73 OK — throttle progressif (aucun verrou avant 5 échecs, verrouillé au 5e), déverrouillage après fenêtre prouvé par horloge injectée (jamais une vraie attente), reset efface tout';
+end;
+$$;
+
+do $$ begin raise notice '════════  SCHÉMA PHASE 2 + WRAPPER PHASE 3A + CORRECTIFS GRANT + PHASE 4 GRANT/RLS + WRAPPER PHASE 9A + STORAGE PHASE 8A + STORAGE PHASE 8B + PIVOT AUTH PIN : 73 groupes de tests OK  ════════'; end; $$;
 
 rollback;

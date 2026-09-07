@@ -1,7 +1,7 @@
 // Contexte d'auth isolé de son implémentation concrète — voir AuthProvider.tsx.
 //
 // Séparé délibérément (corr. R, Phase 7A) : `AuthProvider.tsx` importe
-// `SupabasePhoneOtpAuthRepository`, qui importe `src/lib/supabase/client.ts`,
+// `SupabasePinAuthRepository`, qui importe `src/lib/supabase/client.ts`,
 // qui LÈVE au chargement du module si `VITE_SUPABASE_URL`/
 // `VITE_SUPABASE_PUBLISHABLE_KEY` sont absentes (cas normal en test sans
 // mock). `RepositoryProvider` a besoin de lire `workshop?.id` (§12/§13) sans
@@ -10,21 +10,36 @@
 // ce module séparé, qui ne dépend d'aucun repository Auth concret.
 import { createContext, useContext } from "react";
 import type { AuthSession } from "./AuthRepository";
-import type { ProvisionWorkshopResult, Workshop } from "../workshop/provisionWorkshop";
+import type { Workshop } from "../workshop/provisionWorkshop";
+
+/** États du cycle de vie Auth (corr. Gate Auth §38) :
+ *   - "initializing"  : restauration de session au démarrage, pas encore résolue.
+ *   - "signed_out"    : aucune session — écrans /connexion.
+ *   - "provisioning"  : session connue, atelier en cours de résolution
+ *                       (toujours bref — l'atelier est déjà créé côté serveur
+ *                       au register/login, corr. Gate Auth §7/§36).
+ *   - "ready"         : session ET atelier résolus — routes métier accessibles.
+ *   - "error"         : session valide mais atelier non résolu (hors ligne,
+ *                       erreur serveur) — jamais un blocage silencieux. */
+export type AuthStatus = "initializing" | "signed_out" | "provisioning" | "ready" | "error";
+
+export type PinAuthResult = { ok: true } | { ok: false; message: string };
 
 export interface AuthContextValue {
-  /** true tant que la session n'a pas fini d'être restaurée au démarrage. */
-  initializing: boolean;
+  status: AuthStatus;
   session: AuthSession | null;
   user: { id: string; phoneE164: string | null } | null;
-  /** null tant qu'aucun atelier n'a été résolu (nouvel utilisateur, ou pas encore chargé). */
+  /** null tant qu'aucun atelier n'a été résolu (statut "initializing"/
+   * "provisioning"/"signed_out"/"error"). */
   workshop: Workshop | null;
-  /**
-   * Sonde (`name: null`) ou crée (`name` non vide) l'atelier de l'utilisateur
-   * courant, et met à jour `workshop` en cas de succès. Ne recrée JAMAIS un
-   * atelier existant — voir `provision_workshop_api` (idempotent côté DB).
-   */
-  provisionWorkshop: (name: string | null) => Promise<ProvisionWorkshopResult>;
+  /** Message d'erreur simple si `status === "error"` — jamais de jargon
+   * technique (corr. Gate Auth §18). */
+  error: string | null;
+  /** Inscription : numéro + PIN choisi. L'atelier est créé AUTOMATIQUEMENT
+   * côté serveur — jamais un nom demandé ici (corr. Gate Auth §7/§8). */
+  register: (phoneE164: string, pin: string) => Promise<PinAuthResult>;
+  /** Connexion : numéro + PIN existants. */
+  login: (phoneE164: string, pin: string) => Promise<PinAuthResult>;
   signOut: () => Promise<void>;
   signOutAllDevices: () => Promise<void>;
 }
