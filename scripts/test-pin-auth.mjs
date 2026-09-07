@@ -96,6 +96,8 @@ async function main() {
   const PHONE_B = "77 000 09 02";
   const PHONE_LOCKOUT = "77 000 09 04";
   const PHONE_COMPENSATION = "77 000 09 05";
+  const PHONE_CONCURRENCY = "77 000 09 06";
+  const PHONE_RESET = "77 000 09 07";
   const PHONE_MISSING = "77 000 09 99"; // jamais inscrit
 
   const IP_A = "10.0.0.1";
@@ -105,6 +107,10 @@ async function main() {
   const IP_COMPENSATION = "10.0.0.5";
   const IP_MISSING = "10.0.0.6";
   const IP_FORMAT = "10.0.0.7";
+  const IP_CONCURRENCY = "10.0.0.8";
+  const IP_SPRAY = "10.0.0.9";
+  const IP_RESET = "10.0.0.10";
+  const IP_RESET_PROOF = "10.0.0.11";
 
   console.log("Phase Gate Auth — pivot PIN (téléphone + PIN 4 chiffres) — suite automatisée\n");
 
@@ -198,7 +204,7 @@ async function main() {
     check("register PIN invalide (3 chiffres) -> 400", shortPin.status === 400, shortPin);
   }
 
-  console.log("\n9) THROTTLE — plusieurs échecs -> verrouillage réel (corr. Gate Auth §27/§28/§61)");
+  console.log("\n9) THROTTLE LOGIN séquentiel — plusieurs échecs -> verrouillage réel (corr. Gate Auth §27/§28/§61, corr. throttle §1-§8)");
   {
     const results = [];
     for (let i = 0; i < 6; i++) {
@@ -217,10 +223,134 @@ async function main() {
     check("pendant le verrou -> toujours refusé (429 locked), même PIN correct hypothétique", statusWhileLocked === 429 && bodyWhileLocked.error === "locked", bodyWhileLocked);
   }
   console.log(
-    "  ℹ️  Le déverrouillage APRÈS la fenêtre de blocage est prouvé au niveau SQL (10_schema_tests.sql, « clock injection » sur app_hidden.pin_auth_throttle_status) — jamais en attendant réellement plusieurs minutes ici (corr. Gate Auth §61).",
+    "  ℹ️  Le déverrouillage APRÈS la fenêtre de blocage est prouvé au niveau SQL (10_schema_tests.sql, « clock injection » sur app_hidden.pin_auth_throttle_consume_attempt) — jamais en attendant réellement plusieurs minutes ici (corr. Gate Auth §61).",
   );
 
-  console.log("\n10) Compensation — échec DB après auth.admin.createUser() -> AUCUN utilisateur orphelin (corr. Gate Auth §32)");
+  console.log("\n10) CONCURRENCE RÉELLE — 50 requêtes simultanées, même téléphone/IP, mauvais PIN (corr. throttle §4/§15)");
+  {
+    const regRes = await callPinAuth("register", PHONE_CONCURRENCY, "1234", IP_CONCURRENCY);
+    check("concurrence -> inscription fixture OK avant l'attaque", regRes.status === 200, regRes);
+
+    const N = 50;
+    const promises = [];
+    for (let i = 0; i < N; i++) {
+      promises.push(callPinAuth("login", PHONE_CONCURRENCY, "0000", IP_CONCURRENCY));
+    }
+    const results = await Promise.all(promises);
+    const counts = {};
+    for (const r of results) {
+      const key = `${r.status}:${r.body.error ?? "?"}`;
+      counts[key] = (counts[key] ?? 0) + 1;
+    }
+    const reachedCredentialCheck = counts["401:invalid_credentials"] ?? 0;
+    const locked = counts["429:locked"] ?? 0;
+    check(
+      `concurrence -> au maximum 5 requêtes atteignent réellement la vérification Auth (401), reçu ${reachedCredentialCheck}`,
+      reachedCredentialCheck > 0 && reachedCredentialCheck <= 5,
+      counts,
+    );
+    check(`concurrence -> le reste (${N - reachedCredentialCheck}) est verrouillé (429), ce test échoue avec l'ancienne implémentation check-then-record`, locked === N - reachedCredentialCheck, counts);
+    check("concurrence -> AUCUNE autre issue que 401/429 (pas de 200 volé, pas de 500)", reachedCredentialCheck + locked === N, counts);
+
+    // Les 2 clés touchées par cette attaque (phone + ip) sont, à cet instant
+    // précis du script, les 2 lignes les plus récemment mises à jour de la
+    // table (rien d'autre ne l'a touchée entre-temps) — pas besoin du secret
+    // serveur pour recalculer les key_hash exacts.
+    const throttleRows = dbQueryRows(
+      `select fail_count, locked_until from app_hidden.pin_auth_throttle order by updated_at desc limit 2;`,
+    );
+    check("concurrence -> DB : compteur cohérent (fail_count >= 5 sur les 2 clés phone+ip touchées)", throttleRows.length === 2 && throttleRows.every((r) => r.fail_count >= 5), throttleRows);
+    check("concurrence -> DB : locked_until posé (non null) après l'attaque", throttleRows.length === 2 && throttleRows.every((r) => r.locked_until !== null), throttleRows);
+  }
+
+  console.log("\n11) REGISTER SPRAY — quota anti-abus par IP (corr. throttle §9-§13/§16)");
+  let sprayUserIds = [];
+  {
+    const LIMIT = 25;
+    const ATTEMPTS = 27;
+    const results = [];
+    for (let i = 0; i < ATTEMPTS; i++) {
+      const phone = `77 000 10 ${String(i + 1).padStart(2, "0")}`;
+      // eslint-disable-next-line no-await-in-loop
+      const r = await callPinAuth("register", phone, "1357", IP_SPRAY);
+      results.push(r);
+      if (r.status === 200 && r.body.access_token) {
+        sprayUserIds.push(decodeJwtPayload(r.body.access_token).sub);
+      }
+    }
+    const successCount = results.filter((r) => r.status === 200).length;
+    const lockedCount = results.filter((r) => r.status === 429).length;
+    check(`register spray -> exactement ${LIMIT} inscriptions acceptées avant quota (reçu ${successCount})`, successCount === LIMIT, results.map((r) => r.status));
+    check(`register spray -> les ${ATTEMPTS - LIMIT} suivantes refusées (429)`, lockedCount === ATTEMPTS - LIMIT, results.map((r) => r.status));
+    const overQuota = results.slice(LIMIT);
+    check("register spray -> refus = code 'locked' générique (même vocabulaire que le throttle login)", overQuota.every((r) => r.body.error === "locked"), overQuota.map((r) => r.body));
+
+    check("register spray -> le nombre de comptes réellement créés = la limite exacte (aucun compte fantôme au-delà)", sprayUserIds.length === LIMIT, sprayUserIds.length);
+  }
+
+  console.log("\n12) RESET SÉLECTIF — succès LOGIN réinitialise SON throttle, succès REGISTER ne réinitialise JAMAIS son quota (corr. throttle §12/§17)");
+  {
+    const reg = await callPinAuth("register", PHONE_RESET, "1234", IP_RESET);
+    check("reset-scoping -> inscription fixture OK", reg.status === 200, reg);
+
+    // 4 échecs (SOUS le seuil de verrouillage à 5) puis 1 succès : le succès
+    // doit repartir le compteur de throttle LOGIN à zéro.
+    const preSuccess = [];
+    for (let i = 0; i < 4; i++) {
+      // eslint-disable-next-line no-await-in-loop
+      preSuccess.push(await callPinAuth("login", PHONE_RESET, "0000", IP_RESET));
+    }
+    check("reset-scoping -> 4 échecs restent 401 (pas encore verrouillé)", preSuccess.every((r) => r.status === 401), preSuccess.map((r) => r.status));
+
+    // Les 2 clés (phone+ip) touchées par ces 4 échecs sont, à cet instant
+    // précis, les 2 lignes les plus récemment mises à jour de la table — on
+    // capture leurs key_hash AVANT le succès pour pouvoir prouver ensuite
+    // qu'elles ont RÉELLEMENT disparu (reset), sans dépendre de l'état du
+    // reste de la table (d'autres scénarios y laissent des lignes résiduelles
+    // par construction, cf. §9/§10/§11).
+    const preSuccessKeys = dbQueryRows(`select key_hash from app_hidden.pin_auth_throttle order by updated_at desc limit 2;`).map((r) => r.key_hash);
+    check("reset-scoping -> 2 clés (phone+ip) identifiées avant le succès", preSuccessKeys.length === 2, preSuccessKeys);
+
+    const okLogin = await callPinAuth("login", PHONE_RESET, "1234", IP_RESET);
+    check("reset-scoping -> le bon PIN au 5e essai réussit (pas encore verrouillé à ce stade)", okLogin.status === 200, okLogin);
+
+    const rowsAfterSuccess = dbQueryRows(
+      `select fail_count from app_hidden.pin_auth_throttle where key_hash in (${preSuccessKeys.map((k) => `'${k}'`).join(",")});`,
+    );
+    check("reset-scoping -> après succès, le throttle LOGIN (phone+ip) est bien SUPPRIMÉ (reset réel, pas juste remis à 0)", rowsAfterSuccess.length === 0, rowsAfterSuccess);
+
+    // Nouveaux échecs après le succès : si le reset a bien eu lieu, il faut de
+    // nouveau 6 tentatives (comme au tout premier essai, §9) avant tout
+    // re-verrouillage — preuve comportementale que le compteur est reparti de
+    // zéro (avec l'ancien fail_count non remis à zéro, un verrou serait
+    // revenu dès la 1re tentative suivante).
+    const postReset = [];
+    for (let i = 0; i < 6; i++) {
+      // eslint-disable-next-line no-await-in-loop
+      postReset.push(await callPinAuth("login", PHONE_RESET, "0000", IP_RESET));
+    }
+    check(
+      "reset-scoping -> après reset, les 5 premières nouvelles tentatives restent 401 (compteur reparti de zéro, pas de verrouillage prématuré)",
+      postReset.slice(0, 5).every((r) => r.status === 401),
+      postReset.map((r) => r.status),
+    );
+    check("reset-scoping -> la 6e nouvelle tentative reverrouille (comportement normal, non cassé par le reset)", postReset[5]?.status === 429, postReset[5]);
+
+    // Le succès REGISTER, lui, ne doit JAMAIS réinitialiser le quota
+    // register-ip (sinon des inscriptions répétées contourneraient la limite).
+    const r1 = await callPinAuth("register", "77 000 09 20", "1111", IP_RESET_PROOF);
+    check("register-ip no-reset -> 1er register OK", r1.status === 200, r1);
+    const r2 = await callPinAuth("register", "77 000 09 21", "2222", IP_RESET_PROOF);
+    check("register-ip no-reset -> 2e register OK (même IP)", r2.status === 200, r2);
+    const registerRows = dbQueryRows(`select count from app_hidden.pin_auth_register_throttle order by updated_at desc limit 1;`);
+    check(
+      "register-ip no-reset -> le compteur a bien ACCUMULÉ 2 (jamais remis à 0/1 par le succès précédent — ce test échouerait si register réinitialisait son propre quota)",
+      registerRows[0]?.count === 2,
+      registerRows,
+    );
+  }
+
+  console.log("\n13) Compensation — échec DB après auth.admin.createUser() -> AUCUN utilisateur orphelin (corr. Gate Auth §32)");
   {
     // Révoque temporairement l'EXECUTE de service_role sur le wrapper
     // d'insertion pour forcer l'échec de CETTE étape précise, sans toucher au
@@ -267,18 +397,20 @@ async function main() {
     console.log(`  cleanup: user ${row.id} -> ${res.status === 200 ? "supprimé" : `échec (${res.status})`}`);
   }
 
-  // `pin_auth_throttle` ne contient AUCUNE donnée identifiante en clair
-  // (uniquement des clés opaques HMAC + compteurs, corr. Gate Auth §27) et
-  // n'est écrite que par CE script en local — un DELETE complet ici n'est pas
-  // le même risque qu'un DELETE générique sur une table métier partagée
-  // (jamais fait ailleurs dans ce dépôt). Nécessaire car ce script ne connaît
-  // pas `TAYOO_PIN_AUTH_SECRET` : il ne peut pas recalculer les clés exactes
-  // à supprimer une par une (scénarios verrouillage §9 / login inexistant §7
+  // `pin_auth_throttle`/`pin_auth_register_throttle` ne contiennent AUCUNE
+  // donnée identifiante en clair (uniquement des clés opaques HMAC + compteurs,
+  // corr. Gate Auth §27, corr. throttle §14) et ne sont écrites que par CE
+  // script en local — un DELETE complet ici n'est pas le même risque qu'un
+  // DELETE générique sur une table métier partagée (jamais fait ailleurs dans
+  // ce dépôt). Nécessaire car ce script ne connaît pas `TAYOO_PIN_AUTH_SECRET` :
+  // il ne peut pas recalculer les clés exactes à supprimer une par une
+  // (scénarios verrouillage §9/§10, login inexistant §7 et quota register §11
   // laissent des lignes résiduelles par construction).
   dbExec(`delete from app_hidden.pin_auth_throttle;`);
+  dbExec(`delete from app_hidden.pin_auth_register_throttle;`);
 
   const baseline = dbQueryRows(
-    `select (select count(*) from auth.users) as users, (select count(*) from app_hidden.pin_auth_accounts) as pin_accounts, (select count(*) from app_hidden.pin_auth_throttle) as throttle, (select count(*) from public.workshops) as workshops, (select count(*) from public.workshop_members) as memberships;`,
+    `select (select count(*) from auth.users) as users, (select count(*) from app_hidden.pin_auth_accounts) as pin_accounts, (select count(*) from app_hidden.pin_auth_throttle) as throttle, (select count(*) from app_hidden.pin_auth_register_throttle) as register_throttle, (select count(*) from public.workshops) as workshops, (select count(*) from public.workshop_members) as memberships;`,
   )[0];
   console.log("Baseline post-cleanup :", JSON.stringify(baseline));
   const allZero = baseline && Object.values(baseline).every((v) => v === 0);

@@ -147,39 +147,59 @@ const GENERIC_LOCKED_ERROR = { error: "locked", message: "Trop d'essais. Réessa
 const GENERIC_SERVER_ERROR = { error: "internal_error", message: "Connexion impossible. Réessaie." };
 
 /** Meilleur effort — l'IP n'est jamais stockée en clair (corr. Gate Auth
- * §27) : elle n'est utilisée que pour dériver une clé de throttle opaque. */
+ * §27) : elle n'est utilisée que pour dériver une clé de throttle opaque.
+ * La plateforme distante (Vercel/Supabase Edge) DOIT fournir un en-tête
+ * `x-forwarded-for` fiable (edge/proxy) — un test local avec une valeur
+ * synthétique (voir `scripts/test-pin-auth.mjs`) prouve la LOGIQUE de
+ * dérivation/throttle, jamais le comportement réseau réel d'un hébergeur
+ * distant (corr. throttle §14, ne jamais prétendre le contraire). */
 function clientIp(req: Request): string {
   const forwarded = req.headers.get("x-forwarded-for");
   if (forwarded) return forwarded.split(",")[0]!.trim();
   return "unknown";
 }
 
-/** Vérifie les DEUX portées (téléphone, IP) — verrouillée si l'UNE des deux
- * l'est (corr. Gate Auth §27/§29). */
-async function checkThrottle(phoneThrottleKey: string, ipThrottleKey: string): Promise<boolean> {
-  const [phoneStatus, ipStatus] = await Promise.all([
-    adminClient.rpc("pin_auth_throttle_status_api", { p_key_hash: phoneThrottleKey }),
-    adminClient.rpc("pin_auth_throttle_status_api", { p_key_hash: ipThrottleKey }),
-  ]);
-  const phoneLocked = Array.isArray(phoneStatus.data) && phoneStatus.data[0]?.locked === true;
-  const ipLocked = Array.isArray(ipStatus.data) && ipStatus.data[0]?.locked === true;
-  return phoneLocked || ipLocked;
+/** Consomme ATOMIQUEMENT une tentative de LOGIN sur les DEUX portées
+ * (téléphone + IP) en une seule transaction PostgreSQL (corr. throttle
+ * §3/§4/§6) — jamais un "vérifier puis agir" en deux temps côté application :
+ * l'incrément a lieu AVANT toute tentative `signInWithPassword`, donc avant
+ * même de savoir si le PIN sera correct. `allowed = false` signifie que la
+ * tentative n'a PAS été consommée (déjà verrouillée) — aucun appel Auth ne
+ * doit suivre dans ce cas. */
+async function consumeLoginAttempt(phoneThrottleKey: string, ipThrottleKey: string): Promise<boolean> {
+  const { data, error } = await adminClient.rpc("pin_auth_throttle_consume_attempt_api", {
+    p_key_hashes: [phoneThrottleKey, ipThrottleKey],
+  });
+  if (error) {
+    logSafe("tayoo_pin_auth.throttle_error", { phase: "consume_login" });
+    // Échec du throttle lui-même (panne DB) — fail CLOSED : jamais un login
+    // qui contournerait la protection anti brute-force si le throttle est
+    // indisponible.
+    return false;
+  }
+  return Array.isArray(data) ? data[0]?.allowed === true : false;
 }
 
-/** Enregistre un échec sur les DEUX portées (corr. Gate Auth §27/§29). */
-async function recordThrottleFailure(phoneThrottleKey: string, ipThrottleKey: string): Promise<void> {
-  await Promise.all([
-    adminClient.rpc("pin_auth_throttle_record_failure_api", { p_key_hash: phoneThrottleKey }),
-    adminClient.rpc("pin_auth_throttle_record_failure_api", { p_key_hash: ipThrottleKey }),
-  ]);
+/** Réinitialise les DEUX portées LOGIN après un succès — jamais un second
+ * incrément après coup (corr. throttle §8) : le compteur pré-incrémenté par
+ * `consumeLoginAttempt` est simplement effacé. */
+async function resetLoginThrottle(phoneThrottleKey: string, ipThrottleKey: string): Promise<void> {
+  await adminClient.rpc("pin_auth_throttle_reset_api", { p_key_hashes: [phoneThrottleKey, ipThrottleKey] });
 }
 
-/** Réinitialise les DEUX portées après un succès. */
-async function resetThrottle(phoneThrottleKey: string, ipThrottleKey: string): Promise<void> {
-  await Promise.all([
-    adminClient.rpc("pin_auth_throttle_reset_api", { p_key_hash: phoneThrottleKey }),
-    adminClient.rpc("pin_auth_throttle_reset_api", { p_key_hash: ipThrottleKey }),
-  ]);
+/** Anti-spray REGISTRATION — scope IP uniquement (corr. throttle §9-13),
+ * fenêtre fixe côté SQL (`pin_auth_register_consume_attempt`). AUCUNE
+ * fonction de reset n'existe pour ce scope : un succès compte dans le quota
+ * comme n'importe quelle autre tentative (corr. §12). */
+async function consumeRegisterAttempt(registerIpThrottleKey: string): Promise<boolean> {
+  const { data, error } = await adminClient.rpc("pin_auth_register_consume_attempt_api", {
+    p_key_hash: registerIpThrottleKey,
+  });
+  if (error) {
+    logSafe("tayoo_pin_auth.throttle_error", { phase: "consume_register" });
+    return false; // fail CLOSED — jamais une inscription qui contourne la limite si le throttle est indisponible.
+  }
+  return Array.isArray(data) ? data[0]?.allowed === true : false;
 }
 
 Deno.serve(async (req: Request) => {
@@ -230,29 +250,24 @@ Deno.serve(async (req: Request) => {
     return jsonResponse(400, { error: "invalid_request", message: "Le code doit contenir exactement 4 chiffres." }, decision);
   }
 
-  // Dérivations — jamais loggué (numéro/PIN), voir crypto.ts.
+  // Dérivations — jamais loggué (numéro/PIN), voir crypto.ts. `phoneKey` est
+  // partagé (identité) ; les clés de throttle sont scopées et NAMESPACÉES
+  // différemment selon l'action (corr. throttle §13 — jamais mélanger
+  // "mauvais PIN login" et "création de compte" sous la même clé).
   const phoneKey = await derivePhoneKey(PIN_AUTH_SECRET, normalizedPhone);
-  const phoneThrottleKey = await deriveThrottleKey(PIN_AUTH_SECRET, "phone", normalizedPhone);
-  const ipThrottleKey = await deriveThrottleKey(PIN_AUTH_SECRET, "ip", clientIp(req));
-
-  const locked = await checkThrottle(phoneThrottleKey, ipThrottleKey);
-  if (locked) {
-    logSafe("tayoo_pin_auth.locked", { action });
-    return jsonResponse(429, GENERIC_LOCKED_ERROR, decision);
-  }
+  const ip = clientIp(req);
 
   if (action === "register") {
-    return handleRegister({ normalizedPhone, pin, phoneKey, phoneThrottleKey, ipThrottleKey, decision });
+    return handleRegister({ normalizedPhone, pin, phoneKey, ip, decision });
   }
-  return handleLogin({ normalizedPhone, pin, phoneKey, phoneThrottleKey, ipThrottleKey, decision });
+  return handleLogin({ normalizedPhone, pin, phoneKey, ip, decision });
 });
 
 interface ActionContext {
   normalizedPhone: string;
   pin: string;
   phoneKey: string;
-  phoneThrottleKey: string;
-  ipThrottleKey: string;
+  ip: string;
   decision: OriginDecision;
 }
 
@@ -263,7 +278,18 @@ async function establishSession(technicalEmail: string, technicalPassword: strin
 }
 
 async function handleRegister(ctx: ActionContext): Promise<Response> {
-  const { normalizedPhone, pin, phoneKey, phoneThrottleKey, ipThrottleKey, decision } = ctx;
+  const { normalizedPhone, pin, phoneKey, ip, decision } = ctx;
+
+  // Anti-spray REGISTRATION — scope IP uniquement, consommé AVANT toute
+  // lecture DB (corr. throttle §9-13) : le téléphone étant volontairement
+  // non vérifié par SMS, `phone_key unique` seul ne protège pas contre un
+  // attaquant qui essaie une SÉRIE de numéros neufs depuis la même source.
+  const registerIpThrottleKey = await deriveThrottleKey(PIN_AUTH_SECRET!, "register-ip", ip);
+  const registerAllowed = await consumeRegisterAttempt(registerIpThrottleKey);
+  if (!registerAllowed) {
+    logSafe("tayoo_pin_auth.register.locked");
+    return jsonResponse(429, GENERIC_LOCKED_ERROR, decision);
+  }
 
   // Duplicate : réponse UX contrôlée, jamais l'email/user id/phoneKey (corr.
   // Gate Auth §33).
@@ -334,7 +360,9 @@ async function handleRegister(ctx: ActionContext): Promise<Response> {
     return jsonResponse(500, GENERIC_SERVER_ERROR, decision);
   }
 
-  await resetThrottle(phoneThrottleKey, ipThrottleKey);
+  // PAS de reset ici (corr. throttle §12) : le quota `register-ip` compte
+  // TOUTE tentative, y compris les inscriptions réussies — sinon une série
+  // d'inscriptions réussies contournerait indéfiniment la limite.
   logSafe("tayoo_pin_auth.register.success");
   return jsonResponse(
     200,
@@ -344,7 +372,19 @@ async function handleRegister(ctx: ActionContext): Promise<Response> {
 }
 
 async function handleLogin(ctx: ActionContext): Promise<Response> {
-  const { normalizedPhone, pin, phoneKey, phoneThrottleKey, ipThrottleKey, decision } = ctx;
+  const { normalizedPhone, pin, phoneKey, ip, decision } = ctx;
+
+  // Anti brute-force LOGIN — ATOMIQUE, consommé AVANT toute lecture DB et
+  // AVANT toute tentative `signInWithPassword` (corr. throttle §3/§4) :
+  // aucune requête, correcte ou non, n'atteint jamais la vérification réelle
+  // du PIN tant que la tentative n'a pas été consommée avec succès.
+  const phoneThrottleKey = await deriveThrottleKey(PIN_AUTH_SECRET!, "phone", normalizedPhone);
+  const ipThrottleKey = await deriveThrottleKey(PIN_AUTH_SECRET!, "ip", ip);
+  const loginAllowed = await consumeLoginAttempt(phoneThrottleKey, ipThrottleKey);
+  if (!loginAllowed) {
+    logSafe("tayoo_pin_auth.login.locked");
+    return jsonResponse(429, GENERIC_LOCKED_ERROR, decision);
+  }
 
   const { data: rows, error: lookupError } = await adminClient.rpc("pin_auth_lookup_account_api", { p_phone_key: phoneKey });
   if (lookupError) {
@@ -354,8 +394,8 @@ async function handleLogin(ctx: ActionContext): Promise<Response> {
   const account = Array.isArray(rows) ? rows[0] : undefined;
   if (!account) {
     // Jamais distinguer publiquement "compte inexistant" de "PIN incorrect"
-    // (corr. Gate Auth §34).
-    await recordThrottleFailure(phoneThrottleKey, ipThrottleKey);
+    // (corr. Gate Auth §34). La tentative est DÉJÀ consommée ci-dessus —
+    // jamais un second incrément ici (corr. throttle §8).
     return jsonResponse(401, GENERIC_LOGIN_ERROR, decision);
   }
 
@@ -364,11 +404,11 @@ async function handleLogin(ctx: ActionContext): Promise<Response> {
 
   const { data: signInData, error: signInError } = await establishSession(technicalEmail, technicalPassword);
   if (signInError || !signInData.session) {
-    await recordThrottleFailure(phoneThrottleKey, ipThrottleKey);
+    // Idem — DÉJÀ consommée, aucun second incrément (corr. throttle §8).
     return jsonResponse(401, GENERIC_LOGIN_ERROR, decision);
   }
 
-  await resetThrottle(phoneThrottleKey, ipThrottleKey);
+  await resetLoginThrottle(phoneThrottleKey, ipThrottleKey);
   await adminClient.rpc("pin_auth_touch_login_api", { p_user_id: account.user_id as string });
   // Filet de sécurité idempotent (corr. Gate Auth §36) — ne devrait
   // normalement jamais créer un second atelier, l'inscription en a déjà

@@ -134,6 +134,12 @@ describe("deriveThrottleKey — opaque par portée, jamais l'IP/numéro brut sto
     const b = await deriveThrottleKey(SECRET_A, "ip", "5.6.7.8");
     expect(a).not.toBe(b);
   });
+
+  it("portée 'register-ip' jamais confondue avec 'ip' (login) pour la même IP brute — namespaces distincts (corr. throttle §13)", async () => {
+    const loginIp = await deriveThrottleKey(SECRET_A, "ip", "1.2.3.4");
+    const registerIp = await deriveThrottleKey(SECRET_A, "register-ip", "1.2.3.4");
+    expect(loginIp).not.toBe(registerIp);
+  });
 });
 
 describe("technicalWorkshopName — jamais demandé/affiché à l'utilisateur, stable pour un même userId", () => {

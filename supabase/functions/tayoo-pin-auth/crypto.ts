@@ -66,10 +66,15 @@ export function deriveTechnicalEmail(phoneKey: string): string {
   return `u_${phoneKey}@auth.tayoo.invalid`;
 }
 
-/** Clé de throttle opaque par portée (`phone` ou `ip`) — jamais l'IP ou le
- * numéro bruts stockés dans `app_hidden.pin_auth_throttle` (corr. Gate Auth
- * §27), seulement cette clé dérivée. */
-export async function deriveThrottleKey(secret: string, scope: "phone" | "ip", rawValue: string): Promise<string> {
+/** Clé de throttle opaque par portée — jamais l'IP ou le numéro bruts stockés
+ * dans `app_hidden.pin_auth_throttle`/`pin_auth_register_throttle` (corr.
+ * Gate Auth §27, corr. throttle §14). Trois portées, jamais mélangées
+ * (namespaces distincts — corr. throttle §13) :
+ *   - "phone" / "ip"     : anti brute-force LOGIN (compteur atomique, voir
+ *                          `pin_auth_throttle_consume_attempt`) ;
+ *   - "register-ip"      : anti-spray REGISTRATION, scope IP uniquement
+ *                          (corr. throttle §9-13). */
+export async function deriveThrottleKey(secret: string, scope: "phone" | "ip" | "register-ip", rawValue: string): Promise<string> {
   const bytes = await hmacSha256(secret, `throttle-${scope}:v1|${rawValue}`);
   return bytesToBase64Url(bytes);
 }
