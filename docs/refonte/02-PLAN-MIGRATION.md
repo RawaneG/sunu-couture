@@ -853,6 +853,63 @@ L'ordre reprend celui du cahier des charges (§ « Ordre d'implémentation »).
 
 ---
 
+### Gate `VITE_BACKEND=supabase` — activation applicative *(7B + 8A + 8B + 11A closed)*
+> Une fois 7B, 8A, 8B et 11A **codées** (elles le sont depuis l'implémentation
+> Phase 11A ci-dessus), le Gate lui-même reste une étape SÉPARÉE et distincte
+> (corr. R §6/§42) : brancher réellement `VITE_BACKEND=supabase` dans
+> l'application (ce paragraphe), puis — seulement ensuite — un Preview Vercel
+> réel et un smoke E2E distant avant toute activation de production.
+- **Objectif** : `resolveBackend("supabase")` cesse de lever
+  `BackendConfigurationError` et `RepositoryContainer` construit réellement le
+  lot cloud complet Phase 11A (`clients`/`fiches`/`carnets`/`payments`/
+  `media`/`modeles`, tous scopés au même `workshopId` — jamais un mélange
+  Supabase/LocalStorage) quand `VITE_BACKEND=supabase` est fourni au build.
+  Le défaut (variable absente/vide) **reste `local`** — le cloud n'est jamais
+  choisi implicitement.
+- **Changements** :
+  - `src/lib/backend.ts` : `resolveBackend("supabase")` retourne `"supabase"`
+    au lieu de lever ; seule une valeur totalement inconnue lève encore
+    `BackendConfigurationError`.
+  - `RepositoryContainer.ts` : nouveau cas `"supabase"` construisant
+    `createPhase11ACloudRepositories({ gateway, workshopId })` + un `dispose()`
+    qui appelle `disposePhase11ACloudRepositories()`. Échec explicite (jamais
+    un fallback local) si `workshopId` ou `supabaseGateway` (nouvelles options
+    du conteneur, injectées par l'appelant — jamais `src/lib/supabase/client.ts`
+    importé ici, pour rester testable sans `VITE_SUPABASE_*`) sont absents.
+    `subscriptions` reste l'adaptateur pilote `LocalStorageSubscriptionRepository`
+    (Phase 14 n'existe pas encore — ce n'est **pas** un fallback de données
+    métier cloud, documenté explicitement comme exception assumée).
+  - `RepositoryProvider.tsx` : accepte désormais `supabaseGateway` en prop
+    (toujours optionnel), dispose au démontage/changement d'atelier le
+    conteneur **qu'il a lui-même créé** — jamais un conteneur injecté par un
+    test (`repositories` prop, contrat inchangé).
+  - `App.tsx` : `RepositoryProvider` **déplacé** de la racine (au-dessus de
+    toutes les routes, y compris `/connexion`) vers l'intérieur de
+    `ProtectedAppRoute`, **sous** `RequireAuth` — au démarrage, avant
+    restauration de session, `workshop` est `null` ; construire un conteneur
+    cloud à ce moment-là est désormais structurellement impossible (les 3
+    routes d'authentification ne construisent plus aucun Repository métier).
+    Seul `App.tsx` importe `createSupabaseGateway()` + le client Supabase
+    concret pour construire le gateway réel — jamais `RepositoryContainer.ts`/
+    `RepositoryProvider.tsx` eux-mêmes.
+- **Validé en local** : `npx tsc -b` 0 erreur, `npm run lint` 0 erreur (5
+  avertissements pré-existants, inchangé), `npm test` **615/615** (+10 tests :
+  résolution `backend.ts`, construction/fail-closed/lifecycle du conteneur
+  Supabase, non-construction sur route d'auth vs construction avec le vrai
+  `workshopId` sur route protégée), SQL **69/69** (inchangé, aucune migration
+  touchée), `scripts/test-phase-8a-media.mjs` **14/14**,
+  `scripts/test-phase-8b-catalog.mjs` **21/21**,
+  `scripts/test-phase-11a-payments.mjs` **21/21** (aucune régression). Build
+  réel `VITE_BACKEND=supabase` contre la stack Supabase **locale**
+  (`VITE_SUPABASE_URL`/`VITE_SUPABASE_PUBLISHABLE_KEY` locaux uniquement,
+  jamais la clé secrète) : `npm run build` **PASS**, scan du bundle généré
+  pour `sb_secret_`/`service_role`/clé secrète : **0 occurrence**. Aucune
+  migration, aucun accès distant, aucune configuration Vercel, aucune PR pour
+  ce tour. **Statut : « Gate implémenté localement — Preview E2E distant NON
+  exécuté, aucune activation Vercel »**.
+
+---
+
 ### Phase 11 — Paiements du client au tailleur (UX complète)
 > Le sous-ensemble minimal nécessaire à des paiements cloud honnêtes est livré
 > en **Phase 11A** (ci-dessus), exécutée avant le Gate backend et avant 6B.

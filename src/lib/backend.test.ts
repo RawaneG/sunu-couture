@@ -14,27 +14,23 @@ describe("resolveBackend — sélection du backend au build", () => {
     expect(resolveBackend("local")).toBe("local");
   });
 
-  it("lève une BackendConfigurationError claire pour 'supabase' — jamais un faux Repository silencieux", () => {
-    expect(() => resolveBackend("supabase")).toThrow(BackendConfigurationError);
+  it("choisit 'supabase' quand la variable vaut explicitement 'supabase' (gate atteint)", () => {
+    expect(resolveBackend("supabase")).toBe("supabase");
   });
 
-  it("le message reste factuellement à jour (revue post-7A, §12) : infrastructure 7A disponible, activation interdite avant le gate", () => {
+  it("lève une BackendConfigurationError claire pour toute valeur non reconnue", () => {
+    expect(() => resolveBackend("mongodb")).toThrow(BackendConfigurationError);
+  });
+
+  it("le message d'erreur nomme les valeurs reconnues ('local' et 'supabase')", () => {
     try {
-      resolveBackend("supabase");
-      expect.unreachable("resolveBackend('supabase') aurait dû lever");
+      resolveBackend("mongodb");
+      expect.unreachable("resolveBackend('mongodb') aurait dû lever");
     } catch (error) {
       expect(error).toBeInstanceOf(BackendConfigurationError);
       const message = (error as Error).message;
-      // Ne doit plus prétendre qu'aucune implémentation n'existe (faux depuis
-      // la Phase 7A) — doit au contraire nommer le gate réel restant.
-      expect(message).not.toMatch(/pas encore implémenté/);
-      expect(message).toMatch(/infrastructure cloud Phase 7A/);
-      expect(message).toMatch(/interdite avant le/);
-      expect(message).toMatch(/7B \+ 8A \+ 8B \+ 11A/);
+      expect(message).toMatch(/"local"/);
+      expect(message).toMatch(/"supabase"/);
     }
-  });
-
-  it("lève une BackendConfigurationError pour toute valeur non reconnue", () => {
-    expect(() => resolveBackend("mongodb")).toThrow(BackendConfigurationError);
   });
 });

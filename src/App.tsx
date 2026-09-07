@@ -1,4 +1,4 @@
-import { useEffect } from "react";
+import { useEffect, useMemo, type ReactNode } from "react";
 import { Routes, Route, Navigate, Outlet, useLocation, useParams } from "react-router-dom";
 import AppShell from "./components/layout/AppShell";
 import AuthLayout from "./components/layout/AuthLayout";
@@ -21,6 +21,16 @@ import WorkshopName from "./pages/auth/WorkshopName";
 import { AuthProvider } from "./lib/auth/AuthProvider";
 import RequireAuth from "./lib/auth/RequireAuth";
 import { RepositoryProvider } from "./repositories/RepositoryProvider";
+// Seul endroit de ce fichier — et de toute l'application — qui importe le
+// client Supabase concret ET `createSupabaseGateway()` en dehors de
+// `src/lib/supabase/client.ts`/`gateway.ts` eux-mêmes (corr. Gate §6/§8/§9) :
+// `RepositoryProvider`/`RepositoryContainer.ts` ne le font jamais, pour
+// rester testables sans `VITE_SUPABASE_*`. Sûr ici : `AuthProvider` (toujours
+// monté, plus haut) importe déjà transitivement ce même client pour l'auth
+// téléphone/OTP (corr. R, Phase 7A §12) — aucune nouvelle exigence
+// d'environnement n'est introduite par cet import.
+import { supabase } from "./lib/supabase/client";
+import { createSupabaseGateway } from "./repositories/supabase/gateway";
 
 function ScrollToTop() {
   const { pathname } = useLocation();
@@ -46,16 +56,39 @@ function AuthRoute() {
   );
 }
 
+// Construit le gateway Supabase UNE fois pour la partie protégée de l'arbre
+// (corr. Gate §9) — jamais avant : ce composant n'est rendu QUE comme enfant
+// de `RequireAuth`, donc seulement une fois session + atelier déjà garantis
+// par celui-ci (corr. Gate §10/§11). `RepositoryProvider` retrouve lui-même
+// `workshop.id` via le contexte Auth (`useOptionalAuth()`, déjà résolu à ce
+// stade) — seul `supabaseGateway` doit transiter explicitement, car
+// `RepositoryProvider` ne doit jamais importer `createSupabaseGateway()`/le
+// client concret lui-même (corr. Gate §6). Backend `local` : ce gateway est
+// construit mais jamais utilisé (`RepositoryContainer` l'ignore).
+function ProtectedRepositoryProvider({ children }: { children: ReactNode }) {
+  const gateway = useMemo(() => createSupabaseGateway(supabase), []);
+  return <RepositoryProvider supabaseGateway={gateway}>{children}</RepositoryProvider>;
+}
+
 // Toutes les routes métier passent par RequireAuth : sans session -> /connexion,
 // session sans atelier -> /connexion/atelier, sinon accès direct. RequireAuth
 // est une garde D'INTERFACE uniquement — elle ne remplace pas les GRANT et
 // politiques RLS de la Phase 4, seule véritable barrière côté données.
+//
+// `RepositoryProvider` vit ICI (sous `RequireAuth`), PAS au sommet de l'arbre
+// (corr. Gate §10/§11) : au démarrage, avant restauration de session,
+// `workshop` est `null` — un conteneur cloud construit à ce moment-là
+// échouerait (ou pire, utiliserait un atelier faux). Les routes d'auth
+// (/connexion, /connexion/code, /connexion/atelier) ne construisent donc
+// aucun Repository métier.
 function ProtectedAppRoute() {
   return (
     <RequireAuth>
-      <AppShell>
-        <Outlet />
-      </AppShell>
+      <ProtectedRepositoryProvider>
+        <AppShell>
+          <Outlet />
+        </AppShell>
+      </ProtectedRepositoryProvider>
     </RequireAuth>
   );
 }
@@ -63,41 +96,39 @@ function ProtectedAppRoute() {
 export default function App() {
   return (
     <AuthProvider>
-      <RepositoryProvider>
-        <ScrollToTop />
-        <Routes>
-          <Route element={<AuthRoute />}>
-            <Route path="/connexion" element={<PhoneEntry />} />
-            <Route path="/connexion/code" element={<OtpVerify />} />
-            <Route path="/connexion/atelier" element={<WorkshopName />} />
-          </Route>
+      <ScrollToTop />
+      <Routes>
+        <Route element={<AuthRoute />}>
+          <Route path="/connexion" element={<PhoneEntry />} />
+          <Route path="/connexion/code" element={<OtpVerify />} />
+          <Route path="/connexion/atelier" element={<WorkshopName />} />
+        </Route>
 
-          <Route element={<ProtectedAppRoute />}>
-            <Route path="/" element={<CarnetList />} />
-            <Route path="/carnet" element={<Navigate to="/" replace />} />
-            <Route path="/carnet/nouvelle" element={<FicheNew />} />
-            <Route path="/carnet/:id" element={<FicheDetail />} />
-            <Route path="/commandes/nouvelle" element={<FicheNew />} />
-            <Route path="/catalogue/nouveau" element={<ModeleNew />} />
-            <Route path="/catalogue/:id" element={<ModeleDetail />} />
-            <Route path="/catalogue" element={<Catalogue />} />
-            <Route path="/commandes" element={<OrdersLayout />}>
-              <Route index element={<OrdersEmptyState />} />
-              <Route path=":id" element={<OrderToFicheRedirect />} />
-            </Route>
-            {/* Phase 6A — outil de sauvegarde/prévisualisation avant migration cloud
-                (docs/refonte/02-PLAN-MIGRATION.md §5). Pas d'entrée dans le BottomNav
-                (4 icônes, usage quotidien) — c'est un outil ponctuel du porteur, pas
-                un écran que le tailleur visite au jour le jour. */}
-            <Route path="/sauvegarde" element={<LegacySauvegarde />} />
-            <Route path="/clients/nouveau" element={<ClientNew />} />
-            <Route path="/clients" element={<ClientsLayout />}>
-              <Route index element={<ClientsEmptyState />} />
-              <Route path=":id" element={<ClientDetail />} />
-            </Route>
+        <Route element={<ProtectedAppRoute />}>
+          <Route path="/" element={<CarnetList />} />
+          <Route path="/carnet" element={<Navigate to="/" replace />} />
+          <Route path="/carnet/nouvelle" element={<FicheNew />} />
+          <Route path="/carnet/:id" element={<FicheDetail />} />
+          <Route path="/commandes/nouvelle" element={<FicheNew />} />
+          <Route path="/catalogue/nouveau" element={<ModeleNew />} />
+          <Route path="/catalogue/:id" element={<ModeleDetail />} />
+          <Route path="/catalogue" element={<Catalogue />} />
+          <Route path="/commandes" element={<OrdersLayout />}>
+            <Route index element={<OrdersEmptyState />} />
+            <Route path=":id" element={<OrderToFicheRedirect />} />
           </Route>
-        </Routes>
-      </RepositoryProvider>
+          {/* Phase 6A — outil de sauvegarde/prévisualisation avant migration cloud
+              (docs/refonte/02-PLAN-MIGRATION.md §5). Pas d'entrée dans le BottomNav
+              (4 icônes, usage quotidien) — c'est un outil ponctuel du porteur, pas
+              un écran que le tailleur visite au jour le jour. */}
+          <Route path="/sauvegarde" element={<LegacySauvegarde />} />
+          <Route path="/clients/nouveau" element={<ClientNew />} />
+          <Route path="/clients" element={<ClientsLayout />}>
+            <Route index element={<ClientsEmptyState />} />
+            <Route path=":id" element={<ClientDetail />} />
+          </Route>
+        </Route>
+      </Routes>
     </AuthProvider>
   );
 }

@@ -8,7 +8,7 @@ import userEvent from "@testing-library/user-event";
 import { MemoryRouter } from "react-router-dom";
 import App from "./App";
 
-const { mockGetSession, mockVerifyPhoneOtp, mockSendPhoneOtp, mockSubscribe, mockCallProvisionWorkshop, authState } = vi.hoisted(() => {
+const { mockGetSession, mockVerifyPhoneOtp, mockSendPhoneOtp, mockSubscribe, mockCallProvisionWorkshop, mockCreateRepositoryContainer, authState } = vi.hoisted(() => {
   const state: { session: { userId: string; phoneE164: string | null; expiresAt: number } | null; listeners: Array<(s: unknown) => void> } = {
     session: null,
     listeners: [],
@@ -33,6 +33,7 @@ const { mockGetSession, mockVerifyPhoneOtp, mockSendPhoneOtp, mockSubscribe, moc
     }),
     mockSendPhoneOtp: vi.fn(async () => ({ error: null })),
     mockCallProvisionWorkshop: vi.fn(),
+    mockCreateRepositoryContainer: vi.fn(),
   };
 });
 
@@ -57,6 +58,30 @@ vi.mock("./lib/auth/SupabasePhoneOtpAuthRepository", () => ({
 vi.mock("./lib/workshop/provisionWorkshop", () => ({
   callProvisionWorkshop: (...args: unknown[]) => mockCallProvisionWorkshop(...args),
 }));
+
+// `App.tsx` construit désormais un `SupabaseGateway` (corr. Gate §9) pour la
+// partie protégée — jamais utilisé ici puisque `VITE_BACKEND` reste "local"
+// par défaut dans ces tests (aucune méthode du gateway n'est appelée par le
+// backend local). Un stub évite d'exiger `VITE_SUPABASE_URL`/
+// `VITE_SUPABASE_PUBLISHABLE_KEY` au chargement du module réel.
+vi.mock("./lib/supabase/client", () => ({ supabase: {} }));
+
+// Espionne `createRepositoryContainer()` (corr. Gate §23/§24) — sans changer
+// son comportement réel (délègue à l'implémentation authentique) — pour
+// prouver structurellement que le déplacement de `RepositoryProvider` sous
+// `RequireAuth` règle le problème de bootstrap : aucun appel tant que
+// session/atelier ne sont pas résolus, un appel avec le VRAI workshopId une
+// fois la route protégée atteinte.
+vi.mock("./repositories/RepositoryContainer", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("./repositories/RepositoryContainer")>();
+  return {
+    ...actual,
+    createRepositoryContainer: (options?: Parameters<typeof actual.createRepositoryContainer>[0]) => {
+      mockCreateRepositoryContainer(options);
+      return actual.createRepositoryContainer(options);
+    },
+  };
+});
 
 function renderAppAt(path: string) {
   return render(
@@ -132,6 +157,20 @@ describe("Protection des routes métier (RequireAuth branché)", () => {
       }
       unmount();
     }
+  });
+
+  it("route d'auth (/connexion, session/atelier absents) -> aucun conteneur de repositories métier construit (corr. Gate §23)", async () => {
+    renderAppAt("/connexion");
+    await waitFor(() => expect(screen.getByText(/ton numéro de téléphone/i)).toBeInTheDocument());
+    expect(mockCreateRepositoryContainer).not.toHaveBeenCalled();
+  });
+
+  it("route protégée avec session + atelier résolu -> RepositoryProvider monté, conteneur construit avec le VRAI workshopId (corr. Gate §24)", async () => {
+    authState.session = { userId: "u-with-ws2", phoneE164: "+221770000004", expiresAt: 9999999999 };
+    mockCallProvisionWorkshop.mockResolvedValue({ kind: "workshop", workshop: { id: "w1", name: "Atelier X" } });
+    renderAppAt("/clients/nouveau");
+    await waitFor(() => expect(screen.getByPlaceholderText("Nom du client")).toBeInTheDocument());
+    expect(mockCreateRepositoryContainer).toHaveBeenCalledWith(expect.objectContaining({ workshopId: "w1" }));
   });
 
   it("aucun champ ni bouton masqué (aria-hidden) sur l'écran de connexion", async () => {
