@@ -32,6 +32,20 @@
 // Chaque opération est idempotente côté serveur (PostgreSQL fait autorité,
 // jamais `migrationMap` IndexedDB côté 6B) : la même opération rejouée
 // renvoie la même ligne, sans doublon.
+//
+// CORRECTIFS revue PR #20 (candidate jamais mergée/déployée) :
+//   §1 `carnet.status` (active/archived, allow-list stricte) — fidélité du
+//      mapping canonique Phase 6 (carnet legacy le plus élevé = active, les
+//      précédents = archived) ;
+//   §2 `fiche.createdAt`/`fiche.settledAt` (ISO-8601, facultatifs) — préserve
+//      l'historique temporel legacy (`f.createdAt`/`f.soldeLe`) ;
+//   §3 `fiche_media.metadata`/`modele_media.metadata` transmise TELLE QUELLE
+//      au RPC (D7 : duration_seconds, dimensions, codec, checksum…), jamais
+//      remplacée par `{}` ;
+//   §4 validation stricte des nombres (entiers finis, jamais NaN/Infinity)
+//      et des dates (YYYY-MM-DD / ISO-8601) AVANT tout RPC — un payload
+//      invalide reste un 400 contrôlé, jamais un 500 issu d'un cast
+//      PostgreSQL imprévisible.
 import "@supabase/functions-js/edge-runtime.d.ts";
 import { createClient } from "@supabase/supabase-js";
 import { corsHeaders as sdkCorsHeaders } from "@supabase/supabase-js/cors";
@@ -152,8 +166,42 @@ function isPlainObject(value: unknown): value is Record<string, unknown> {
 function isOptionalPlainObject(value: unknown): value is Record<string, unknown> | undefined {
   return value === undefined || isPlainObject(value);
 }
+// CORRECTIF revue PR #20 (§4) : un `typeof value === "number"` seul laisse
+// passer NaN/Infinity/-Infinity et des décimaux (12.5) jusqu'au RPC, où un
+// cast PostgreSQL imprévisible peut produire un 500 au lieu d'un 400 — voir
+// `isFiniteInt`/`isIntAtLeast` ci-dessous, utilisés pour TOUT entier reçu du
+// corps de requête (numbers, ordinal, position, montants, quantité).
+function isFiniteInt(value: unknown): value is number {
+  return typeof value === "number" && Number.isFinite(value) && Number.isInteger(value);
+}
+function isIntAtLeast(value: unknown, min: number): value is number {
+  return isFiniteInt(value) && value >= min;
+}
 function isPositiveInt(value: unknown): value is number {
-  return typeof value === "number" && Number.isInteger(value) && value >= 1;
+  return isIntAtLeast(value, 1);
+}
+
+// Dates/horodatages — validés STRICTEMENT avant tout RPC (jamais une simple
+// chaîne non vérifiée) : un format inattendu doit renvoyer un 400 contrôlé
+// ICI, jamais un cast PostgreSQL imprévisible côté serveur (corr. PR #20 §4).
+const DATE_ONLY_RE = /^\d{4}-\d{2}-\d{2}$/;
+function isValidDateOnly(value: unknown): value is string {
+  if (typeof value !== "string" || !DATE_ONLY_RE.test(value)) return false;
+  const d = new Date(`${value}T00:00:00Z`);
+  if (Number.isNaN(d.getTime())) return false;
+  // Rejette les dates calendaires invalides (ex. 2024-02-30) que `Date`
+  // normalise silencieusement au lieu de lever une erreur — round-trip strict.
+  return d.toISOString().slice(0, 10) === value;
+}
+function isOptionalDateOnly(value: unknown): value is string | null | undefined {
+  return value === undefined || value === null || isValidDateOnly(value);
+}
+const ISO_TIMESTAMP_RE = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d{1,3})?(Z|[+-]\d{2}:\d{2})$/;
+function isValidIsoTimestamp(value: unknown): value is string {
+  return typeof value === "string" && ISO_TIMESTAMP_RE.test(value) && !Number.isNaN(Date.parse(value));
+}
+function isOptionalIsoTimestamp(value: unknown): value is string | null | undefined {
+  return value === undefined || value === null || isValidIsoTimestamp(value);
 }
 
 // Chemins Storage déterministes (Phase 8A/8B, mêmes conventions que
@@ -173,6 +221,12 @@ function buildLegacyModeleMediaPath(workshopId: string, modeleId: string, kind: 
 
 const FICHE_MEDIA_KINDS = new Set(["fabric_photo", "voice_note", "signature"]);
 const MODELE_MEDIA_KINDS = new Set(["photo", "patron"]);
+// CORRECTIF revue PR #20 (§1) : le mapping canonique Phase 6 exige que SEUL
+// le carnet legacy le plus élevé soit `active`, tous les précédents
+// `archived` — jamais `full` (calculé par l'app normale, sans rapport avec
+// l'import). Allow-list stricte, jamais une valeur arbitraire transmise telle
+// quelle au RPC (qui la revalide de toute façon — défense en profondeur).
+const CARNET_IMPORT_STATUSES = new Set(["active", "archived"]);
 
 function decodeBase64(base64: string): Uint8Array {
   const binary = atob(base64);
@@ -379,13 +433,19 @@ Deno.serve(async (req: Request) => {
   if (opType === "carnet") {
     const number = operation.number;
     const nextNumber = operation.nextNumber;
-    if (!isPositiveInt(number) || !isPositiveInt(nextNumber)) {
+    const status = operation.status;
+    if (
+      !isPositiveInt(number) ||
+      !isPositiveInt(nextNumber) ||
+      (status !== undefined && (typeof status !== "string" || !CARNET_IMPORT_STATUSES.has(status)))
+    ) {
       return jsonResponse(400, { error: "invalid_request", message: "Opération carnet invalide." }, decision);
     }
     const { data, error } = (await adminClient.rpc("import_legacy_carnet_api", {
       p_workshop_id: workshopId,
       p_number: number,
       p_next_number: nextNumber,
+      p_status: status ?? "active",
     })) as RpcResult;
     if (error) return mapRpcError(error, decision);
     logSafe("import_legacy_data.success", { type: "carnet" });
@@ -407,6 +467,8 @@ Deno.serve(async (req: Request) => {
     const dueDate = operation.dueDate;
     const totalPrice = operation.totalPrice;
     const metadata = operation.metadata;
+    const createdAt = operation.createdAt;
+    const settledAt = operation.settledAt;
     if (
       !isPlausibleUuid(carnetId) ||
       (clientId !== null && clientId !== undefined && !isPlausibleUuid(clientId)) ||
@@ -418,9 +480,11 @@ Deno.serve(async (req: Request) => {
       !isOptionalString(description, MAX_TEXT_LENGTH) ||
       !isOptionalString(fabricNotes, MAX_TEXT_LENGTH) ||
       (quantity !== undefined && !isPositiveInt(quantity)) ||
-      !isOptionalString(dueDate, 20) ||
-      (totalPrice !== undefined && typeof totalPrice !== "number") ||
-      !isOptionalPlainObject(metadata)
+      !isOptionalDateOnly(dueDate) ||
+      (totalPrice !== undefined && !isIntAtLeast(totalPrice, 0)) ||
+      !isOptionalPlainObject(metadata) ||
+      !isOptionalIsoTimestamp(createdAt) ||
+      !isOptionalIsoTimestamp(settledAt)
     ) {
       return jsonResponse(400, { error: "invalid_request", message: "Opération fiche invalide." }, decision);
     }
@@ -451,6 +515,8 @@ Deno.serve(async (req: Request) => {
       p_due_date: dueDate ?? null,
       p_total_price: totalPrice ?? 0,
       p_metadata: metadata ?? {},
+      p_created_at: createdAt ?? null,
+      p_settled_at: settledAt ?? null,
     })) as RpcResult;
     if (error) return mapRpcError(error, decision);
     logSafe("import_legacy_data.success", { type: "fiche" });
@@ -462,7 +528,7 @@ Deno.serve(async (req: Request) => {
     const ficheId = operation.ficheId;
     const amount = operation.amount;
     const recordedAt = operation.recordedAt;
-    if (!isPlausibleUuid(ficheId) || typeof amount !== "number" || amount <= 0 || !isOptionalString(recordedAt, 40)) {
+    if (!isPlausibleUuid(ficheId) || !isPositiveInt(amount) || !isOptionalIsoTimestamp(recordedAt)) {
       return jsonResponse(400, { error: "invalid_request", message: "Opération paiement invalide." }, decision);
     }
     const ficheOk = await belongsToWorkshop("fiches", ficheId);
@@ -506,6 +572,7 @@ Deno.serve(async (req: Request) => {
     const ordinal = operation.ordinal;
     const mimeType = operation.mimeType;
     const contentBase64 = operation.contentBase64;
+    const metadata = operation.metadata;
     if (
       !isPlausibleUuid(ficheId) ||
       typeof kind !== "string" ||
@@ -514,7 +581,8 @@ Deno.serve(async (req: Request) => {
       !isNonEmptyString(mimeType, 100) ||
       typeof contentBase64 !== "string" ||
       contentBase64.length === 0 ||
-      contentBase64.length > MAX_BASE64_LENGTH
+      contentBase64.length > MAX_BASE64_LENGTH ||
+      !isOptionalPlainObject(metadata)
     ) {
       return jsonResponse(400, { error: "invalid_request", message: "Opération média fiche invalide." }, decision);
     }
@@ -540,6 +608,12 @@ Deno.serve(async (req: Request) => {
       return jsonResponse(500, { error: "internal_error", message: "Échec de l'envoi du média. Réessaie plus tard." }, decision);
     }
 
+    // CORRECTIF revue PR #20 (§3) : la `metadata` legacy sûre (durée, dimensions,
+    // codec, checksum — D7) doit atteindre `media_assets.metadata`, jamais être
+    // remplacée par `{}` — transmise TELLE QUELLE, jamais transformée. Elle ne
+    // peut jamais écraser workshop_id/fiche_id/type/storage_path : ces champs
+    // restent des colonnes structurées issues des paramètres validés
+    // ci-dessus, jamais de `metadata` elle-même.
     const { data, error } = (await adminClient.rpc("import_legacy_media_asset_api", {
       p_workshop_id: workshopId,
       p_fiche_id: ficheId,
@@ -547,7 +621,7 @@ Deno.serve(async (req: Request) => {
       p_storage_path: path,
       p_mime_type: mimeType,
       p_size_bytes: bytes.byteLength,
-      p_metadata: {},
+      p_metadata: metadata ?? {},
     })) as RpcResult;
     if (error) return mapRpcError(error, decision);
     logSafe("import_legacy_data.success", { type: "fiche_media" });
@@ -562,6 +636,7 @@ Deno.serve(async (req: Request) => {
     const mimeType = operation.mimeType;
     const contentBase64 = operation.contentBase64;
     const position = operation.position;
+    const metadata = operation.metadata;
     if (
       !isPlausibleUuid(modeleId) ||
       typeof kind !== "string" ||
@@ -571,7 +646,8 @@ Deno.serve(async (req: Request) => {
       typeof contentBase64 !== "string" ||
       contentBase64.length === 0 ||
       contentBase64.length > MAX_BASE64_LENGTH ||
-      (position !== undefined && typeof position !== "number")
+      (position !== undefined && !isIntAtLeast(position, 0)) ||
+      !isOptionalPlainObject(metadata)
     ) {
       return jsonResponse(400, { error: "invalid_request", message: "Opération média modèle invalide." }, decision);
     }
@@ -601,7 +677,7 @@ Deno.serve(async (req: Request) => {
       p_mime_type: mimeType,
       p_size_bytes: bytes.byteLength,
       p_position: position ?? 0,
-      p_metadata: {},
+      p_metadata: metadata ?? {},
     })) as RpcResult;
     if (error) return mapRpcError(error, decision);
     logSafe("import_legacy_data.success", { type: "modele_media" });

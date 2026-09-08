@@ -2344,15 +2344,15 @@ declare
   v_bad text;
   v_fns constant text[] := array[
     'app_hidden.import_legacy_client(uuid, text, text, text, text, text, text, jsonb)',
-    'app_hidden.import_legacy_carnet(uuid, int, int)',
-    'app_hidden.import_legacy_fiche(uuid, uuid, uuid, text, int, text, jsonb, text, text, text, int, date, int, jsonb)',
+    'app_hidden.import_legacy_carnet(uuid, int, int, public.carnet_status)',
+    'app_hidden.import_legacy_fiche(uuid, uuid, uuid, text, int, text, jsonb, text, text, text, int, date, int, jsonb, timestamptz, timestamptz)',
     'app_hidden.import_legacy_payment(uuid, uuid, int, timestamptz)',
     'app_hidden.import_legacy_modele(uuid, text, text, jsonb)',
     'app_hidden.import_legacy_media_asset(uuid, uuid, text, text, text, bigint, jsonb)',
     'app_hidden.import_legacy_modele_media(uuid, uuid, text, text, text, bigint, int, jsonb)',
     'public.import_legacy_client_api(uuid, text, text, text, text, text, text, jsonb)',
-    'public.import_legacy_carnet_api(uuid, int, int)',
-    'public.import_legacy_fiche_api(uuid, uuid, uuid, text, int, text, jsonb, text, text, text, int, date, int, jsonb)',
+    'public.import_legacy_carnet_api(uuid, int, int, public.carnet_status)',
+    'public.import_legacy_fiche_api(uuid, uuid, uuid, text, int, text, jsonb, text, text, text, int, date, int, jsonb, timestamptz, timestamptz)',
     'public.import_legacy_payment_api(uuid, uuid, int, timestamptz)',
     'public.import_legacy_modele_api(uuid, text, text, jsonb)',
     'public.import_legacy_media_asset_api(uuid, uuid, text, text, text, bigint, jsonb)',
@@ -2751,12 +2751,182 @@ begin
 end;
 $$;
 
+-- ═══════════════════════════════════════════════════════════════════════════
+-- Revue PR #20 — corrections de fidélité (§1/§2/§3 du plan de correction).
+-- La validation numérique/date stricte (§4) est un durcissement de l'Edge
+-- Function elle-même (aucune signature SQL concernée) — prouvée dans
+-- scripts/test-import-legacy-data.mjs, pas ici.
+-- ═══════════════════════════════════════════════════════════════════════════
+
+-- ── T85 — carnet : statut historique explicite (mapping canonique Phase 6 :
+-- le carnet legacy le plus élevé = active, tous les précédents = archived),
+-- valeur arbitraire refusée, idempotence préservant le statut au retry ──────
+do $$
+declare
+  v_carnet1 public.carnets;
+  v_carnet3 public.carnets;
+  v_carnet1_retry public.carnets;
+  v_rejected boolean := false;
+begin
+  set local role service_role;
+  select * into v_carnet1 from app_hidden.import_legacy_carnet('60600000-0000-0000-0000-000000000b01', 101, 102, 'archived');
+  select * into v_carnet3 from app_hidden.import_legacy_carnet('60600000-0000-0000-0000-000000000b01', 103, 50, 'active');
+  select * into v_carnet1_retry from app_hidden.import_legacy_carnet('60600000-0000-0000-0000-000000000b01', 101, 102, 'archived');
+  begin
+    perform app_hidden.import_legacy_carnet('60600000-0000-0000-0000-000000000b01', 104, 10, 'full');
+  exception when others then v_rejected := true;
+  end;
+  reset role;
+
+  if v_carnet1.status <> 'archived' then
+    raise exception 'T85 FAIL: carnet 101 devrait être archived (obtenu %)', v_carnet1.status;
+  end if;
+  if v_carnet3.status <> 'active' then
+    raise exception 'T85 FAIL: carnet 103 (le plus élevé) devrait être active (obtenu %)', v_carnet3.status;
+  end if;
+  if v_carnet1_retry.id <> v_carnet1.id or v_carnet1_retry.status <> 'archived' then
+    raise exception 'T85 FAIL: retry carnet archived -> id/status altéré (pas idempotent)';
+  end if;
+  if not v_rejected then
+    raise exception 'T85 FAIL: status=''full'' aurait dû être refusé (valeur arbitraire non autorisée pour l''import)';
+  end if;
+  raise notice 'T85 OK — carnet : statut historique explicite (archived pour les précédents, active pour le plus élevé), ''full'' refusé, idempotent au retry';
+end;
+$$;
+
+-- ── T86 — fiche : `created_at`/`settled_at` legacy préservés EXACTEMENT
+-- (mapping f.createdAt -> created_at, f.soldeLe -> settled_at), `updated_at`
+-- toujours `now()` (comportement cible inchangé), retry sans altération,
+-- `settled_at` NULL accepté ────────────────────────────────────────────────
+do $$
+declare
+  v_client public.clients;
+  v_carnet public.carnets;
+  v_fiche public.fiches;
+  v_fiche_retry public.fiches;
+  v_fiche_open public.fiches;
+  v_created_at constant timestamptz := '2024-02-03T10:20:30Z'::timestamptz;
+  v_settled_at constant timestamptz := '2024-02-08T15:00:00Z'::timestamptz;
+  v_before_insert constant timestamptz := now();
+begin
+  set local role service_role;
+  select * into v_client from app_hidden.import_legacy_client('60600000-0000-0000-0000-000000000b01', 'legacy-t86-client', 'Cliente T86');
+  select * into v_carnet from app_hidden.import_legacy_carnet('60600000-0000-0000-0000-000000000b01', 105, 3);
+  select * into v_fiche from app_hidden.import_legacy_fiche(
+    '60600000-0000-0000-0000-000000000b01', v_carnet.id, v_client.id, 'legacy-t86-fiche', 1, 'livre',
+    '{}'::jsonb, '', null, null, 1, null, 0, '{}'::jsonb, v_created_at, v_settled_at
+  );
+  select * into v_fiche_retry from app_hidden.import_legacy_fiche(
+    '60600000-0000-0000-0000-000000000b01', v_carnet.id, v_client.id, 'legacy-t86-fiche', 1, 'livre',
+    '{}'::jsonb, '', null, null, 1, null, 0, '{}'::jsonb, v_created_at, v_settled_at
+  );
+  -- `settledAt` non fourni (NULL) : accepté, jamais inventé.
+  select * into v_fiche_open from app_hidden.import_legacy_fiche(
+    '60600000-0000-0000-0000-000000000b01', v_carnet.id, v_client.id, 'legacy-t86-fiche-open', 2, 'recu'
+  );
+  reset role;
+
+  if v_fiche.created_at <> v_created_at then
+    raise exception 'T86 FAIL: created_at = % (attendu exactement %)', v_fiche.created_at, v_created_at;
+  end if;
+  if v_fiche.settled_at <> v_settled_at then
+    raise exception 'T86 FAIL: settled_at = % (attendu exactement %)', v_fiche.settled_at, v_settled_at;
+  end if;
+  if v_fiche.updated_at < v_before_insert then
+    raise exception 'T86 FAIL: updated_at devrait rester now() au moment de l''insertion, jamais la valeur legacy';
+  end if;
+  if v_fiche_retry.id <> v_fiche.id or v_fiche_retry.created_at <> v_created_at or v_fiche_retry.settled_at <> v_settled_at then
+    raise exception 'T86 FAIL: retry -> created_at/settled_at altérés (pas idempotent)';
+  end if;
+  if v_fiche_open.settled_at is not null then
+    raise exception 'T86 FAIL: settled_at aurait dû rester NULL (non fourni), jamais inventé';
+  end if;
+  if v_fiche_open.created_at < v_before_insert then
+    raise exception 'T86 FAIL: created_at absent -> devrait retomber sur now() (jamais une heuristique), pas une valeur antérieure au test';
+  end if;
+  raise notice 'T86 OK — fiche : created_at/settled_at legacy préservés exactement, updated_at reste now(), retry inchangé, settled_at NULL accepté sans invention';
+end;
+$$;
+
+-- ── T87 — médias : metadata legacy (D7 : duration_seconds, dimensions, …)
+-- préservée de bout en bout (jamais remplacée par {}), idempotente au retry,
+-- model_photo toujours inutilisé dans media_assets ─────────────────────────
+do $$
+declare
+  v_client public.clients;
+  v_carnet public.carnets;
+  v_fiche public.fiches;
+  v_modele public.modeles;
+  v_voice public.media_assets;
+  v_voice_retry public.media_assets;
+  v_photo public.modele_medias;
+  v_photo_retry public.modele_medias;
+  v_count int;
+  v_voice_path constant text := 'workshops/60600000-0000-0000-0000-000000000b01/fiches/t87-synthetic/legacy-voice_note-1';
+  v_photo_path constant text := 'workshops/60600000-0000-0000-0000-000000000b01/modeles/t87-synthetic/legacy-photo-1';
+begin
+  set local role service_role;
+  select * into v_client from app_hidden.import_legacy_client('60600000-0000-0000-0000-000000000b01', 'legacy-t87-client', 'Cliente T87');
+  select * into v_carnet from app_hidden.import_legacy_carnet('60600000-0000-0000-0000-000000000b01', 106, 2);
+  select * into v_fiche from app_hidden.import_legacy_fiche('60600000-0000-0000-0000-000000000b01', v_carnet.id, v_client.id, 'legacy-t87-fiche', 1, 'recu');
+  select * into v_modele from app_hidden.import_legacy_modele('60600000-0000-0000-0000-000000000b01', 'legacy-t87-modele', 'Ensemble T87');
+
+  select * into v_voice from app_hidden.import_legacy_media_asset(
+    '60600000-0000-0000-0000-000000000b01', v_fiche.id, 'voice_note', v_voice_path, 'audio/webm', 5000,
+    jsonb_build_object('duration_seconds', 14)
+  );
+  select * into v_voice_retry from app_hidden.import_legacy_media_asset(
+    '60600000-0000-0000-0000-000000000b01', v_fiche.id, 'voice_note', v_voice_path, 'audio/webm', 5000,
+    jsonb_build_object('duration_seconds', 14)
+  );
+
+  select * into v_photo from app_hidden.import_legacy_modele_media(
+    '60600000-0000-0000-0000-000000000b01', v_modele.id, 'photo', v_photo_path, 'image/jpeg', 9000, 0,
+    jsonb_build_object('width', 1200, 'height', 1600)
+  );
+  select * into v_photo_retry from app_hidden.import_legacy_modele_media(
+    '60600000-0000-0000-0000-000000000b01', v_modele.id, 'photo', v_photo_path, 'image/jpeg', 9000, 0,
+    jsonb_build_object('width', 1200, 'height', 1600)
+  );
+  reset role;
+
+  if (v_voice.metadata ->> 'duration_seconds')::int <> 14 then
+    raise exception 'T87 FAIL: media_assets.metadata.duration_seconds = % (attendu 14)', v_voice.metadata ->> 'duration_seconds';
+  end if;
+  if v_voice_retry.id <> v_voice.id or v_voice_retry.metadata <> v_voice.metadata then
+    raise exception 'T87 FAIL: retry média fiche -> metadata/id altérés (pas idempotent)';
+  end if;
+  select count(*) into v_count from public.media_assets where storage_path = v_voice_path;
+  if v_count <> 1 then
+    raise exception 'T87 FAIL: % ligne(s) media_assets après retry (attendu exactement 1)', v_count;
+  end if;
+
+  if (v_photo.metadata ->> 'width')::int <> 1200 or (v_photo.metadata ->> 'height')::int <> 1600 then
+    raise exception 'T87 FAIL: modele_medias.metadata width/height incorrects (obtenu %)', v_photo.metadata;
+  end if;
+  if v_photo_retry.id <> v_photo.id or v_photo_retry.metadata <> v_photo.metadata then
+    raise exception 'T87 FAIL: retry média modèle -> metadata/id altérés (pas idempotent)';
+  end if;
+  select count(*) into v_count from public.modele_medias where storage_path = v_photo_path;
+  if v_count <> 1 then
+    raise exception 'T87 FAIL: % ligne(s) modele_medias après retry (attendu exactement 1)', v_count;
+  end if;
+
+  select count(*) into v_count from public.media_assets where type = 'model_photo';
+  if v_count <> 0 then
+    raise exception 'T87 FAIL: media_assets contient une ligne type=model_photo (toujours censé rester inutilisé)';
+  end if;
+
+  raise notice 'T87 OK — metadata legacy (D7) préservée de bout en bout pour média fiche ET média modèle, idempotente au retry, model_photo toujours inutilisé';
+end;
+$$;
+
 -- Concurrence RÉELLE (2 appels HTTP simultanés -> exactement 1 ligne, même
 -- uuid) : preuve end-to-end dans scripts/test-import-legacy-data.mjs (§15,
 -- même convention que la concurrence pin_auth — T9/T10 de ce fichier
 -- restent volontairement séquentielles, la concurrence réseau réelle est
 -- prouvée par le script Node, jamais simulée ici).
 
-do $$ begin raise notice '════════  SCHÉMA PHASE 2 + WRAPPER PHASE 3A + CORRECTIFS GRANT + PHASE 4 GRANT/RLS + WRAPPER PHASE 9A + STORAGE PHASE 8A + STORAGE PHASE 8B + PIVOT AUTH PIN + THROTTLE ATOMIQUE + IMPORT LEGACY PHASE 6B0 : 84 groupes de tests OK  ════════'; end; $$;
+do $$ begin raise notice '════════  SCHÉMA PHASE 2 + WRAPPER PHASE 3A + CORRECTIFS GRANT + PHASE 4 GRANT/RLS + WRAPPER PHASE 9A + STORAGE PHASE 8A + STORAGE PHASE 8B + PIVOT AUTH PIN + THROTTLE ATOMIQUE + IMPORT LEGACY PHASE 6B0 + CORRECTIFS REVUE PR #20 : 87 groupes de tests OK  ════════'; end; $$;
 
 rollback;

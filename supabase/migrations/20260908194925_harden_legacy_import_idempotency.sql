@@ -170,11 +170,24 @@ revoke all on function app_hidden.import_legacy_client(uuid, text, text, text, t
 --    jamais incrémentalement comme `create_fiche_from_draft`). Idempotence
 --    NATURELLE via `unique(workshop_id, number)` (Phase 2, aucune migration
 --    nécessaire pour les carnets).
+--
+--    CORRECTIF revue PR #20 (§1) : `p_status` explicite — le mapping
+--    canonique Phase 6 exige que SEUL le carnet legacy le plus élevé soit
+--    `active`, tous les précédents `archived`. Défaut `'active'` conservé
+--    pour la compatibilité des appels existants (mono-carnet), mais 6B doit
+--    fournir explicitement `'archived'` pour tout carnet non courant. Aucune
+--    valeur arbitraire : seules `active`/`archived` sont acceptées ici — le
+--    3ᵉ membre de l'enum (`full`) n'a pas de sens pour un import legacy
+--    (calculé dynamiquement par l'app normale, jamais fourni à l'import) et
+--    est donc explicitement refusé. Jamais un second UPDATE après création :
+--    le statut fait partie de l'INSERT initial, dans le même chemin
+--    idempotent.
 -- ═════════════════════════════════════════════════════════════════════════════
 create or replace function app_hidden.import_legacy_carnet(
   p_workshop_id uuid,
   p_number      int,
-  p_next_number int
+  p_next_number int,
+  p_status      public.carnet_status default 'active'
 )
 returns public.carnets
 language plpgsql
@@ -193,6 +206,10 @@ begin
   if p_next_number is null or p_next_number < 1 then
     raise exception 'import_legacy_carnet: next_number invalide' using errcode = 'invalid_parameter_value';
   end if;
+  if p_status is null or p_status not in ('active', 'archived') then
+    raise exception 'import_legacy_carnet: status % invalide — attendu active/archived uniquement (jamais full, calculé par l''app normale)', p_status
+      using errcode = 'invalid_parameter_value';
+  end if;
 
   perform pg_advisory_xact_lock(hashtextextended('import_legacy_carnet:' || p_workshop_id::text || ':' || p_number::text, 42));
 
@@ -204,7 +221,7 @@ begin
   end if;
 
   insert into public.carnets (workshop_id, number, status, next_number)
-  values (p_workshop_id, p_number, 'active', p_next_number)
+  values (p_workshop_id, p_number, p_status, p_next_number)
   on conflict (workshop_id, number) do nothing
   returning * into v_carnet;
 
@@ -217,7 +234,7 @@ begin
   return v_carnet;
 end;
 $$;
-revoke all on function app_hidden.import_legacy_carnet(uuid, int, int) from public;
+revoke all on function app_hidden.import_legacy_carnet(uuid, int, int, public.carnet_status) from public;
 
 -- ═════════════════════════════════════════════════════════════════════════════
 -- 10. app_hidden.import_legacy_fiche — préserve le `number` legacy EXACT,
@@ -226,6 +243,20 @@ revoke all on function app_hidden.import_legacy_carnet(uuid, int, int) from publ
 --     `create_fiche_from_draft` (contrainte `fiches_page_slot_coherent`).
 --     Mappe les statuts app legacy → enum cible (décision D8). Idempotente
 --     par (workshop_id, legacy_id) — voir index §2 ci-dessus.
+--
+--     CORRECTIF revue PR #20 (§2) : `p_created_at`/`p_settled_at` explicites
+--     — le mapping canonique Phase 6 est `f.createdAt -> created_at` et
+--     `f.soldeLe -> settled_at`, perdus sans ces paramètres. Comportement :
+--     `created_at` = valeur legacy fournie, sinon `now()` UNIQUEMENT si
+--     réellement absente (jamais une heuristique) ; `settled_at` = valeur
+--     legacy fournie ou NULL. `updated_at` continue de ne recevoir AUCUNE
+--     valeur explicite ici : `trg_fiches_updated_at` ne se déclenche que sur
+--     UPDATE (jamais INSERT — vérifié dans
+--     20260829120400_create_functions_and_triggers.sql), donc le défaut de
+--     colonne `now()` s'applique à l'INSERT, exactement le comportement
+--     cible. Ajoutés en DERNIÈRE position (après p_metadata) pour que tout
+--     appel positionnel existant (tests, wrapper) reste valide sans
+--     modification si ces 2 valeurs ne sont pas fournies.
 -- ═════════════════════════════════════════════════════════════════════════════
 create or replace function app_hidden.import_legacy_fiche(
   p_workshop_id    uuid,
@@ -241,7 +272,9 @@ create or replace function app_hidden.import_legacy_fiche(
   p_quantity       int default 1,
   p_due_date       date default null,
   p_total_price    int default 0,
-  p_metadata       jsonb default '{}'::jsonb
+  p_metadata       jsonb default '{}'::jsonb,
+  p_created_at     timestamptz default null,
+  p_settled_at     timestamptz default null
 )
 returns public.fiches
 language plpgsql
@@ -249,11 +282,12 @@ security definer
 set search_path = ''
 as $$
 declare
-  v_fiche    public.fiches;
-  v_status   public.fiche_status;
-  v_page     int;
-  v_slot     int;
-  v_metadata jsonb;
+  v_fiche      public.fiches;
+  v_status     public.fiche_status;
+  v_page       int;
+  v_slot       int;
+  v_metadata   jsonb;
+  v_created_at timestamptz;
 begin
   if p_workshop_id is null then
     raise exception 'import_legacy_fiche: workshop requis' using errcode = 'null_value_not_allowed';
@@ -306,12 +340,15 @@ begin
   v_slot := ((p_number - 1) % 4) + 1;
 
   v_metadata := coalesce(p_metadata, '{}'::jsonb) || jsonb_build_object('legacy_id', p_legacy_id);
+  -- `created_at` : valeur legacy si fournie, `now()` UNIQUEMENT si réellement
+  -- absente (jamais une heuristique — corr. PR #20 §2).
+  v_created_at := coalesce(p_created_at, now());
 
   begin
     insert into public.fiches (
       workshop_id, carnet_id, client_id, number, page_number, slot_number,
       state, status, measurements, garment, description, fabric_notes,
-      quantity, due_date, total_price, metadata
+      quantity, due_date, total_price, metadata, created_at, settled_at
     ) values (
       p_workshop_id, p_carnet_id, p_client_id, p_number, v_page, v_slot, 'active', v_status,
       coalesce(p_measurements, '{}'::jsonb),
@@ -321,7 +358,9 @@ begin
       coalesce(p_quantity, 1),
       p_due_date,
       coalesce(p_total_price, 0),
-      v_metadata
+      v_metadata,
+      v_created_at,
+      p_settled_at
     )
     on conflict (workshop_id, (metadata ->> 'legacy_id')) where metadata ? 'legacy_id'
     do nothing
@@ -341,7 +380,7 @@ begin
   return v_fiche;
 end;
 $$;
-revoke all on function app_hidden.import_legacy_fiche(uuid, uuid, uuid, text, int, text, jsonb, text, text, text, int, date, int, jsonb) from public;
+revoke all on function app_hidden.import_legacy_fiche(uuid, uuid, uuid, text, int, text, jsonb, text, text, text, int, date, int, jsonb, timestamptz, timestamptz) from public;
 
 -- ═════════════════════════════════════════════════════════════════════════════
 -- 11. app_hidden.import_legacy_payment — décision D6. Au plus UN paiement
@@ -638,16 +677,17 @@ revoke all on function public.import_legacy_client_api(uuid, text, text, text, t
 create or replace function public.import_legacy_carnet_api(
   p_workshop_id uuid,
   p_number      int,
-  p_next_number int
+  p_next_number int,
+  p_status      public.carnet_status default 'active'
 )
 returns public.carnets
 language sql
 security invoker
 set search_path = ''
 as $$
-  select app_hidden.import_legacy_carnet(p_workshop_id, p_number, p_next_number);
+  select app_hidden.import_legacy_carnet(p_workshop_id, p_number, p_next_number, p_status);
 $$;
-revoke all on function public.import_legacy_carnet_api(uuid, int, int) from public;
+revoke all on function public.import_legacy_carnet_api(uuid, int, int, public.carnet_status) from public;
 
 create or replace function public.import_legacy_fiche_api(
   p_workshop_id    uuid,
@@ -663,16 +703,18 @@ create or replace function public.import_legacy_fiche_api(
   p_quantity       int default 1,
   p_due_date       date default null,
   p_total_price    int default 0,
-  p_metadata       jsonb default '{}'::jsonb
+  p_metadata       jsonb default '{}'::jsonb,
+  p_created_at     timestamptz default null,
+  p_settled_at     timestamptz default null
 )
 returns public.fiches
 language sql
 security invoker
 set search_path = ''
 as $$
-  select app_hidden.import_legacy_fiche(p_workshop_id, p_carnet_id, p_client_id, p_legacy_id, p_number, p_legacy_status, p_measurements, p_garment, p_description, p_fabric_notes, p_quantity, p_due_date, p_total_price, p_metadata);
+  select app_hidden.import_legacy_fiche(p_workshop_id, p_carnet_id, p_client_id, p_legacy_id, p_number, p_legacy_status, p_measurements, p_garment, p_description, p_fabric_notes, p_quantity, p_due_date, p_total_price, p_metadata, p_created_at, p_settled_at);
 $$;
-revoke all on function public.import_legacy_fiche_api(uuid, uuid, uuid, text, int, text, jsonb, text, text, text, int, date, int, jsonb) from public;
+revoke all on function public.import_legacy_fiche_api(uuid, uuid, uuid, text, int, text, jsonb, text, text, text, int, date, int, jsonb, timestamptz, timestamptz) from public;
 
 create or replace function public.import_legacy_payment_api(
   p_workshop_id uuid,
@@ -756,15 +798,15 @@ do $$
 begin
   if to_regrole('anon') is not null then
     revoke all on function app_hidden.import_legacy_client(uuid, text, text, text, text, text, text, jsonb) from anon;
-    revoke all on function app_hidden.import_legacy_carnet(uuid, int, int) from anon;
-    revoke all on function app_hidden.import_legacy_fiche(uuid, uuid, uuid, text, int, text, jsonb, text, text, text, int, date, int, jsonb) from anon;
+    revoke all on function app_hidden.import_legacy_carnet(uuid, int, int, public.carnet_status) from anon;
+    revoke all on function app_hidden.import_legacy_fiche(uuid, uuid, uuid, text, int, text, jsonb, text, text, text, int, date, int, jsonb, timestamptz, timestamptz) from anon;
     revoke all on function app_hidden.import_legacy_payment(uuid, uuid, int, timestamptz) from anon;
     revoke all on function app_hidden.import_legacy_modele(uuid, text, text, jsonb) from anon;
     revoke all on function app_hidden.import_legacy_media_asset(uuid, uuid, text, text, text, bigint, jsonb) from anon;
     revoke all on function app_hidden.import_legacy_modele_media(uuid, uuid, text, text, text, bigint, int, jsonb) from anon;
     revoke all on function public.import_legacy_client_api(uuid, text, text, text, text, text, text, jsonb) from anon;
-    revoke all on function public.import_legacy_carnet_api(uuid, int, int) from anon;
-    revoke all on function public.import_legacy_fiche_api(uuid, uuid, uuid, text, int, text, jsonb, text, text, text, int, date, int, jsonb) from anon;
+    revoke all on function public.import_legacy_carnet_api(uuid, int, int, public.carnet_status) from anon;
+    revoke all on function public.import_legacy_fiche_api(uuid, uuid, uuid, text, int, text, jsonb, text, text, text, int, date, int, jsonb, timestamptz, timestamptz) from anon;
     revoke all on function public.import_legacy_payment_api(uuid, uuid, int, timestamptz) from anon;
     revoke all on function public.import_legacy_modele_api(uuid, text, text, jsonb) from anon;
     revoke all on function public.import_legacy_media_asset_api(uuid, uuid, text, text, text, bigint, jsonb) from anon;
@@ -773,15 +815,15 @@ begin
 
   if to_regrole('authenticated') is not null then
     revoke all on function app_hidden.import_legacy_client(uuid, text, text, text, text, text, text, jsonb) from authenticated;
-    revoke all on function app_hidden.import_legacy_carnet(uuid, int, int) from authenticated;
-    revoke all on function app_hidden.import_legacy_fiche(uuid, uuid, uuid, text, int, text, jsonb, text, text, text, int, date, int, jsonb) from authenticated;
+    revoke all on function app_hidden.import_legacy_carnet(uuid, int, int, public.carnet_status) from authenticated;
+    revoke all on function app_hidden.import_legacy_fiche(uuid, uuid, uuid, text, int, text, jsonb, text, text, text, int, date, int, jsonb, timestamptz, timestamptz) from authenticated;
     revoke all on function app_hidden.import_legacy_payment(uuid, uuid, int, timestamptz) from authenticated;
     revoke all on function app_hidden.import_legacy_modele(uuid, text, text, jsonb) from authenticated;
     revoke all on function app_hidden.import_legacy_media_asset(uuid, uuid, text, text, text, bigint, jsonb) from authenticated;
     revoke all on function app_hidden.import_legacy_modele_media(uuid, uuid, text, text, text, bigint, int, jsonb) from authenticated;
     revoke all on function public.import_legacy_client_api(uuid, text, text, text, text, text, text, jsonb) from authenticated;
-    revoke all on function public.import_legacy_carnet_api(uuid, int, int) from authenticated;
-    revoke all on function public.import_legacy_fiche_api(uuid, uuid, uuid, text, int, text, jsonb, text, text, text, int, date, int, jsonb) from authenticated;
+    revoke all on function public.import_legacy_carnet_api(uuid, int, int, public.carnet_status) from authenticated;
+    revoke all on function public.import_legacy_fiche_api(uuid, uuid, uuid, text, int, text, jsonb, text, text, text, int, date, int, jsonb, timestamptz, timestamptz) from authenticated;
     revoke all on function public.import_legacy_payment_api(uuid, uuid, int, timestamptz) from authenticated;
     revoke all on function public.import_legacy_modele_api(uuid, text, text, jsonb) from authenticated;
     revoke all on function public.import_legacy_media_asset_api(uuid, uuid, text, text, text, bigint, jsonb) from authenticated;
@@ -790,15 +832,15 @@ begin
 
   if to_regrole('service_role') is not null then
     grant execute on function app_hidden.import_legacy_client(uuid, text, text, text, text, text, text, jsonb) to service_role;
-    grant execute on function app_hidden.import_legacy_carnet(uuid, int, int) to service_role;
-    grant execute on function app_hidden.import_legacy_fiche(uuid, uuid, uuid, text, int, text, jsonb, text, text, text, int, date, int, jsonb) to service_role;
+    grant execute on function app_hidden.import_legacy_carnet(uuid, int, int, public.carnet_status) to service_role;
+    grant execute on function app_hidden.import_legacy_fiche(uuid, uuid, uuid, text, int, text, jsonb, text, text, text, int, date, int, jsonb, timestamptz, timestamptz) to service_role;
     grant execute on function app_hidden.import_legacy_payment(uuid, uuid, int, timestamptz) to service_role;
     grant execute on function app_hidden.import_legacy_modele(uuid, text, text, jsonb) to service_role;
     grant execute on function app_hidden.import_legacy_media_asset(uuid, uuid, text, text, text, bigint, jsonb) to service_role;
     grant execute on function app_hidden.import_legacy_modele_media(uuid, uuid, text, text, text, bigint, int, jsonb) to service_role;
     grant execute on function public.import_legacy_client_api(uuid, text, text, text, text, text, text, jsonb) to service_role;
-    grant execute on function public.import_legacy_carnet_api(uuid, int, int) to service_role;
-    grant execute on function public.import_legacy_fiche_api(uuid, uuid, uuid, text, int, text, jsonb, text, text, text, int, date, int, jsonb) to service_role;
+    grant execute on function public.import_legacy_carnet_api(uuid, int, int, public.carnet_status) to service_role;
+    grant execute on function public.import_legacy_fiche_api(uuid, uuid, uuid, text, int, text, jsonb, text, text, text, int, date, int, jsonb, timestamptz, timestamptz) to service_role;
     grant execute on function public.import_legacy_payment_api(uuid, uuid, int, timestamptz) to service_role;
     grant execute on function public.import_legacy_modele_api(uuid, text, text, jsonb) to service_role;
     grant execute on function public.import_legacy_media_asset_api(uuid, uuid, text, text, text, bigint, jsonb) to service_role;

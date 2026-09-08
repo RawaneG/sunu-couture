@@ -3,16 +3,16 @@ drop function if exists public.import_legacy_modele_media_api(uuid, uuid, text, 
 drop function if exists public.import_legacy_media_asset_api(uuid, uuid, text, text, text, bigint, jsonb);
 drop function if exists public.import_legacy_modele_api(uuid, text, text, jsonb);
 drop function if exists public.import_legacy_payment_api(uuid, uuid, int, timestamptz);
-drop function if exists public.import_legacy_fiche_api(uuid, uuid, uuid, text, int, text, jsonb, text, text, text, int, date, int, jsonb);
-drop function if exists public.import_legacy_carnet_api(uuid, int, int);
+drop function if exists public.import_legacy_fiche_api(uuid, uuid, uuid, text, int, text, jsonb, text, text, text, int, date, int, jsonb, timestamptz, timestamptz);
+drop function if exists public.import_legacy_carnet_api(uuid, int, int, public.carnet_status);
 drop function if exists public.import_legacy_client_api(uuid, text, text, text, text, text, text, jsonb);
 
 drop function if exists app_hidden.import_legacy_modele_media(uuid, uuid, text, text, text, bigint, int, jsonb);
 drop function if exists app_hidden.import_legacy_media_asset(uuid, uuid, text, text, text, bigint, jsonb);
 drop function if exists app_hidden.import_legacy_modele(uuid, text, text, jsonb);
 drop function if exists app_hidden.import_legacy_payment(uuid, uuid, int, timestamptz);
-drop function if exists app_hidden.import_legacy_fiche(uuid, uuid, uuid, text, int, text, jsonb, text, text, text, int, date, int, jsonb);
-drop function if exists app_hidden.import_legacy_carnet(uuid, int, int);
+drop function if exists app_hidden.import_legacy_fiche(uuid, uuid, uuid, text, int, text, jsonb, text, text, text, int, date, int, jsonb, timestamptz, timestamptz);
+drop function if exists app_hidden.import_legacy_carnet(uuid, int, int, public.carnet_status);
 drop function if exists app_hidden.import_legacy_client(uuid, text, text, text, text, text, text, jsonb);
 
 drop index if exists public.client_payments_one_legacy_per_fiche_uidx;

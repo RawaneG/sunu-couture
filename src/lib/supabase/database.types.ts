@@ -968,7 +968,12 @@ export type Database = {
         }
       }
       import_legacy_carnet_api: {
-        Args: { p_next_number: number; p_number: number; p_workshop_id: string }
+        Args: {
+          p_next_number: number
+          p_number: number
+          p_status?: Database["public"]["Enums"]["carnet_status"]
+          p_workshop_id: string
+        }
         Returns: {
           archived_at: string | null
           created_at: string
@@ -1023,6 +1028,7 @@ export type Database = {
         Args: {
           p_carnet_id: string
           p_client_id: string
+          p_created_at?: string
           p_description?: string
           p_due_date?: string
           p_fabric_notes?: string
@@ -1033,6 +1039,7 @@ export type Database = {
           p_metadata?: Json
           p_number: number
           p_quantity?: number
+          p_settled_at?: string
           p_total_price?: number
           p_workshop_id: string
         }

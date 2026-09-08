@@ -359,7 +359,180 @@ async function main() {
     check("retry modele_media -> exactement 1 ligne modele_medias", rows[0]?.n === 1, rows[0]);
   }
 
-  console.log("\n15) CONCURRENCE via HTTP — 10 requêtes simultanées, même legacy_id -> exactement 1 ligne, même id");
+  console.log("\n15) [Revue PR #20 §1] carnet.status — mapping canonique (carnet le plus élevé = active, précédents = archived), valeur arbitraire refusée");
+  {
+    const rArchived = await callImport(jwtA, { workshopId: workshopAId, operation: { type: "carnet", number: 201, nextNumber: 50, status: "archived" } });
+    check("carnet 201 status=archived -> 200", rArchived.status === 200, rArchived);
+    check("carnet 201 -> status=archived en base", rArchived.body.result?.status === "archived", rArchived.body.result);
+
+    const rActive = await callImport(jwtA, { workshopId: workshopAId, operation: { type: "carnet", number: 203, nextNumber: 10, status: "active" } });
+    check("carnet 203 (le plus élevé) status=active -> 200", rActive.status === 200, rActive);
+    check("carnet 203 -> status=active en base", rActive.body.result?.status === "active", rActive.body.result);
+
+    // Défaut inchangé (compat. §10) : aucun `status` fourni -> active.
+    const rDefault = await callImport(jwtA, { workshopId: workshopAId, operation: { type: "carnet", number: 204, nextNumber: 1 } });
+    check("carnet sans status -> défaut active (compatibilité)", rDefault.body.result?.status === "active", rDefault.body.result);
+
+    const rBad = await callImport(jwtA, { workshopId: workshopAId, operation: { type: "carnet", number: 205, nextNumber: 1, status: "full" } });
+    check("carnet status='full' -> 400 (valeur arbitraire refusée)", rBad.status === 400, rBad);
+
+    const rRetry = await callImport(jwtA, { workshopId: workshopAId, operation: { type: "carnet", number: 201, nextNumber: 50, status: "archived" } });
+    check("retry carnet 201 -> même id, status inchangé", rRetry.body.result?.id === rArchived.body.result?.id && rRetry.body.result?.status === "archived", rRetry.body.result);
+  }
+
+  console.log("\n16) [Revue PR #20 §2] fiche.createdAt/settledAt — historique temporel legacy préservé exactement, retry inchangé, settledAt=null accepté");
+  let ficheTimestampsId;
+  {
+    const rc = await callImport(jwtA, { workshopId: workshopAId, operation: { type: "carnet", number: 300, nextNumber: 2 } });
+    const tsCarnetId = rc.body.result?.id;
+
+    const r1 = await callImport(jwtA, {
+      workshopId: workshopAId,
+      operation: {
+        type: "fiche",
+        carnetId: tsCarnetId,
+        clientId,
+        legacyId: "legacy-fiche-ts",
+        number: 1,
+        legacyStatus: "livre",
+        createdAt: "2024-02-03T10:20:30Z",
+        settledAt: "2024-02-08T15:00:00Z",
+      },
+    });
+    check("import fiche avec createdAt/settledAt -> 200", r1.status === 200, r1);
+    ficheTimestampsId = r1.body.result?.id;
+    check("fiche.created_at = valeur legacy exacte", r1.body.result?.created_at === "2024-02-03T10:20:30+00:00" || r1.body.result?.created_at?.startsWith("2024-02-03T10:20:30"), r1.body.result?.created_at);
+    check("fiche.settled_at = valeur legacy exacte", r1.body.result?.settled_at?.startsWith("2024-02-08T15:00:00"), r1.body.result?.settled_at);
+
+    const rRetry = await callImport(jwtA, {
+      workshopId: workshopAId,
+      operation: {
+        type: "fiche",
+        carnetId: tsCarnetId,
+        clientId,
+        legacyId: "legacy-fiche-ts",
+        number: 1,
+        legacyStatus: "livre",
+        createdAt: "2024-02-03T10:20:30Z",
+        settledAt: "2024-02-08T15:00:00Z",
+      },
+    });
+    check("retry -> même id, timestamps inchangés", rRetry.body.result?.id === ficheTimestampsId && rRetry.body.result?.created_at === r1.body.result?.created_at && rRetry.body.result?.settled_at === r1.body.result?.settled_at, rRetry.body.result);
+
+    const rOpen = await callImport(jwtA, {
+      workshopId: workshopAId,
+      operation: { type: "fiche", carnetId: tsCarnetId, clientId, legacyId: "legacy-fiche-ts-open", number: 2, legacyStatus: "recu", settledAt: null },
+    });
+    check("settledAt=null -> 200, settled_at reste NULL (jamais inventé)", rOpen.status === 200 && rOpen.body.result?.settled_at === null, rOpen.body.result);
+  }
+
+  console.log("\n17) [Revue PR #20 §3] metadata média (D7) — transmise telle quelle au RPC, jamais {} par défaut, préservée au retry");
+  {
+    const r1 = await callImport(jwtA, {
+      workshopId: workshopAId,
+      operation: {
+        type: "fiche_media",
+        ficheId: fiche5Id,
+        kind: "voice_note",
+        ordinal: 2,
+        mimeType: "audio/webm",
+        contentBase64: TINY_PNG_BASE64,
+        metadata: { duration_seconds: 14 },
+      },
+    });
+    check("fiche_media avec metadata -> 200", r1.status === 200, r1);
+    check("media_assets.metadata.duration_seconds = 14", r1.body.result?.metadata?.duration_seconds === 14, r1.body.result?.metadata);
+
+    const r1Retry = await callImport(jwtA, {
+      workshopId: workshopAId,
+      operation: {
+        type: "fiche_media",
+        ficheId: fiche5Id,
+        kind: "voice_note",
+        ordinal: 2,
+        mimeType: "audio/webm",
+        contentBase64: TINY_PNG_BASE64,
+        metadata: { duration_seconds: 14 },
+      },
+    });
+    check("retry fiche_media -> même id, metadata conservée", r1Retry.body.result?.id === r1.body.result?.id && r1Retry.body.result?.metadata?.duration_seconds === 14, r1Retry.body.result);
+
+    const r2 = await callImport(jwtA, {
+      workshopId: workshopAId,
+      operation: {
+        type: "modele_media",
+        modeleId,
+        kind: "photo",
+        ordinal: 2,
+        mimeType: "image/png",
+        contentBase64: TINY_PNG_BASE64,
+        metadata: { width: 1200, height: 1600 },
+      },
+    });
+    check("modele_media avec metadata -> 200", r2.status === 200, r2);
+    check("modele_medias.metadata width/height conservés", r2.body.result?.metadata?.width === 1200 && r2.body.result?.metadata?.height === 1600, r2.body.result?.metadata);
+
+    const r2Retry = await callImport(jwtA, {
+      workshopId: workshopAId,
+      operation: {
+        type: "modele_media",
+        modeleId,
+        kind: "photo",
+        ordinal: 2,
+        mimeType: "image/png",
+        contentBase64: TINY_PNG_BASE64,
+        metadata: { width: 1200, height: 1600 },
+      },
+    });
+    check("retry modele_media -> même id, metadata conservée, même storage_path", r2Retry.body.result?.id === r2.body.result?.id && r2Retry.body.result?.storage_path === r2.body.result?.storage_path, r2Retry.body.result);
+
+    const modelPhotoRows = dbQueryRows(`select count(*) as n from public.media_assets where type = 'model_photo';`);
+    check("media_assets -> toujours AUCUNE ligne type='model_photo'", modelPhotoRows[0]?.n === 0, modelPhotoRows[0]);
+  }
+
+  console.log("\n18) [Revue PR #20 §4] validation stricte nombres/dates — payload manifestement invalide -> 400 contrôlé, jamais 500");
+  {
+    const rTotalPrice = await callImport(jwtA, {
+      workshopId: workshopAId,
+      operation: { type: "fiche", carnetId, clientId, legacyId: "legacy-bad-total-price", number: 900, legacyStatus: "recu", totalPrice: 12.5 },
+    });
+    check("totalPrice=12.5 (non entier) -> 400", rTotalPrice.status === 400, rTotalPrice);
+
+    const rAmount = await callImport(jwtA, { workshopId: workshopAId, operation: { type: "payment", ficheId: fiche5Id, amount: 2.7 } });
+    check("amount=2.7 (non entier) -> 400", rAmount.status === 400, rAmount);
+
+    const rPosition = await callImport(jwtA, {
+      workshopId: workshopAId,
+      operation: { type: "modele_media", modeleId, kind: "photo", ordinal: 3, mimeType: "image/png", contentBase64: TINY_PNG_BASE64, position: -1 },
+    });
+    check("position=-1 -> 400", rPosition.status === 400, rPosition);
+
+    const rDueDate = await callImport(jwtA, {
+      workshopId: workshopAId,
+      operation: { type: "fiche", carnetId, clientId, legacyId: "legacy-bad-due-date", number: 901, legacyStatus: "recu", dueDate: "bonjour" },
+    });
+    check("dueDate='bonjour' -> 400", rDueDate.status === 400, rDueDate);
+
+    const rCreatedAt = await callImport(jwtA, {
+      workshopId: workshopAId,
+      operation: { type: "fiche", carnetId, clientId, legacyId: "legacy-bad-created-at", number: 902, legacyStatus: "recu", createdAt: "pas-une-date" },
+    });
+    check("createdAt invalide -> 400", rCreatedAt.status === 400, rCreatedAt);
+
+    const rSettledAt = await callImport(jwtA, {
+      workshopId: workshopAId,
+      operation: { type: "fiche", carnetId, clientId, legacyId: "legacy-bad-settled-at", number: 903, legacyStatus: "recu", settledAt: "31/02/2024" },
+    });
+    check("settledAt invalide -> 400", rSettledAt.status === 400, rSettledAt);
+
+    // Aucune de ces tentatives invalides n'a dû laisser de trace en base.
+    const rows = dbQueryRows(
+      `select count(*) as n from public.fiches where workshop_id = '${workshopAId}' and metadata->>'legacy_id' in ('legacy-bad-total-price','legacy-bad-due-date','legacy-bad-created-at','legacy-bad-settled-at');`,
+    );
+    check("aucune fiche créée pour les payloads invalides ci-dessus", rows[0]?.n === 0, rows[0]);
+  }
+
+  console.log("\n19) CONCURRENCE via HTTP — 10 requêtes simultanées, même legacy_id -> exactement 1 ligne, même id");
   {
     const N = 10;
     const promises = [];
@@ -385,7 +558,9 @@ async function main() {
   console.log("\n--- Nettoyage exact des fixtures ---");
   // Storage d'abord (objets physiques, jamais couverts par le CASCADE SQL).
   await deleteStorageObject(`workshops/${workshopAId}/fiches/${fiche5Id}/legacy-fabric_photo-1`);
+  await deleteStorageObject(`workshops/${workshopAId}/fiches/${fiche5Id}/legacy-voice_note-2`);
   await deleteStorageObject(`workshops/${workshopAId}/modeles/${modeleId}/legacy-photo-1`);
+  await deleteStorageObject(`workshops/${workshopAId}/modeles/${modeleId}/legacy-photo-2`);
 
   // `workshops.owner_id` -> `auth.users(id)` en `ON DELETE RESTRICT` : l'atelier
   // de chaque owner doit disparaître AVANT l'utilisateur (cascade sur
