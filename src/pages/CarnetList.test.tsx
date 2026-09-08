@@ -73,3 +73,14 @@ describe("CarnetList — Phase 9A : 'Nouvelle fiche' navigue vers le brouillon s
     expect(addCalls).toBe(0);
   });
 });
+
+// Corr. bug Gate Preview mobile — `MobileBrandBar` (thème + déconnexion) a
+// été déplacée vers `AppShell` : `CarnetList` ne doit plus la porter
+// elle-même, sous peine de double rendu une fois montée sous `AppShell`.
+describe("CarnetList — ne porte plus MobileBrandBar (déplacée vers AppShell)", () => {
+  it("aucune trace de la barre globale mobile (thème/déconnexion) sur cette page seule", () => {
+    renderCarnetList(fakeFicheRepository(async () => "x"));
+    expect(screen.queryByRole("button", { name: "Changer de thème" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Se déconnecter" })).not.toBeInTheDocument();
+  });
+});
