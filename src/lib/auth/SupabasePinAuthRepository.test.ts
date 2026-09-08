@@ -64,6 +64,24 @@ describe("SupabasePinAuthRepository — register()", () => {
     expect(error?.message).not.toMatch(/PostgREST|JWT|Supabase|Edge Function|500/i);
   });
 
+  // RÉGRESSION — bug réel observé en local : le conteneur Edge Function
+  // redémarre/tombe, la passerelle (Kong) répond avec une erreur HTTP dont le
+  // corps JSON ne porte PAS le contrat `{error, message}` de tayoo-pin-auth
+  // (pas de `error` reconnu) mais un `message` d'infrastructure brut
+  // ("name resolution failed"). Ce texte ne doit JAMAIS atteindre l'UI —
+  // seul un `error` reconnu (GENERIC_ERRORS) autorise l'affichage de son
+  // `message` dédié ; sinon, toujours le message générique de secours.
+  it("réponse HTTP d'une couche intermédiaire (ex. passerelle) sans code reconnu -> message générique, JAMAIS le texte brut de l'infrastructure", async () => {
+    const httpError = new FunctionsHttpError({ json: async () => ({ message: "name resolution failed" }) } as unknown as Response);
+    mockInvoke.mockResolvedValue({ data: null, error: httpError });
+
+    const repo = new SupabasePinAuthRepository();
+    const { error } = await repo.register("+221770000001", "1234");
+
+    expect(error?.message).not.toMatch(/name resolution|dns|kong|gateway/i);
+    expect(error?.message).toBe("Connexion impossible. Réessaie.");
+  });
+
   // Corr. Gate Auth handoff §7/§11/§12/§36 — bug observé pendant le Gate : le
   // serveur RÉUSSIT réellement (compte + atelier + session créés, tokens
   // reçus) mais l'ACTIVATION locale de la session échoue (`setSession()`).
