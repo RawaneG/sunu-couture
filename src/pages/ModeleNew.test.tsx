@@ -36,6 +36,7 @@ function renderModeleNew(modeles: ModeleRepository) {
     <RepositoryProvider repositories={container}>
       <MemoryRouter initialEntries={["/catalogue/nouveau"]}>
         <Routes>
+          <Route path="/catalogue" element={<p>Retour au catalogue</p>} />
           <Route path="/catalogue/nouveau" element={<ModeleNew />} />
           <Route path="/catalogue/:id" element={<CatalogueDestinationProbe />} />
         </Routes>
@@ -131,5 +132,42 @@ describe("ModeleNew — brouillon local, aucune création implicite", () => {
     expect(await screen.findByRole("alert")).toHaveTextContent(/n'a pas pu être créé/i);
     expect(screen.getByLabelText("Nom du modèle")).toHaveValue("Robe wax");
     expect(screen.queryByText(/destination catalogue/i)).not.toBeInTheDocument();
+  });
+});
+
+// Corr. Jakob's Law §15/§55 — Retour déterministe + confirmation uniquement
+// si une saisie réelle serait perdue.
+describe("ModeleNew — Retour et confirmation avant perte de saisie", () => {
+  it("aucune saisie -> Retour immédiat, aucune confirmation affichée", async () => {
+    const user = userEvent.setup();
+    renderModeleNew(fakeModeleRepository(async () => "x"));
+
+    await user.click(screen.getByRole("button", { name: "Retour" }));
+    expect(await screen.findByText("Retour au catalogue")).toBeInTheDocument();
+    expect(screen.queryByText("Quitter sans enregistrer ?")).not.toBeInTheDocument();
+  });
+
+  it("saisie réelle -> Retour affiche une confirmation ; « Continuer ici » reste sur l'écran, saisie conservée", async () => {
+    const user = userEvent.setup();
+    renderModeleNew(fakeModeleRepository(async () => "x"));
+
+    await user.type(screen.getByLabelText("Nom du modèle"), "Robe wax");
+    await user.click(screen.getByRole("button", { name: "Retour" }));
+
+    expect(await screen.findByText("Quitter sans enregistrer ?")).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Continuer ici" }));
+    expect(screen.queryByText("Quitter sans enregistrer ?")).not.toBeInTheDocument();
+    expect(screen.getByLabelText("Nom du modèle")).toHaveValue("Robe wax");
+  });
+
+  it("saisie réelle -> « Quitter » navigue vers le catalogue, la saisie est abandonnée", async () => {
+    const user = userEvent.setup();
+    renderModeleNew(fakeModeleRepository(async () => "x"));
+
+    await user.type(screen.getByLabelText("Nom du modèle"), "Robe wax");
+    await user.click(screen.getByRole("button", { name: "Retour" }));
+    await user.click(await screen.findByRole("button", { name: "Quitter" }));
+
+    expect(await screen.findByText("Retour au catalogue")).toBeInTheDocument();
   });
 });

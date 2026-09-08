@@ -4,8 +4,11 @@ import { motion } from "framer-motion";
 import { useRepositories } from "../repositories/RepositoryProvider";
 import PageHeader from "../components/ui/PageHeader";
 import ClientFields from "../components/ui/ClientFields";
+import UnsavedChangesDialog from "../components/ui/UnsavedChangesDialog";
 import { IconCheck } from "../lib/icons";
 import { haptic } from "../lib/haptics";
+
+const BACK_TO = "/clients";
 
 export default function ClientNew() {
   const navigate = useNavigate();
@@ -16,8 +19,21 @@ export default function ClientNew() {
   const [photo, setPhoto] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
+  const [leaveConfirmOpen, setLeaveConfirmOpen] = useState(false);
 
   const canSubmit = name.trim().length > 0 && !submitting;
+  // Formulaire "dirty" (corr. Jakob's Law §15) — un champ vierge ne mérite
+  // jamais une confirmation avant de quitter, rien n'est réellement perdu.
+  const dirty = name.trim().length > 0 || phone.trim().length > 0 || photo !== null;
+
+  function handleBack() {
+    if (!dirty) {
+      navigate(BACK_TO);
+      return;
+    }
+    haptic();
+    setLeaveConfirmOpen(true);
+  }
 
   async function handleSubmit() {
     if (!canSubmit) return;
@@ -35,7 +51,13 @@ export default function ClientNew() {
 
   return (
     <div>
-      <PageHeader title="Nouveau client" backTo="/clients" />
+      <PageHeader title="Nouveau client" onBack={handleBack} />
+
+      <UnsavedChangesDialog
+        open={leaveConfirmOpen}
+        onStay={() => setLeaveConfirmOpen(false)}
+        onLeave={() => navigate(BACK_TO)}
+      />
 
       <motion.div
         initial={{ opacity: 0, y: 10 }}
@@ -71,7 +93,7 @@ export default function ClientNew() {
             }
           >
             <IconCheck size={18} strokeWidth={2} />
-            Ajouter le client
+            {submitting ? "Ajout…" : "Ajouter le client"}
           </motion.button>
         </div>
       </motion.div>

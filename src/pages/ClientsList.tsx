@@ -67,7 +67,7 @@ export default function ClientsList() {
       to="/clients/nouveau"
       onClick={() => haptic()}
       aria-label="Nouveau client"
-      className="flex h-8 w-8 flex-none items-center justify-center rounded-full bg-indigo text-white shadow-soft active:scale-90 transition-transform lg:h-10 lg:w-10"
+      className="flex h-11 w-11 flex-none items-center justify-center rounded-full bg-indigo text-white shadow-soft active:scale-90 transition-transform lg:h-11 lg:w-11"
     >
       <IconPlus size={16} strokeWidth={2} />
     </Link>
@@ -118,7 +118,7 @@ export default function ClientsList() {
                 onClick={() => setConfirmDeleteOpen(true)}
                 disabled={selectedIds.size === 0}
                 aria-label="Supprimer la sélection"
-                className="glass-chip flex h-7 w-7 items-center justify-center rounded-full text-terracotta shadow-soft ring-1 ring-line-strong/40 disabled:opacity-30 active:scale-90 transition-transform"
+                className="glass-chip flex h-11 w-11 items-center justify-center rounded-full text-terracotta shadow-soft ring-1 ring-line-strong/40 disabled:opacity-30 active:scale-90 transition-transform"
               >
                 <IconTrash size={13} />
               </button>
@@ -126,7 +126,7 @@ export default function ClientsList() {
                 type="button"
                 onClick={toggleSelectMode}
                 aria-label="Fermer la sélection"
-                className="glass-chip flex h-7 w-7 items-center justify-center rounded-full text-ink-soft shadow-soft ring-1 ring-line-strong/40 active:scale-90 transition-transform"
+                className="glass-chip flex h-11 w-11 items-center justify-center rounded-full text-ink-soft shadow-soft ring-1 ring-line-strong/40 active:scale-90 transition-transform"
               >
                 <IconX size={13} />
               </button>
@@ -139,7 +139,7 @@ export default function ClientsList() {
               type="button"
               onClick={toggleSelectMode}
               aria-label="Sélectionner plusieurs clients"
-              className="glass-chip flex h-7 w-7 items-center justify-center rounded-full text-ink-soft shadow-soft ring-1 ring-line-strong/40 active:scale-90 transition-transform"
+              className="glass-chip flex h-11 w-11 items-center justify-center rounded-full text-ink-soft shadow-soft ring-1 ring-line-strong/40 active:scale-90 transition-transform"
             >
               <IconSquare size={13} />
             </button>
@@ -148,7 +148,30 @@ export default function ClientsList() {
       </div>
 
       <div className="flex-1 lg:overflow-y-auto px-2.5 lg:px-6 py-2 pb-4 pt-3">
-        {filtered.length === 0 ? (
+        {clients.length === 0 ? (
+          // Genuinely empty (corr. Jakob's Law §23/§24) — jamais confondu avec
+          // "recherche sans résultat" : explique le vide + UNE action, même
+          // libellé que le bouton d'ajout (§24, "Ajouter un client" partout).
+          <div className="mt-10 flex flex-col items-center gap-3 text-center text-ink-faint">
+            <span className="glass-chip flex h-14 w-14 items-center justify-center rounded-full">
+              <IconUsers size={24} />
+            </span>
+            <p className="text-sm font-semibold">Aucun client</p>
+            <p className="max-w-60 text-[13px] text-ink-faint">
+              Ajoute ton premier client pour retrouver facilement ses mesures.
+            </p>
+            <button
+              type="button"
+              onClick={() => {
+                haptic();
+                navigate("/clients/nouveau");
+              }}
+              className="mt-1 rounded-full bg-amber-tile px-4 py-2.5 text-[13px] font-bold text-[#2a1c04] shadow-soft"
+            >
+              Ajouter un client
+            </button>
+          </div>
+        ) : filtered.length === 0 ? (
           <div className="mt-10 flex flex-col items-center gap-3 text-ink-faint">
             <span className="glass-chip flex h-12 w-12 items-center justify-center rounded-full">
               <IconUsers size={22} />
