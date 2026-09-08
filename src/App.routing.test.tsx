@@ -24,7 +24,16 @@ function BrowserBackTrigger() {
   );
 }
 
-const { mockGetSession, mockRegister, mockLogin, mockSubscribe, mockCallProvisionWorkshop, mockCreateRepositoryContainer, authState } = vi.hoisted(() => {
+const {
+  mockGetSession,
+  mockRegister,
+  mockLogin,
+  mockSubscribe,
+  mockSignOut,
+  mockCallProvisionWorkshop,
+  mockCreateRepositoryContainer,
+  authState,
+} = vi.hoisted(() => {
   const state: { session: { userId: string; phoneE164: string | null; expiresAt: number } | null; listeners: Array<(s: unknown) => void> } = {
     session: null,
     listeners: [],
@@ -53,6 +62,7 @@ const { mockGetSession, mockRegister, mockLogin, mockSubscribe, mockCallProvisio
       state.listeners.forEach((cb) => cb(session));
       return { session, error: null };
     }),
+    mockSignOut: vi.fn(async () => {}),
     mockCallProvisionWorkshop: vi.fn(),
     mockCreateRepositoryContainer: vi.fn(),
   };
@@ -71,7 +81,7 @@ vi.mock("./lib/auth/SupabasePinAuthRepository", () => ({
     this.subscribeToAuthChanges = mockSubscribe;
     this.register = mockRegister;
     this.login = mockLogin;
-    this.signOut = vi.fn();
+    this.signOut = mockSignOut;
     this.signOutAllDevices = vi.fn();
   }),
 }));
@@ -373,5 +383,47 @@ describe("Appareil déjà reconnu — numéro mémorisé localement (corr. Gate 
     await user.click(screen.getByText(/ce n'est pas mon numéro/i));
     await waitFor(() => expect(screen.getByLabelText("Numéro de téléphone")).toBeInTheDocument());
     expect(localStorage.getItem("tayoo:last-phone")).toBeNull();
+  });
+});
+
+// Corr. bug Gate Preview mobile — `MobileBrandBar` (thème + déconnexion)
+// vivait dans `CarnetList` (Accueil) : elle disparaissait dès qu'on
+// naviguait vers une autre route protégée. Déplacée dans `AppShell`, elle
+// doit désormais rester disponible sur TOUTE route authentifiée.
+describe("Navigation globale (AppShell) — actions du compte disponibles partout (corr. bug Gate Preview mobile)", () => {
+  /** `Se déconnecter` hors de la Sidebar desktop (`<aside>`, toujours dans le
+   * DOM sous jsdom malgré `hidden lg:flex`) — isole la barre globale MOBILE. */
+  function mobileSignOutButtons() {
+    const aside = document.querySelector("aside");
+    return screen.queryAllByRole("button", { name: "Se déconnecter" }).filter((btn) => !aside?.contains(btn));
+  }
+
+  it("Se déconnecter (mobile) reste disponible en naviguant entre routes protégées : / -> /clients -> /commandes -> /catalogue", async () => {
+    authState.session = { userId: "u-nav", phoneE164: "+221770000005", expiresAt: 9999999999 };
+    mockCallProvisionWorkshop.mockResolvedValue({ kind: "workshop", workshop: { id: "w-nav", name: "Espace nav" } });
+
+    const { rerender } = renderAppAt("/");
+    await waitFor(() => expect(mobileSignOutButtons()).toHaveLength(1));
+
+    for (const path of ["/clients", "/commandes", "/catalogue"]) {
+      rerender(
+        <MemoryRouter initialEntries={[path]}>
+          <App />
+        </MemoryRouter>,
+      );
+      await waitFor(() => expect(mobileSignOutButtons()).toHaveLength(1));
+    }
+  });
+
+  it("le bouton Se déconnecter (mobile) appelle bien signOut() du contexte Auth réel, quelle que soit la route", async () => {
+    authState.session = { userId: "u-nav2", phoneE164: "+221770000006", expiresAt: 9999999999 };
+    mockCallProvisionWorkshop.mockResolvedValue({ kind: "workshop", workshop: { id: "w-nav2", name: "Espace nav 2" } });
+    const user = userEvent.setup();
+
+    renderAppAt("/clients");
+    await waitFor(() => expect(mobileSignOutButtons()).toHaveLength(1));
+
+    await user.click(mobileSignOutButtons()[0]);
+    expect(mockSignOut).toHaveBeenCalledTimes(1);
   });
 });

@@ -6,7 +6,6 @@ import { useClients, useFiches, useClient } from "../repositories/hooks";
 import { useRepositories } from "../repositories/RepositoryProvider";
 import Avatar from "../components/ui/Avatar";
 import PageHeader from "../components/ui/PageHeader";
-import MobileBrandBar from "../components/layout/MobileBrandBar";
 import ConfirmDialog from "../components/ui/ConfirmDialog";
 import Fab from "../components/ui/Fab";
 import {
@@ -193,7 +192,6 @@ export default function CarnetList() {
 
   return (
     <div>
-      <MobileBrandBar />
       <PageHeader
         title={searching ? "Carnet de mesures" : "Mon carnet"}
         actions={addButton}
