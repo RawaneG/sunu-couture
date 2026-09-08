@@ -199,7 +199,7 @@ export default function FicheDetail() {
           href={`tel:${phoneDigits}`}
           onClick={() => haptic(12)}
           aria-label="Appeler le client"
-          className="glass-chip flex h-8 w-8 flex-none items-center justify-center rounded-full text-teal shadow-soft ring-1 ring-line-strong/40 lg:h-10 lg:w-10"
+          className="glass-chip flex h-11 w-11 flex-none items-center justify-center rounded-full text-teal shadow-soft ring-1 ring-line-strong/40 lg:h-11 lg:w-11"
         >
           <IconPhone size={14} />
         </a>
@@ -211,7 +211,7 @@ export default function FicheDetail() {
           setConfirmDeleteOpen(true);
         }}
         aria-label="Supprimer la fiche"
-        className="glass-chip flex h-8 w-8 flex-none items-center justify-center rounded-full text-terracotta shadow-soft ring-1 ring-line-strong/40 lg:h-10 lg:w-10"
+        className="glass-chip flex h-11 w-11 flex-none items-center justify-center rounded-full text-terracotta shadow-soft ring-1 ring-line-strong/40 lg:h-11 lg:w-11"
       >
         <IconTrash size={15} />
       </button>
@@ -401,7 +401,7 @@ function TelephoneField({ value = "", onChange }: { value: string | undefined; o
           <a
             href={`tel:${digits}`}
             aria-label={`Appeler le ${value}`}
-            className="flex h-7 w-7 flex-none items-center justify-center rounded-full bg-teal text-white active:scale-90 transition-transform"
+            className="flex h-11 w-11 flex-none items-center justify-center rounded-full bg-teal text-white active:scale-90 transition-transform"
           >
             <IconPhone size={12} />
           </a>

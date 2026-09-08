@@ -106,13 +106,13 @@ export function AvanceChampCell({ totalVerse, onAdd }: { totalVerse: number; onA
           inputMode="numeric"
           placeholder="Nouveau montant"
           disabled={pending}
-          className="min-w-0 flex-1 rounded-xl border border-line-strong/40 bg-surface px-3 py-2 text-right text-[14px] font-bold tabular-nums outline-none focus:border-indigo"
+          className="min-h-11 min-w-0 flex-1 rounded-xl border border-line-strong/40 bg-surface px-3 py-2 text-right text-[14px] font-bold tabular-nums outline-none focus:border-indigo"
         />
         <button
           type="button"
           onClick={() => void handleAdd()}
           disabled={!canSubmit}
-          className="flex-none rounded-full bg-amber-tile px-3.5 py-2 text-[13px] font-bold text-[#2a1c04] shadow-soft active:scale-95 transition-transform disabled:opacity-40 disabled:active:scale-100"
+          className="min-h-11 flex-none rounded-full bg-amber-tile px-3.5 py-2 text-[13px] font-bold text-[#2a1c04] shadow-soft active:scale-95 transition-transform disabled:opacity-40 disabled:active:scale-100"
         >
           Ajouter
         </button>

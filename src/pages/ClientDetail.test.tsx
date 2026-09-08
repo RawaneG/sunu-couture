@@ -146,6 +146,16 @@ describe("ClientDetail — ready + introuvable (B)", () => {
     // téléphone, lui, n'apparaît qu'une fois dans le bloc profil.
     expect(screen.getByText("77 512 44 08")).toBeInTheDocument();
   });
+
+  // Corr. Jakob's Law §14/§53 — Clients → client → Retour, déterministe.
+  it("Retour -> /clients (jamais navigate(-1))", async () => {
+    const user = userEvent.setup();
+    const clients = new FakeClientRepository([client1], READY_STATUS);
+    renderClientDetail(clients, fakeFicheRepository(async () => "x"));
+
+    await user.click(screen.getByRole("link", { name: "Retour" }));
+    expect(await screen.findByText("Liste des clients")).toBeInTheDocument();
+  });
 });
 
 describe("ClientDetail — Phase 9A : navigation vers le brouillon, aucune création immédiate (C)", () => {

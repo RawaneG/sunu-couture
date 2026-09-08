@@ -85,7 +85,7 @@ export default function ClientDetail() {
         setConfirmDeleteOpen(true);
       }}
       aria-label="Supprimer le client"
-      className="glass-chip flex h-8 w-8 flex-none items-center justify-center rounded-full text-terracotta shadow-soft ring-1 ring-line-strong/40 lg:h-10 lg:w-10"
+      className="glass-chip flex h-11 w-11 flex-none items-center justify-center rounded-full text-terracotta shadow-soft ring-1 ring-line-strong/40 lg:h-11 lg:w-11"
     >
       <IconTrash size={15} />
     </button>

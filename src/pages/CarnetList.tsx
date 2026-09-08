@@ -8,6 +8,7 @@ import Avatar from "../components/ui/Avatar";
 import PageHeader from "../components/ui/PageHeader";
 import MobileBrandBar from "../components/layout/MobileBrandBar";
 import ConfirmDialog from "../components/ui/ConfirmDialog";
+import Fab from "../components/ui/Fab";
 import {
   IconBack,
   IconCheckSquare,
@@ -184,7 +185,7 @@ export default function CarnetList() {
       type="button"
       onClick={handleAdd}
       aria-label="Nouvelle fiche"
-      className="flex h-8 w-8 flex-none items-center justify-center rounded-full bg-indigo text-white shadow-soft active:scale-90 transition-transform lg:h-10 lg:w-10"
+      className="flex h-11 w-11 flex-none items-center justify-center rounded-full bg-indigo text-white shadow-soft active:scale-90 transition-transform lg:h-11 lg:w-11"
     >
       <IconPlus size={16} strokeWidth={2} />
     </button>
@@ -260,7 +261,7 @@ export default function CarnetList() {
                       onClick={() => setConfirmDeleteOpen(true)}
                       disabled={selectedIds.size === 0}
                       aria-label="Supprimer la sélection"
-                      className="glass-chip flex h-7 w-7 items-center justify-center rounded-full text-terracotta shadow-soft ring-1 ring-line-strong/40 disabled:opacity-30 active:scale-90 transition-transform"
+                      className="glass-chip flex h-11 w-11 items-center justify-center rounded-full text-terracotta shadow-soft ring-1 ring-line-strong/40 disabled:opacity-30 active:scale-90 transition-transform"
                     >
                       <IconTrash size={13} />
                     </button>
@@ -268,7 +269,7 @@ export default function CarnetList() {
                       type="button"
                       onClick={toggleSelectMode}
                       aria-label="Fermer la sélection"
-                      className="glass-chip flex h-7 w-7 items-center justify-center rounded-full text-ink-soft shadow-soft ring-1 ring-line-strong/40 active:scale-90 transition-transform"
+                      className="glass-chip flex h-11 w-11 items-center justify-center rounded-full text-ink-soft shadow-soft ring-1 ring-line-strong/40 active:scale-90 transition-transform"
                     >
                       <IconX size={13} />
                     </button>
@@ -291,7 +292,7 @@ export default function CarnetList() {
                           onClick={() => goTo(currentPage - 1)}
                           disabled={currentPage === 0}
                           aria-label="Page précédente"
-                          className="glass-chip flex h-7 w-7 items-center justify-center rounded-full text-ink-soft shadow-soft ring-1 ring-line-strong/40 disabled:opacity-30 active:scale-90 transition-transform"
+                          className="glass-chip flex h-11 w-11 items-center justify-center rounded-full text-ink-soft shadow-soft ring-1 ring-line-strong/40 disabled:opacity-30 active:scale-90 transition-transform"
                         >
                           <IconBack size={13} />
                         </button>
@@ -300,7 +301,7 @@ export default function CarnetList() {
                           onClick={() => goTo(currentPage + 1)}
                           disabled={currentPage === pageCount - 1}
                           aria-label="Page suivante"
-                          className="glass-chip flex h-7 w-7 items-center justify-center rounded-full text-ink-soft shadow-soft ring-1 ring-line-strong/40 disabled:opacity-30 active:scale-90 transition-transform"
+                          className="glass-chip flex h-11 w-11 items-center justify-center rounded-full text-ink-soft shadow-soft ring-1 ring-line-strong/40 disabled:opacity-30 active:scale-90 transition-transform"
                         >
                           <IconChevronRight size={13} />
                         </button>
@@ -310,7 +311,7 @@ export default function CarnetList() {
                       type="button"
                       onClick={toggleSelectMode}
                       aria-label="Sélectionner plusieurs fiches"
-                      className="glass-chip flex h-7 w-7 items-center justify-center rounded-full text-ink-soft shadow-soft ring-1 ring-line-strong/40 active:scale-90 transition-transform"
+                      className="glass-chip flex h-11 w-11 items-center justify-center rounded-full text-ink-soft shadow-soft ring-1 ring-line-strong/40 active:scale-90 transition-transform"
                     >
                       <IconSquare size={13} />
                     </button>
@@ -398,21 +399,10 @@ export default function CarnetList() {
         )}
       </div>
 
-      {!selectMode && (
-        <motion.button
-          type="button"
-          onClick={handleAdd}
-          aria-label="Nouvelle fiche"
-          className="fixed right-4 z-40 flex h-14 w-14 items-center justify-center rounded-full bg-gradient-to-br from-indigo-soft to-indigo text-white shadow-lift shadow-[inset_0_1px_0_0_rgba(255,255,255,0.35)] ring-1 ring-black/5 lg:hidden"
-          style={{ bottom: "calc(112px + env(safe-area-inset-bottom))" }}
-          initial={{ opacity: 0, scale: 0.7, y: 12 }}
-          animate={{ opacity: 1, scale: 1, y: 0 }}
-          transition={{ type: "spring", stiffness: 380, damping: 24, delay: 0.1 }}
-          whileTap={{ scale: 0.9 }}
-        >
-          <IconPlus size={24} strokeWidth={2.2} />
-        </motion.button>
-      )}
+      {/* Même composant partagé que Clients/Commandes (corr. Jakob's Law §21/
+          §63) — un seul pattern de création à travers l'app, jamais une
+          réimplémentation par écran. */}
+      {!selectMode && <Fab to="/carnet/nouvelle" label="Nouvelle fiche" color="indigo" />}
     </div>
   );
 }
@@ -478,7 +468,7 @@ function FicheRow({
           onClick={(e) => e.stopPropagation()}
           onPointerDown={(e) => e.stopPropagation()}
           aria-label={`Appeler ${clientName || "ce client"}`}
-          className="flex h-8 w-8 flex-none items-center justify-center rounded-full bg-teal text-white active:scale-90 transition-transform"
+          className="flex h-11 w-11 flex-none items-center justify-center rounded-full bg-teal text-white active:scale-90 transition-transform"
         >
           <IconPhone size={13} />
         </a>

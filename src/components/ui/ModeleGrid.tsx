@@ -159,7 +159,7 @@ export default function ModeleGrid({
                   onClick={onDeleteSelected}
                   disabled={!selectedIds?.size}
                   aria-label="Supprimer la sélection"
-                  className="glass-chip flex h-7 w-7 items-center justify-center rounded-full text-terracotta shadow-soft ring-1 ring-line-strong/40 disabled:opacity-30 active:scale-90 transition-transform"
+                  className="glass-chip flex h-11 w-11 items-center justify-center rounded-full text-terracotta shadow-soft ring-1 ring-line-strong/40 disabled:opacity-30 active:scale-90 transition-transform"
                 >
                   <IconTrash size={13} />
                 </button>
@@ -167,7 +167,7 @@ export default function ModeleGrid({
                   type="button"
                   onClick={onToggleSelectMode}
                   aria-label="Fermer la sélection"
-                  className="glass-chip flex h-7 w-7 items-center justify-center rounded-full text-ink-soft shadow-soft ring-1 ring-line-strong/40 active:scale-90 transition-transform"
+                  className="glass-chip flex h-11 w-11 items-center justify-center rounded-full text-ink-soft shadow-soft ring-1 ring-line-strong/40 active:scale-90 transition-transform"
                 >
                   <IconX size={13} />
                 </button>
@@ -186,7 +186,7 @@ export default function ModeleGrid({
                       onClick={() => goTo(currentPage - 1)}
                       disabled={currentPage === 0}
                       aria-label="Page précédente"
-                      className="glass-chip flex h-7 w-7 items-center justify-center rounded-full text-ink-soft shadow-soft ring-1 ring-line-strong/40 disabled:opacity-30 active:scale-90 transition-transform"
+                      className="glass-chip flex h-11 w-11 items-center justify-center rounded-full text-ink-soft shadow-soft ring-1 ring-line-strong/40 disabled:opacity-30 active:scale-90 transition-transform"
                     >
                       <IconBack size={13} />
                     </button>
@@ -195,7 +195,7 @@ export default function ModeleGrid({
                       onClick={() => goTo(currentPage + 1)}
                       disabled={currentPage === pageCount - 1}
                       aria-label="Page suivante"
-                      className="glass-chip flex h-7 w-7 items-center justify-center rounded-full text-ink-soft shadow-soft ring-1 ring-line-strong/40 disabled:opacity-30 active:scale-90 transition-transform"
+                      className="glass-chip flex h-11 w-11 items-center justify-center rounded-full text-ink-soft shadow-soft ring-1 ring-line-strong/40 disabled:opacity-30 active:scale-90 transition-transform"
                     >
                       <IconChevronRight size={13} />
                     </button>
@@ -206,7 +206,7 @@ export default function ModeleGrid({
                     type="button"
                     onClick={onToggleSelectMode}
                     aria-label="Sélectionner plusieurs modèles"
-                    className="glass-chip flex h-7 w-7 items-center justify-center rounded-full text-ink-soft shadow-soft ring-1 ring-line-strong/40 active:scale-90 transition-transform"
+                    className="glass-chip flex h-11 w-11 items-center justify-center rounded-full text-ink-soft shadow-soft ring-1 ring-line-strong/40 active:scale-90 transition-transform"
                   >
                     <IconSquare size={13} />
                   </button>

@@ -153,7 +153,7 @@ function PhotoLightbox({ photo, onClose }: { photo: TissuPhoto; onClose: () => v
             onClose();
           }}
           aria-label="Fermer"
-          className="absolute -right-2 -top-2 flex h-9 w-9 items-center justify-center rounded-full bg-ink text-paper shadow-lift"
+          className="absolute -right-2 -top-2 flex h-11 w-11 items-center justify-center rounded-full bg-ink text-paper shadow-lift"
         >
           <IconX size={16} />
         </button>
