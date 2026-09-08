@@ -53,4 +53,17 @@ describe("BottomNav", () => {
     const hrefs = screen.getAllByRole("link").map((link) => link.getAttribute("href"));
     expect(hrefs).toEqual(["/", "/commandes", "/catalogue", "/clients"]);
   });
+
+  // RÉGRESSION — `w-full` sur CHAQUE item flex (au lieu de `flex-1`) faisait
+  // que les 4 destinations réclamaient chacune 100% de la largeur de la
+  // barre : visuellement, seule la première ("Accueil") restait visible, les
+  // 3 autres étaient repoussées hors de la zone visible. Un partage égal de
+  // la largeur (`flex-1`) est requis, jamais une largeur fixe à 100%.
+  it("les 4 destinations se partagent la largeur à parts égales (jamais w-full sur un item)", () => {
+    renderAt("/");
+    for (const link of screen.getAllByRole("link")) {
+      expect(link.className).toMatch(/flex-1/);
+      expect(link.className).not.toMatch(/\bw-full\b/);
+    }
+  });
 });

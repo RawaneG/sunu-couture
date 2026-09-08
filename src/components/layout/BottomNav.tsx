@@ -31,7 +31,7 @@ export default function BottomNav() {
             to={to}
             end={end}
             onClick={() => haptic()}
-            className="relative flex min-h-11 w-full flex-none flex-col items-center justify-center gap-0.5 rounded-2xl py-1.5"
+            className="relative flex min-h-11 min-w-0 flex-1 flex-col items-center justify-center gap-0.5 rounded-2xl py-1.5"
           >
             {({ isActive }) => (
               <>

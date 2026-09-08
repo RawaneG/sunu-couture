@@ -1,8 +1,10 @@
 import { useRef } from "react";
 import { Link, NavLink } from "react-router-dom";
 import clsx from "clsx";
-import { IconHome, IconHanger, IconUsers, IconScissors, IconPlus, IconSun, IconMoon } from "../../lib/icons";
+import { IconHome, IconHanger, IconUsers, IconScissors, IconPlus, IconSun, IconMoon, IconLogout } from "../../lib/icons";
 import { useTheme } from "../../lib/theme";
+import { useOptionalAuth } from "../../lib/auth/AuthProvider";
+import { haptic } from "../../lib/haptics";
 import BrandMark from "../ui/BrandMark";
 
 // "Accueil" is the carnet itself — no separate nav item for it anymore.
@@ -15,7 +17,16 @@ const NAV = [
 
 export default function Sidebar() {
   const { dark, toggle } = useTheme();
+  // Optionnel (jamais `useAuth()`) — `Sidebar` peut être monté dans des tests
+  // sans `<AuthProvider>` (corr. R, Phase 7A §12) ; le bouton de déconnexion
+  // disparaît simplement si le contexte est absent.
+  const auth = useOptionalAuth();
   const themeBtnRef = useRef<HTMLButtonElement>(null);
+
+  function handleSignOut() {
+    haptic();
+    void auth?.signOut();
+  }
 
   return (
     <aside className="hidden lg:flex lg:w-64 lg:flex-none lg:flex-col lg:border-r lg:border-line/70 lg:bg-surface/65 lg:backdrop-blur-2xl lg:backdrop-saturate-150">
@@ -75,6 +86,19 @@ export default function Sidebar() {
           {dark ? <IconSun size={17} /> : <IconMoon size={17} />}
           {dark ? "Thème clair" : "Thème sombre"}
         </button>
+
+        {/* Corr. Jakob's Law §7/§46 — toute app authentifiée a une sortie
+            évidente ; aucune n'existait jusqu'ici dans Tayoo. */}
+        {auth && (
+          <button
+            type="button"
+            onClick={handleSignOut}
+            className="mt-1 flex w-full items-center gap-3 rounded-xl px-3.5 py-2.5 text-[13px] font-semibold text-ink-soft hover:bg-surface-2 hover:text-terracotta transition-colors"
+          >
+            <IconLogout size={17} />
+            Se déconnecter
+          </button>
+        )}
       </div>
     </aside>
   );
