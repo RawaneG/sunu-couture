@@ -2311,6 +2311,452 @@ begin
 end;
 $$;
 
-do $$ begin raise notice '════════  SCHÉMA PHASE 2 + WRAPPER PHASE 3A + CORRECTIFS GRANT + PHASE 4 GRANT/RLS + WRAPPER PHASE 9A + STORAGE PHASE 8A + STORAGE PHASE 8B + PIVOT AUTH PIN + THROTTLE ATOMIQUE : 74 groupes de tests OK  ════════'; end; $$;
+-- ═══════════════════════════════════════════════════════════════════════════
+-- Phase 6B0 — infrastructure sécurisée d'import legacy (migration
+-- 20260908194925_harden_legacy_import_idempotency.sql). `app_hidden.
+-- create_fiche_from_draft()` (Phase 9A) alloue elle-même `next_number` et ne
+-- peut structurellement PAS préserver une numérotation legacy trouée
+-- (1, 2, 5) — d'où ce chemin serveur entièrement séparé :
+-- `app_hidden.import_legacy_*` (SECURITY DEFINER), exposé par PostgREST
+-- UNIQUEMENT via les wrappers `public.import_legacy_*_api` (SECURITY
+-- INVOKER, même raison d'être que `create_fiche_from_draft_api` T56 :
+-- `app_hidden` n'est pas dans [api].schemas). Idempotence portée par
+-- PostgreSQL (verrou advisory + contrainte UNIQUE partielle), jamais par
+-- `migrationMap` IndexedDB côté client — voir l'en-tête de la migration.
+--
+-- Fixtures dédiées (préfixe 60600000, jamais réutilisé ailleurs dans ce
+-- fichier) : deux ateliers A/B, pour prouver l'isolation tenant-aware en
+-- plus de l'idempotence intra-atelier.
+insert into auth.users (id, phone) values
+  ('60600000-0000-0000-0000-000000000a01', '+221770000701'),
+  ('60600000-0000-0000-0000-000000000a02', '+221770000702');
+
+insert into public.workshops (id, name, owner_id) values
+  ('60600000-0000-0000-0000-000000000b01', 'Atelier Import Legacy A', '60600000-0000-0000-0000-000000000a01'),
+  ('60600000-0000-0000-0000-000000000b02', 'Atelier Import Legacy B', '60600000-0000-0000-0000-000000000a02');
+
+-- ── T75 — privilèges EXECUTE : anon/authenticated refusés, service_role seul,
+-- sur les 7 fonctions app_hidden ET leurs 7 wrappers public — jamais de GRANT
+-- PUBLIC résiduel non plus (même exigence que T56) ─────────────────────────
+do $$
+declare
+  v_fn text;
+  v_bad text;
+  v_fns constant text[] := array[
+    'app_hidden.import_legacy_client(uuid, text, text, text, text, text, text, jsonb)',
+    'app_hidden.import_legacy_carnet(uuid, int, int)',
+    'app_hidden.import_legacy_fiche(uuid, uuid, uuid, text, int, text, jsonb, text, text, text, int, date, int, jsonb)',
+    'app_hidden.import_legacy_payment(uuid, uuid, int, timestamptz)',
+    'app_hidden.import_legacy_modele(uuid, text, text, jsonb)',
+    'app_hidden.import_legacy_media_asset(uuid, uuid, text, text, text, bigint, jsonb)',
+    'app_hidden.import_legacy_modele_media(uuid, uuid, text, text, text, bigint, int, jsonb)',
+    'public.import_legacy_client_api(uuid, text, text, text, text, text, text, jsonb)',
+    'public.import_legacy_carnet_api(uuid, int, int)',
+    'public.import_legacy_fiche_api(uuid, uuid, uuid, text, int, text, jsonb, text, text, text, int, date, int, jsonb)',
+    'public.import_legacy_payment_api(uuid, uuid, int, timestamptz)',
+    'public.import_legacy_modele_api(uuid, text, text, jsonb)',
+    'public.import_legacy_media_asset_api(uuid, uuid, text, text, text, bigint, jsonb)',
+    'public.import_legacy_modele_media_api(uuid, uuid, text, text, text, bigint, int, jsonb)'
+  ];
+  v_schema text;
+  v_name text;
+begin
+  foreach v_fn in array v_fns loop
+    v_schema := split_part(v_fn, '.', 1);
+    v_name := split_part(split_part(v_fn, '.', 2), '(', 1);
+
+    select p.proacl::text into v_bad
+    from pg_proc p join pg_namespace n on n.oid = p.pronamespace
+    where n.nspname = v_schema and p.proname = v_name;
+    if v_bad is not null and v_bad ~ '(^|,)=[^/]*/' then
+      raise exception 'T75 FAIL: PUBLIC a EXECUTE sur %  (proacl=%)', v_fn, v_bad;
+    end if;
+    if has_function_privilege('anon', v_fn, 'execute') then
+      raise exception 'T75 FAIL: anon a EXECUTE sur %', v_fn;
+    end if;
+    if has_function_privilege('authenticated', v_fn, 'execute') then
+      raise exception 'T75 FAIL: authenticated a EXECUTE sur %', v_fn;
+    end if;
+    if not has_function_privilege('service_role', v_fn, 'execute') then
+      raise exception 'T75 FAIL: service_role n''a PAS EXECUTE sur % (import bloqué)', v_fn;
+    end if;
+  end loop;
+  raise notice 'T75 OK — 14 fonctions import_legacy_* (app_hidden + wrappers public) : PUBLIC/anon/authenticated refusés, service_role seul habilité';
+end;
+$$;
+
+-- ── T76 — propriétés des fonctions : app_hidden.* = SECURITY DEFINER +
+-- search_path verrouillé ; public.*_api = SECURITY INVOKER (relais pur, ne
+-- doit JAMAIS élever ses propres privilèges) + search_path verrouillé
+-- (même exigence que T56) ───────────────────────────────────────────────────
+do $$
+declare
+  v_name text;
+  v_names constant text[] := array[
+    'import_legacy_client', 'import_legacy_carnet', 'import_legacy_fiche',
+    'import_legacy_payment', 'import_legacy_modele', 'import_legacy_media_asset',
+    'import_legacy_modele_media'
+  ];
+begin
+  foreach v_name in array v_names loop
+    if not exists (
+      select 1 from pg_proc p join pg_namespace n on n.oid = p.pronamespace
+      where n.nspname = 'app_hidden' and p.proname = v_name and p.prosecdef
+    ) then
+      raise exception 'T76 FAIL: app_hidden.% n''est pas SECURITY DEFINER', v_name;
+    end if;
+    if not exists (
+      select 1 from pg_proc p join pg_namespace n on n.oid = p.pronamespace
+      where n.nspname = 'app_hidden' and p.proname = v_name
+        and p.proconfig is not null and array_to_string(p.proconfig, ',') like '%search_path=%'
+    ) then
+      raise exception 'T76 FAIL: app_hidden.% sans search_path verrouillé', v_name;
+    end if;
+    if exists (
+      select 1 from pg_proc p join pg_namespace n on n.oid = p.pronamespace
+      where n.nspname = 'public' and p.proname = v_name || '_api' and p.prosecdef
+    ) then
+      raise exception 'T76 FAIL: public.%_api est SECURITY DEFINER (attendu INVOKER — ne doit jamais élever son propre privilège)', v_name;
+    end if;
+    if not exists (
+      select 1 from pg_proc p join pg_namespace n on n.oid = p.pronamespace
+      where n.nspname = 'public' and p.proname = v_name || '_api'
+        and p.proconfig is not null and array_to_string(p.proconfig, ',') like '%search_path=%'
+    ) then
+      raise exception 'T76 FAIL: public.%_api sans search_path verrouillé', v_name;
+    end if;
+  end loop;
+  raise notice 'T76 OK — 7 fonctions app_hidden.import_legacy_* SECURITY DEFINER + search_path verrouillé ; 7 wrappers public.*_api SECURITY INVOKER + search_path verrouillé, app_hidden toujours non exposé';
+end;
+$$;
+
+-- ── T77 — §19/§24 : cette migration n'a NI ajouté de GRANT INSERT à
+-- anon/authenticated sur les tables métier (régression — inchangé depuis
+-- Phase 4/T57), NI généralisé/modifié le privilège de table de service_role
+-- (constat T54, ligne ~1575 : service_role porte un GRANT ALL par défaut de
+-- la plateforme Supabase sur `public.*`, PRÉEXISTANT et JAMAIS révoqué par
+-- AUCUNE migration de ce dépôt — le tester "absent" serait donc un faux
+-- test, toujours faux). La VRAIE garantie architecturale de l'import legacy
+-- n'est pas un GRANT de table absent, mais que les 7 fonctions
+-- `app_hidden.import_legacy_*` sont SECURITY DEFINER (T76) : l'écriture
+-- métier passe par le privilège du PROPRIÉTAIRE de la fonction, jamais par
+-- une dépendance au GRANT de table de l'appelant — un appel RPC direct à
+-- une insertion service_role brute, hors de ces fonctions, n'existe nulle
+-- part dans le code de ce dépôt (Edge Function : uniquement `.rpc(...)`,
+-- jamais `.from(table).insert(...)`, cf. supabase/functions/
+-- import-legacy-data/index.ts) ───────────────────────────────────────────
+do $$
+declare
+  v_tbl text;
+  v_tbls constant text[] := array['clients', 'carnets', 'fiches', 'client_payments', 'modeles', 'modele_medias', 'media_assets'];
+begin
+  -- anon : aucun INSERT métier nulle part (inchangé depuis Phase 4 — régression).
+  foreach v_tbl in array v_tbls loop
+    if has_table_privilege('anon', 'public.' || v_tbl, 'insert') then
+      raise exception 'T77 FAIL: anon a INSERT sur public.% (régression — devrait rester absent depuis Phase 4)', v_tbl;
+    end if;
+  end loop;
+
+  -- authenticated : `carnets`/`fiches` sont les 2 tables porteuses de
+  -- numérotation touchées par les index de cette migration — exactement les
+  -- 2 tables où un INSERT authenticated accidentel court-circuiterait
+  -- `create_fiche_from_draft`/l'import legacy (déjà testé T46, reconfirmé ici
+  -- spécifiquement APRÈS ce durcissement). `clients`/`client_payments`/
+  -- `modeles`/`modele_medias`/`media_assets` ont légitimement INSERT pour
+  -- authenticated depuis Phase 4 (flux métier normal, sans rapport avec
+  -- l'import legacy) — volontairement HORS scope de cette vérification.
+  if has_table_privilege('authenticated', 'public.carnets', 'insert') then
+    raise exception 'T77 FAIL: authenticated a INSERT sur public.carnets (régression — devrait rester réservé à import_legacy_carnet/create_fiche_from_draft)';
+  end if;
+  if has_table_privilege('authenticated', 'public.fiches', 'insert') then
+    raise exception 'T77 FAIL: authenticated a INSERT sur public.fiches (régression — devrait rester réservé à import_legacy_fiche/create_fiche_from_draft)';
+  end if;
+
+  raise notice 'T77 OK — aucun GRANT INSERT nouveau pour anon (toutes tables) / authenticated (carnets, fiches) ; l''écriture métier de l''import legacy passe exclusivement par les 7 fonctions SECURITY DEFINER (T76), jamais par une dépendance au GRANT de table de service_role (préexistant, plateforme, jamais modifié par ce dépôt — T54)';
+end;
+$$;
+
+-- ── T78 — isolation multi-atelier : le MÊME legacy_id dans 2 ateliers
+-- différents ne collisionne JAMAIS (client + modèle) ────────────────────────
+do $$
+declare
+  v_client_a public.clients;
+  v_client_b public.clients;
+  v_modele_a public.modeles;
+  v_modele_b public.modeles;
+begin
+  set local role service_role;
+  select * into v_client_a from app_hidden.import_legacy_client('60600000-0000-0000-0000-000000000b01', 'legacy-t78-client', 'Aïda Ndiaye');
+  select * into v_client_b from app_hidden.import_legacy_client('60600000-0000-0000-0000-000000000b02', 'legacy-t78-client', 'Aïda Ndiaye (atelier B)');
+  select * into v_modele_a from app_hidden.import_legacy_modele('60600000-0000-0000-0000-000000000b01', 'legacy-t78-modele', 'Boubou');
+  select * into v_modele_b from app_hidden.import_legacy_modele('60600000-0000-0000-0000-000000000b02', 'legacy-t78-modele', 'Boubou');
+  reset role;
+
+  if v_client_a.id = v_client_b.id then
+    raise exception 'T78 FAIL: le même legacy_id client dans 2 ateliers a produit le MÊME uuid (collision)';
+  end if;
+  if v_modele_a.id = v_modele_b.id then
+    raise exception 'T78 FAIL: le même legacy_id modèle dans 2 ateliers a produit le MÊME uuid (collision)';
+  end if;
+  raise notice 'T78 OK — isolation multi-atelier : même legacy_id dans 2 ateliers -> 2 uuid distincts (client + modèle), jamais de collision';
+end;
+$$;
+
+-- ── T79 — client : idempotence stricte (retry -> même ligne, jamais un
+-- doublon), display_name VERBATIM (décision D2, aucune heuristique de
+-- découpage), legacy_id/legacy_name préservés dans metadata ────────────────
+do $$
+declare
+  v_first public.clients;
+  v_retry public.clients;
+  v_count int;
+begin
+  set local role service_role;
+  select * into v_first from app_hidden.import_legacy_client(
+    '60600000-0000-0000-0000-000000000b01', 'legacy-t79-client', 'Modou Fall Sarr',
+    null, null, null, null, jsonb_build_object('legacy_name', 'Modou Fall Sarr')
+  );
+  select * into v_retry from app_hidden.import_legacy_client(
+    '60600000-0000-0000-0000-000000000b01', 'legacy-t79-client', 'Modou Fall Sarr'
+  );
+  reset role;
+
+  if v_first.display_name <> 'Modou Fall Sarr' then
+    raise exception 'T79 FAIL: display_name n''est pas verbatim (obtenu %)', v_first.display_name;
+  end if;
+  if v_first.metadata ->> 'legacy_id' <> 'legacy-t79-client' then
+    raise exception 'T79 FAIL: metadata.legacy_id absent/incorrect';
+  end if;
+  if v_first.metadata ->> 'legacy_name' <> 'Modou Fall Sarr' then
+    raise exception 'T79 FAIL: metadata.legacy_name non préservé';
+  end if;
+  if v_retry.id <> v_first.id then
+    raise exception 'T79 FAIL: retry client -> uuid différent (%  vs  %), pas idempotent', v_first.id, v_retry.id;
+  end if;
+
+  select count(*) into v_count from public.clients
+  where workshop_id = '60600000-0000-0000-0000-000000000b01' and metadata ->> 'legacy_id' = 'legacy-t79-client';
+  if v_count <> 1 then
+    raise exception 'T79 FAIL: % ligne(s) en base après retry (attendu exactement 1)', v_count;
+  end if;
+  raise notice 'T79 OK — client : idempotent, display_name verbatim, legacy_id/legacy_name préservés, aucun doublon après retry';
+end;
+$$;
+
+-- ── T80 — modèle : idempotence, JAMAIS dédupliqué par nom seul (2 legacy_id
+-- distincts portant le même nom => 2 modèles distincts) ─────────────────────
+do $$
+declare
+  v_first public.modeles;
+  v_retry public.modeles;
+  v_second public.modeles;
+  v_count int;
+begin
+  set local role service_role;
+  select * into v_first from app_hidden.import_legacy_modele('60600000-0000-0000-0000-000000000b01', 'legacy-t80-modele-1', 'Robe wax');
+  select * into v_retry from app_hidden.import_legacy_modele('60600000-0000-0000-0000-000000000b01', 'legacy-t80-modele-1', 'Robe wax');
+  select * into v_second from app_hidden.import_legacy_modele('60600000-0000-0000-0000-000000000b01', 'legacy-t80-modele-2', 'Robe wax');
+  reset role;
+
+  if v_retry.id <> v_first.id then
+    raise exception 'T80 FAIL: retry modèle -> uuid différent, pas idempotent';
+  end if;
+  if v_second.id = v_first.id then
+    raise exception 'T80 FAIL: même nom + legacy_id DIFFÉRENT -> devrait être un modèle distinct, jamais dédupliqué par nom seul';
+  end if;
+
+  select count(*) into v_count from public.modeles
+  where workshop_id = '60600000-0000-0000-0000-000000000b01' and metadata ->> 'legacy_id' = 'legacy-t80-modele-1';
+  if v_count <> 1 then
+    raise exception 'T80 FAIL: % ligne(s) en base après retry (attendu exactement 1)', v_count;
+  end if;
+  raise notice 'T80 OK — modèle : idempotent, jamais dédupliqué par le nom seul (2 legacy_id -> 2 modèles distincts même nom identique)';
+end;
+$$;
+
+-- ── T81 — carnet + fiches : préservation EXACTE des trous historiques
+-- (1, 2, 5 -> jamais 1, 2, 3), next_number correct, mapping de statut D8,
+-- formule page/slot canonique (identique à create_fiche_from_draft) ────────
+do $$
+declare
+  v_carnet public.carnets;
+  v_fiche1 public.fiches;
+  v_fiche2 public.fiches;
+  v_fiche5 public.fiches;
+  v_fiche1_retry public.fiches;
+  v_client public.clients;
+  v_numbers int[];
+  v_count int;
+begin
+  set local role service_role;
+  select * into v_client from app_hidden.import_legacy_client('60600000-0000-0000-0000-000000000b01', 'legacy-t81-client', 'Cliente T81');
+  select * into v_carnet from app_hidden.import_legacy_carnet('60600000-0000-0000-0000-000000000b01', 42, 6);
+  select * into v_fiche1 from app_hidden.import_legacy_fiche('60600000-0000-0000-0000-000000000b01', v_carnet.id, v_client.id, 'legacy-t81-fiche-1', 1, 'recu');
+  select * into v_fiche2 from app_hidden.import_legacy_fiche('60600000-0000-0000-0000-000000000b01', v_carnet.id, null, 'legacy-t81-fiche-2', 2, 'couture');
+  select * into v_fiche5 from app_hidden.import_legacy_fiche('60600000-0000-0000-0000-000000000b01', v_carnet.id, v_client.id, 'legacy-t81-fiche-5', 5, 'pret');
+  select * into v_fiche1_retry from app_hidden.import_legacy_fiche('60600000-0000-0000-0000-000000000b01', v_carnet.id, v_client.id, 'legacy-t81-fiche-1', 1, 'recu');
+  reset role;
+
+  if v_carnet.number <> 42 then
+    raise exception 'T81 FAIL: numéro de carnet non préservé (obtenu %)', v_carnet.number;
+  end if;
+  if v_fiche1.status <> 'received' or v_fiche2.status <> 'sewing' or v_fiche5.status <> 'ready' then
+    raise exception 'T81 FAIL: mapping de statut D8 incorrect (recu=%, couture=%, pret=%)', v_fiche1.status, v_fiche2.status, v_fiche5.status;
+  end if;
+  if v_fiche2.client_id is not null then
+    raise exception 'T81 FAIL: fiche sans client (D4) -> client_id devrait rester NULL';
+  end if;
+  if v_fiche5.page_number <> ((5 - 1) / 4) + 1 or v_fiche5.slot_number <> ((5 - 1) % 4) + 1 then
+    raise exception 'T81 FAIL: page_number/slot_number incohérents avec la formule canonique (page=%, slot=%)', v_fiche5.page_number, v_fiche5.slot_number;
+  end if;
+  if v_fiche1_retry.id <> v_fiche1.id then
+    raise exception 'T81 FAIL: retry fiche #1 -> uuid différent, pas idempotent';
+  end if;
+
+  select array_agg(number order by number) into v_numbers from public.fiches where carnet_id = v_carnet.id;
+  if v_numbers <> array[1, 2, 5] then
+    raise exception 'T81 FAIL: numéros de fiches = % (attendu EXACTEMENT [1,2,5], jamais [1,2,3])', v_numbers;
+  end if;
+
+  select next_number into v_count from public.carnets where id = v_carnet.id;
+  if v_count <> 6 then
+    raise exception 'T81 FAIL: next_number = % (attendu 6, préservé tel que fourni, jamais recalculé automatiquement)', v_count;
+  end if;
+
+  raise notice 'T81 OK — carnet/fiches : trous historiques [1,2,5] préservés EXACTEMENT, next_number=6, statuts D8 mappés, client_id nullable (D4), page/slot canoniques, idempotent';
+end;
+$$;
+
+-- ── T82 — paiement legacy (D6) : champs exacts, au plus 1 paiement legacy
+-- par fiche (idempotence stricte), montant <= 0 rejeté ──────────────────────
+do $$
+declare
+  v_client public.clients;
+  v_carnet public.carnets;
+  v_fiche public.fiches;
+  v_first public.client_payments;
+  v_retry public.client_payments;
+  v_rejected boolean := false;
+  v_count int;
+begin
+  set local role service_role;
+  select * into v_client from app_hidden.import_legacy_client('60600000-0000-0000-0000-000000000b01', 'legacy-t82-client', 'Cliente T82');
+  select * into v_carnet from app_hidden.import_legacy_carnet('60600000-0000-0000-0000-000000000b01', 43, 2);
+  select * into v_fiche from app_hidden.import_legacy_fiche('60600000-0000-0000-0000-000000000b01', v_carnet.id, v_client.id, 'legacy-t82-fiche', 1, 'livre');
+  select * into v_first from app_hidden.import_legacy_payment('60600000-0000-0000-0000-000000000b01', v_fiche.id, 15000, now());
+  select * into v_retry from app_hidden.import_legacy_payment('60600000-0000-0000-0000-000000000b01', v_fiche.id, 15000, now());
+  begin
+    perform app_hidden.import_legacy_payment('60600000-0000-0000-0000-000000000b01', v_fiche.id, 0, now());
+  exception when others then v_rejected := true;
+  end;
+  reset role;
+
+  if v_first.amount <> 15000 then raise exception 'T82 FAIL: amount incorrect'; end if;
+  if v_first.paid_at is not null then raise exception 'T82 FAIL: paid_at devrait être NULL (D6)'; end if;
+  if v_first.method is not null then raise exception 'T82 FAIL: method devrait être NULL (D6)'; end if;
+  if v_first.note <> 'Reprise du carnet — date du versement inconnue' then
+    raise exception 'T82 FAIL: note D6 incorrecte (obtenu %)', v_first.note;
+  end if;
+  if v_first.metadata ->> 'source' <> 'legacy_import' then
+    raise exception 'T82 FAIL: metadata.source devrait être legacy_import';
+  end if;
+  if v_retry.id <> v_first.id then
+    raise exception 'T82 FAIL: retry paiement -> uuid différent, pas idempotent';
+  end if;
+  if not v_rejected then
+    raise exception 'T82 FAIL: un montant <= 0 aurait dû être rejeté';
+  end if;
+
+  select count(*) into v_count from public.client_payments where fiche_id = v_fiche.id and metadata ->> 'source' = 'legacy_import';
+  if v_count <> 1 then
+    raise exception 'T82 FAIL: % ligne(s) en base après retry (attendu exactement 1 — au plus 1 paiement legacy par fiche)', v_count;
+  end if;
+  raise notice 'T82 OK — paiement legacy (D6) : champs exacts, idempotent (retry -> 1 ligne), montant <= 0 rejeté';
+end;
+$$;
+
+-- ── T83 — média de FICHE : idempotence sur storage_path (retry -> même
+-- ligne), type='model_photo' REFUSÉ (réservé à modele_medias) ──────────────
+do $$
+declare
+  v_client public.clients;
+  v_carnet public.carnets;
+  v_fiche public.fiches;
+  v_first public.media_assets;
+  v_retry public.media_assets;
+  v_rejected boolean := false;
+  v_count int;
+  v_path constant text := 'workshops/60600000-0000-0000-0000-000000000b01/fiches/t83-synthetic/legacy-fabric_photo-1';
+begin
+  set local role service_role;
+  select * into v_client from app_hidden.import_legacy_client('60600000-0000-0000-0000-000000000b01', 'legacy-t83-client', 'Cliente T83');
+  select * into v_carnet from app_hidden.import_legacy_carnet('60600000-0000-0000-0000-000000000b01', 44, 2);
+  select * into v_fiche from app_hidden.import_legacy_fiche('60600000-0000-0000-0000-000000000b01', v_carnet.id, v_client.id, 'legacy-t83-fiche', 1, 'recu');
+  select * into v_first from app_hidden.import_legacy_media_asset('60600000-0000-0000-0000-000000000b01', v_fiche.id, 'fabric_photo', v_path, 'image/jpeg', 1000);
+  select * into v_retry from app_hidden.import_legacy_media_asset('60600000-0000-0000-0000-000000000b01', v_fiche.id, 'fabric_photo', v_path, 'image/jpeg', 1000);
+  begin
+    perform app_hidden.import_legacy_media_asset('60600000-0000-0000-0000-000000000b01', v_fiche.id, 'model_photo', v_path || '-2', 'image/jpeg', 1000);
+  exception when others then v_rejected := true;
+  end;
+  reset role;
+
+  if v_retry.id <> v_first.id or v_retry.storage_path <> v_first.storage_path then
+    raise exception 'T83 FAIL: retry média fiche -> pas idempotent (id/storage_path différents)';
+  end if;
+  if not v_rejected then
+    raise exception 'T83 FAIL: type=model_photo aurait dû être refusé pour un média de FICHE';
+  end if;
+
+  select count(*) into v_count from public.media_assets where storage_path = v_path;
+  if v_count <> 1 then
+    raise exception 'T83 FAIL: % ligne(s) en base après retry (attendu exactement 1)', v_count;
+  end if;
+  select count(*) into v_count from public.media_assets where type = 'model_photo';
+  if v_count <> 0 then
+    raise exception 'T83 FAIL: media_assets contient une ligne type=model_photo (valeur enum intentionnellement inutilisée)';
+  end if;
+  raise notice 'T83 OK — média fiche : idempotent sur storage_path, type=model_photo refusé (table réservée : modele_medias)';
+end;
+$$;
+
+-- ── T84 — média de MODÈLE : idempotence sur storage_path, table SÉPARÉE de
+-- media_assets (jamais confondues) ──────────────────────────────────────────
+do $$
+declare
+  v_modele public.modeles;
+  v_first public.modele_medias;
+  v_retry public.modele_medias;
+  v_count int;
+  v_path constant text := 'workshops/60600000-0000-0000-0000-000000000b01/modeles/t84-synthetic/legacy-photo-1';
+begin
+  set local role service_role;
+  select * into v_modele from app_hidden.import_legacy_modele('60600000-0000-0000-0000-000000000b01', 'legacy-t84-modele', 'Ensemble bazin');
+  select * into v_first from app_hidden.import_legacy_modele_media('60600000-0000-0000-0000-000000000b01', v_modele.id, 'photo', v_path, 'image/jpeg', 1000);
+  select * into v_retry from app_hidden.import_legacy_modele_media('60600000-0000-0000-0000-000000000b01', v_modele.id, 'photo', v_path, 'image/jpeg', 1000);
+  reset role;
+
+  if v_retry.id <> v_first.id then
+    raise exception 'T84 FAIL: retry média modèle -> pas idempotent';
+  end if;
+
+  select count(*) into v_count from public.modele_medias where storage_path = v_path;
+  if v_count <> 1 then
+    raise exception 'T84 FAIL: % ligne(s) en base après retry (attendu exactement 1)', v_count;
+  end if;
+  select count(*) into v_count from public.media_assets where storage_path = v_path;
+  if v_count <> 0 then
+    raise exception 'T84 FAIL: le média modèle a fuité dans media_assets (tables jamais confondues)';
+  end if;
+  raise notice 'T84 OK — média modèle : idempotent sur storage_path, table modele_medias jamais confondue avec media_assets';
+end;
+$$;
+
+-- Concurrence RÉELLE (2 appels HTTP simultanés -> exactement 1 ligne, même
+-- uuid) : preuve end-to-end dans scripts/test-import-legacy-data.mjs (§15,
+-- même convention que la concurrence pin_auth — T9/T10 de ce fichier
+-- restent volontairement séquentielles, la concurrence réseau réelle est
+-- prouvée par le script Node, jamais simulée ici).
+
+do $$ begin raise notice '════════  SCHÉMA PHASE 2 + WRAPPER PHASE 3A + CORRECTIFS GRANT + PHASE 4 GRANT/RLS + WRAPPER PHASE 9A + STORAGE PHASE 8A + STORAGE PHASE 8B + PIVOT AUTH PIN + THROTTLE ATOMIQUE + IMPORT LEGACY PHASE 6B0 : 84 groupes de tests OK  ════════'; end; $$;
 
 rollback;

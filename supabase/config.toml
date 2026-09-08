@@ -95,6 +95,17 @@ verify_jwt = false
 import_map = "./functions/create-fiche-from-draft/deno.json"
 entrypoint = "./functions/create-fiche-from-draft/index.ts"
 
+[functions.import-legacy-data]
+enabled = true
+# Même choix que create-fiche-from-draft/provision-workshop (voir ci-dessus) :
+# vérification du JWT faite explicitement dans le code via `auth.getClaims()`,
+# pas déléguée à Kong. Phase 6B0 — infrastructure d'import legacy uniquement,
+# aucune donnée réelle importée par cette phase. Voir
+# supabase/functions/import-legacy-data/index.ts.
+verify_jwt = false
+import_map = "./functions/import-legacy-data/deno.json"
+entrypoint = "./functions/import-legacy-data/index.ts"
+
 [functions.tayoo-pin-auth]
 enabled = true
 # Nécessairement accessible AVANT toute session (register/login) — jamais un
