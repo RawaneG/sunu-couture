@@ -103,4 +103,37 @@ describe("LocalStoragePaymentRepository — stabilité du snapshot (contrat useS
     const after = payments.list(id);
     expect(after).not.toBe(before);
   });
+
+  // RÉGRESSION — sans ce cache, `getBalance()` construisait un objet
+  // `{price, paid, reste}` FRAIS à CHAQUE appel, même sans changement réel :
+  // `useFichePayments` (useSyncExternalStore) voyait alors une "nouvelle"
+  // valeur à chaque rendu et bouclait indéfiniment ("Maximum update depth
+  // exceeded") dès l'ouverture d'une fiche avec un prix/avance renseigné.
+  it("getBalance() renvoie la MÊME référence tant que la fiche n'a pas changé", async () => {
+    const fiches = new LocalStorageFicheRepository();
+    const payments = new LocalStoragePaymentRepository();
+    const id = await fiches.add();
+    await fiches.setInfo(id, { price: 10000 });
+    await payments.add({ ficheId: id, amount: 3000 });
+    const first = payments.getBalance(id);
+    const second = payments.getBalance(id);
+    expect(second).toBe(first);
+  });
+
+  it("getBalance() renvoie une NOUVELLE référence après une mutation réelle (nouveau versement)", async () => {
+    const fiches = new LocalStorageFicheRepository();
+    const payments = new LocalStoragePaymentRepository();
+    const id = await fiches.add();
+    const before = payments.getBalance(id);
+    await payments.add({ ficheId: id, amount: 5000 });
+    const after = payments.getBalance(id);
+    expect(after).not.toBe(before);
+  });
+
+  it("getBalance() sur une fiche introuvable renvoie TOUJOURS la même référence stable (ZERO_BALANCE)", () => {
+    const payments = new LocalStoragePaymentRepository();
+    const first = payments.getBalance("inconnue");
+    const second = payments.getBalance("toujours-inconnue");
+    expect(second).toBe(first);
+  });
 });
