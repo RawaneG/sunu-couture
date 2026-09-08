@@ -7,6 +7,31 @@ export type Json =
   | Json[]
 
 export type Database = {
+  graphql_public: {
+    Tables: {
+      [_ in never]: never
+    }
+    Views: {
+      [_ in never]: never
+    }
+    Functions: {
+      graphql: {
+        Args: {
+          extensions?: Json
+          operationName?: string
+          query?: string
+          variables?: Json
+        }
+        Returns: Json
+      }
+    }
+    Enums: {
+      [_ in never]: never
+    }
+    CompositeTypes: {
+      [_ in never]: never
+    }
+  }
   public: {
     Tables: {
       carnets: {
@@ -401,6 +426,7 @@ export type Database = {
           created_at: string
           deleted_at: string | null
           id: string
+          metadata: Json
           nom: string
           updated_at: string
           workshop_id: string
@@ -409,6 +435,7 @@ export type Database = {
           created_at?: string
           deleted_at?: string | null
           id?: string
+          metadata?: Json
           nom: string
           updated_at?: string
           workshop_id: string
@@ -417,6 +444,7 @@ export type Database = {
           created_at?: string
           deleted_at?: string | null
           id?: string
+          metadata?: Json
           nom?: string
           updated_at?: string
           workshop_id?: string
@@ -906,6 +934,291 @@ export type Database = {
       }
     }
     Functions: {
+      create_fiche_from_draft_api: {
+        Args: { p_client_id: string; p_fiche: Json; p_workshop_id: string }
+        Returns: {
+          carnet_id: string
+          client_id: string | null
+          created_at: string
+          deleted_at: string | null
+          description: string | null
+          due_date: string | null
+          fabric_notes: string | null
+          garment: string
+          id: string
+          measurements: Json
+          metadata: Json
+          number: number
+          page_number: number
+          quantity: number
+          settled_at: string | null
+          slot_number: number
+          state: Database["public"]["Enums"]["fiche_state"]
+          status: Database["public"]["Enums"]["fiche_status"]
+          total_price: number
+          updated_at: string
+          version: number
+          workshop_id: string
+        }
+        SetofOptions: {
+          from: "*"
+          to: "fiches"
+          isOneToOne: true
+          isSetofReturn: false
+        }
+      }
+      import_legacy_carnet_api: {
+        Args: {
+          p_next_number: number
+          p_number: number
+          p_status?: Database["public"]["Enums"]["carnet_status"]
+          p_workshop_id: string
+        }
+        Returns: {
+          archived_at: string | null
+          created_at: string
+          fiches_par_carnet: number
+          id: string
+          next_number: number
+          number: number
+          status: Database["public"]["Enums"]["carnet_status"]
+          updated_at: string
+          workshop_id: string
+        }
+        SetofOptions: {
+          from: "*"
+          to: "carnets"
+          isOneToOne: true
+          isSetofReturn: false
+        }
+      }
+      import_legacy_client_api: {
+        Args: {
+          p_display_name: string
+          p_first_name?: string
+          p_last_name?: string
+          p_legacy_id: string
+          p_metadata?: Json
+          p_phone_display?: string
+          p_phone_e164?: string
+          p_workshop_id: string
+        }
+        Returns: {
+          created_at: string
+          deleted_at: string | null
+          display_name: string
+          first_name: string | null
+          id: string
+          last_name: string | null
+          metadata: Json
+          nickname: string | null
+          phone_display: string | null
+          phone_e164: string | null
+          updated_at: string
+          workshop_id: string
+        }
+        SetofOptions: {
+          from: "*"
+          to: "clients"
+          isOneToOne: true
+          isSetofReturn: false
+        }
+      }
+      import_legacy_fiche_api: {
+        Args: {
+          p_carnet_id: string
+          p_client_id: string
+          p_created_at?: string
+          p_description?: string
+          p_due_date?: string
+          p_fabric_notes?: string
+          p_garment?: string
+          p_legacy_id: string
+          p_legacy_status: string
+          p_measurements?: Json
+          p_metadata?: Json
+          p_number: number
+          p_quantity?: number
+          p_settled_at?: string
+          p_total_price?: number
+          p_workshop_id: string
+        }
+        Returns: {
+          carnet_id: string
+          client_id: string | null
+          created_at: string
+          deleted_at: string | null
+          description: string | null
+          due_date: string | null
+          fabric_notes: string | null
+          garment: string
+          id: string
+          measurements: Json
+          metadata: Json
+          number: number
+          page_number: number
+          quantity: number
+          settled_at: string | null
+          slot_number: number
+          state: Database["public"]["Enums"]["fiche_state"]
+          status: Database["public"]["Enums"]["fiche_status"]
+          total_price: number
+          updated_at: string
+          version: number
+          workshop_id: string
+        }
+        SetofOptions: {
+          from: "*"
+          to: "fiches"
+          isOneToOne: true
+          isSetofReturn: false
+        }
+      }
+      import_legacy_media_asset_api: {
+        Args: {
+          p_fiche_id: string
+          p_metadata?: Json
+          p_mime_type: string
+          p_size_bytes?: number
+          p_storage_path: string
+          p_type: string
+          p_workshop_id: string
+        }
+        Returns: {
+          created_at: string
+          deleted_at: string | null
+          fiche_id: string
+          id: string
+          metadata: Json
+          mime_type: string
+          size_bytes: number
+          storage_path: string
+          type: Database["public"]["Enums"]["media_type"]
+          workshop_id: string
+        }
+        SetofOptions: {
+          from: "*"
+          to: "media_assets"
+          isOneToOne: true
+          isSetofReturn: false
+        }
+      }
+      import_legacy_modele_api: {
+        Args: {
+          p_legacy_id: string
+          p_metadata?: Json
+          p_nom: string
+          p_workshop_id: string
+        }
+        Returns: {
+          created_at: string
+          deleted_at: string | null
+          id: string
+          metadata: Json
+          nom: string
+          updated_at: string
+          workshop_id: string
+        }
+        SetofOptions: {
+          from: "*"
+          to: "modeles"
+          isOneToOne: true
+          isSetofReturn: false
+        }
+      }
+      import_legacy_modele_media_api: {
+        Args: {
+          p_kind: string
+          p_metadata?: Json
+          p_mime_type: string
+          p_modele_id: string
+          p_position?: number
+          p_size_bytes?: number
+          p_storage_path: string
+          p_workshop_id: string
+        }
+        Returns: {
+          created_at: string
+          deleted_at: string | null
+          id: string
+          kind: string
+          metadata: Json
+          mime_type: string
+          modele_id: string
+          position: number
+          size_bytes: number
+          storage_path: string
+          workshop_id: string
+        }
+        SetofOptions: {
+          from: "*"
+          to: "modele_medias"
+          isOneToOne: true
+          isSetofReturn: false
+        }
+      }
+      import_legacy_payment_api: {
+        Args: {
+          p_amount: number
+          p_fiche_id: string
+          p_recorded_at?: string
+          p_workshop_id: string
+        }
+        Returns: {
+          amount: number
+          created_at: string
+          fiche_id: string
+          id: string
+          metadata: Json
+          method: Database["public"]["Enums"]["payment_method"] | null
+          note: string | null
+          paid_at: string | null
+          recorded_at: string
+          workshop_id: string
+        }
+        SetofOptions: {
+          from: "*"
+          to: "client_payments"
+          isOneToOne: true
+          isSetofReturn: false
+        }
+      }
+      pin_auth_lookup_account_api: {
+        Args: { p_phone_key: string }
+        Returns: {
+          password_salt: string
+          user_id: string
+        }[]
+      }
+      pin_auth_register_account_api: {
+        Args: {
+          p_password_salt: string
+          p_phone_key: string
+          p_user_id: string
+        }
+        Returns: undefined
+      }
+      pin_auth_register_consume_attempt_api: {
+        Args: { p_key_hash: string }
+        Returns: {
+          allowed: boolean
+        }[]
+      }
+      pin_auth_throttle_consume_attempt_api: {
+        Args: { p_key_hashes: string[] }
+        Returns: {
+          allowed: boolean
+          locked_until: string
+        }[]
+      }
+      pin_auth_throttle_reset_api: {
+        Args: { p_key_hashes: string[] }
+        Returns: undefined
+      }
+      pin_auth_touch_login_api: {
+        Args: { p_user_id: string }
+        Returns: undefined
+      }
       provision_workshop_api: {
         Args: { p_name: string; p_owner: string }
         Returns: {
@@ -1071,6 +1384,9 @@ export type CompositeTypes<
     : never
 
 export const Constants = {
+  graphql_public: {
+    Enums: {},
+  },
   public: {
     Enums: {
       carnet_status: ["active", "full", "archived"],
@@ -1099,3 +1415,4 @@ export const Constants = {
     },
   },
 } as const
+
