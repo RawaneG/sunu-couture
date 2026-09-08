@@ -44,7 +44,12 @@ async function toAuthError(raw: unknown): Promise<AuthError> {
     try {
       const body = (await raw.context.json()) as { error?: string; message?: string };
       if (body.error && body.error in GENERIC_ERRORS) return GENERIC_ERRORS[body.error];
-      return { code: "unknown", message: body.message ?? FALLBACK_ERROR.message };
+      // Ne JAMAIS afficher `body.message` tel quel (corr. Gate Auth §18) : une
+      // erreur HTTP peut venir d'une couche intermédiaire (passerelle/Kong,
+      // ex. panne du conteneur Edge Function -> "name resolution failed")
+      // plutôt que de `tayoo-pin-auth` lui-même — un `code` reconnu ci-dessus
+      // est le SEUL cas où le texte affiché est garanti vérifié/français.
+      return FALLBACK_ERROR;
     } catch {
       return FALLBACK_ERROR;
     }
