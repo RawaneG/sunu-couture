@@ -12,6 +12,7 @@ import { STATUS_DOT_COLOR } from "../components/ui/StatusPill";
 import { IconCheckSquare, IconPlus, IconSquare, IconTrash, IconUsers, IconX } from "../lib/icons";
 import { matchesQuery } from "../lib/search";
 import { haptic } from "../lib/haptics";
+import { formatSenegalLocalNumber } from "../lib/phone";
 
 export default function ClientsList() {
   const clients = useClients();
@@ -208,7 +209,7 @@ export default function ClientsList() {
                     <span className="min-w-0 flex-1">
                       <span className="block truncate text-[13.5px] font-bold">{c.name}</span>
                       <span className="mt-0.5 block text-[11.5px] text-ink-faint tabular-nums">
-                        {c.phone || "Numéro non renseigné"}
+                        {c.phone ? formatSenegalLocalNumber(c.phone) : "Numéro non renseigné"}
                       </span>
                     </span>
                     {!selectMode && clientFiches.length > 0 && (

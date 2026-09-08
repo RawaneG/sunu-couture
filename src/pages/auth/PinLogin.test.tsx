@@ -54,7 +54,7 @@ describe("PinLogin — connexion via PIN (corr. Gate Auth §6/§34/§46/§48)", 
     localStorage.setItem("tayoo:last-phone", "+221770000099");
     renderPinLogin();
     expect(screen.getByText("Bon retour")).toBeInTheDocument();
-    expect(screen.getByText(/77 •• •• •• 9/)).toBeInTheDocument();
+    expect(screen.getByText(/77 ••• •• 99/)).toBeInTheDocument();
     expect(screen.getByText(/ce n'est pas mon numéro/i)).toBeInTheDocument();
   });
 

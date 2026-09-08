@@ -9,6 +9,7 @@ import OrderRow from "../components/ui/OrderRow";
 import ConfirmDialog from "../components/ui/ConfirmDialog";
 import { IconPhone, IconPlus, IconTrash } from "../lib/icons";
 import { haptic } from "../lib/haptics";
+import { formatSenegalLocalNumber } from "../lib/phone";
 
 export default function ClientDetail() {
   const { id } = useParams();
@@ -122,7 +123,7 @@ export default function ClientDetail() {
           <Avatar photo={client.photo} seed={client.colorSeed} size={72} />
           <div className="min-w-0 flex-1">
             <p className="truncate text-lg font-extrabold">{client.name}</p>
-            <p className="text-[13px] text-ink-faint tabular-nums">{client.phone || "Numéro non renseigné"}</p>
+            <p className="text-[13px] text-ink-faint tabular-nums">{client.phone ? formatSenegalLocalNumber(client.phone) : "Numéro non renseigné"}</p>
           </div>
           {client.phone && (
             <a

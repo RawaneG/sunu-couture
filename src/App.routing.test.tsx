@@ -252,7 +252,7 @@ describe("Navigation Auth — aucune impasse, Retour déterministe (corr. Gate A
 
     await user.click(screen.getByRole("button", { name: "Retour" }));
     const input = await screen.findByLabelText("Numéro de téléphone");
-    expect(input).toHaveValue("77 00 00 00 1");
+    expect(input).toHaveValue("77 000 00 01");
   });
 
   it("CreatePinFlow création -> confirmation -> Retour -> revient à l'étape création (même route, PIN jamais dans history.state)", async () => {
@@ -281,7 +281,7 @@ describe("Navigation Auth — aucune impasse, Retour déterministe (corr. Gate A
 
     await user.click(screen.getByRole("button", { name: "Retour" }));
     const input = await screen.findByLabelText("Numéro de téléphone");
-    expect(input).toHaveValue("77 00 00 00 9");
+    expect(input).toHaveValue("77 000 00 09");
   });
 });
 

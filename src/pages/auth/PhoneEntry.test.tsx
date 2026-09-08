@@ -88,6 +88,16 @@ describe("PhoneEntry — saisie téléphone, purement une étape de navigation (
   // doit jamais obliger à tout retaper.
   it("préremplit le champ avec le numéro déjà saisi lors d'un passage précédent", () => {
     renderPhoneEntry({ mode: "register", phoneE164: "+221770000001" });
-    expect(screen.getByLabelText("Numéro de téléphone")).toHaveValue("77 00 00 00 1");
+    expect(screen.getByLabelText("Numéro de téléphone")).toHaveValue("77 000 00 01");
+  });
+
+  // Corr. demande explicite — formatage réactif « XX XXX XX XX » (2-3-2-2) au
+  // fur et à mesure de la frappe, pas seulement au préremplissage.
+  it("reformate visuellement en direct au format « XX XXX XX XX » pendant la frappe", async () => {
+    const user = userEvent.setup();
+    renderPhoneEntry();
+    const input = screen.getByLabelText("Numéro de téléphone");
+    await user.type(input, "770123456");
+    expect(input).toHaveValue("77 012 34 56");
   });
 });

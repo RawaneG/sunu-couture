@@ -4,7 +4,7 @@ import type { Location } from "react-router-dom";
 import { motion } from "framer-motion";
 import { IconAlert, IconPhone } from "../../lib/icons";
 import { haptic } from "../../lib/haptics";
-import { normalizePhoneSenegal } from "../../lib/phone";
+import { normalizePhoneSenegal, formatSenegalLocalNumber } from "../../lib/phone";
 import AuthBackButton from "../../components/auth/AuthBackButton";
 
 interface PhoneEntryState {
@@ -20,14 +20,6 @@ interface PhoneEntryState {
   phoneE164?: string;
 }
 
-/** E.164 -> saisie locale affichable dans le champ (ex. "+221770000001" ->
- * "77 000 00 01"), inverse de `normalizePhoneSenegal` — uniquement pour
- * préremplir l'input, jamais envoyé tel quel au serveur. */
-function localDigitsForInput(e164: string): string {
-  const local = e164.startsWith("+221") ? e164.slice(4) : e164;
-  return (local.match(/.{1,2}/g) ?? [local]).join(" ");
-}
-
 // Étape PURE numéro — ne parle plus jamais directement à Supabase (pivot
 // Gate Auth) : juste une saisie + normalisation, puis navigation vers la
 // création du PIN (inscription) ou l'écran PIN de connexion. Aucun SMS,
@@ -40,7 +32,7 @@ export default function PhoneEntry() {
   const mode = state?.mode ?? "register";
   const from = state?.from;
 
-  const [rawPhone, setRawPhone] = useState(() => (state?.phoneE164 ? localDigitsForInput(state.phoneE164) : ""));
+  const [rawPhone, setRawPhone] = useState(() => (state?.phoneE164 ? formatSenegalLocalNumber(state.phoneE164) : ""));
   const [error, setError] = useState<string | null>(null);
 
   const normalized = normalizePhoneSenegal(rawPhone);
@@ -88,7 +80,7 @@ export default function PhoneEntry() {
               autoFocus
               placeholder="77 000 00 01"
               value={rawPhone}
-              onChange={(e) => setRawPhone(e.target.value)}
+              onChange={(e) => setRawPhone(formatSenegalLocalNumber(e.target.value))}
               aria-describedby={error ? errorId : undefined}
               aria-invalid={error ? true : undefined}
               className="w-full min-w-0 bg-transparent py-1 text-lg outline-none placeholder:text-ink-faint"

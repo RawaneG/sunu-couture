@@ -300,3 +300,14 @@ describe("FicheNew — Retour et confirmation avant perte de saisie", () => {
     expect(screen.queryByText("Quitter sans enregistrer ?")).not.toBeInTheDocument();
   });
 });
+
+// Corr. demande explicite — formatage réactif « XX XXX XX XX » (2-3-2-2).
+describe("FicheNew — téléphone reformaté en direct", () => {
+  it("reformate visuellement en direct pendant la frappe", async () => {
+    const user = userEvent.setup();
+    renderFicheNew(fakeFicheRepository(async () => "x"));
+
+    await user.type(screen.getByLabelText("Téléphone"), "770123456");
+    expect(screen.getByLabelText("Téléphone")).toHaveValue("77 012 34 56");
+  });
+});

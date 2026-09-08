@@ -14,7 +14,8 @@ import SignaturePad from "../components/ui/SignaturePad";
 import ConfirmDialog from "../components/ui/ConfirmDialog";
 import { IconTrash, IconX, IconPhone } from "../lib/icons";
 import { haptic } from "../lib/haptics";
-import { formatFullDateWithYear, toDateInputValue, fromDateInputValue, sanitizePhone } from "../lib/format";
+import { formatFullDateWithYear, toDateInputValue, fromDateInputValue } from "../lib/format";
+import { formatSenegalLocalNumber } from "../lib/phone";
 import { detectDominantColor } from "../lib/color";
 import { FICHE_MESURE_KEYS, FICHE_MESURE_LABELS, FICHE_INFO_KEYS, FICHE_INFO_LABELS } from "../lib/types";
 import type { Modele, FicheChampKey, VoiceNote } from "../lib/types";
@@ -384,14 +385,17 @@ function NomField({ label, value, onChange }: { label: string; value: string; on
 }
 
 function TelephoneField({ value = "", onChange }: { value: string | undefined; onChange: (v: string) => void }) {
-  const digits = value.replace(/\s/g, "");
+  // Reformate à l'affichage — pas seulement à la frappe (corr. demande
+  // explicite) : couvre aussi un numéro déjà enregistré dans un ancien format.
+  const displayValue = formatSenegalLocalNumber(value);
+  const digits = displayValue.replace(/\s/g, "");
   return (
     <label className="flex flex-wrap items-baseline gap-x-2 gap-y-1 border-b border-dotted border-line-strong py-2">
       <span className="flex-none text-[13px] font-bold text-ink-soft">Téléphone</span>
       <span className="flex min-w-22 flex-1 items-center justify-end gap-2">
         <input
-          value={value}
-          onChange={(e) => onChange(sanitizePhone(e.target.value))}
+          value={displayValue}
+          onChange={(e) => onChange(formatSenegalLocalNumber(e.target.value))}
           type="tel"
           inputMode="numeric"
           placeholder="77 000 00 00"
@@ -400,7 +404,7 @@ function TelephoneField({ value = "", onChange }: { value: string | undefined; o
         {digits && (
           <a
             href={`tel:${digits}`}
-            aria-label={`Appeler le ${value}`}
+            aria-label={`Appeler le ${displayValue}`}
             className="flex h-11 w-11 flex-none items-center justify-center rounded-full bg-teal text-white active:scale-90 transition-transform"
           >
             <IconPhone size={12} />
