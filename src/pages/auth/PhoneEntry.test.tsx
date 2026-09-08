@@ -4,10 +4,11 @@ import userEvent from "@testing-library/user-event";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import PhoneEntry from "./PhoneEntry";
 
-function renderPhoneEntry(state?: { mode?: "register" | "login" }) {
+function renderPhoneEntry(state?: { mode?: "register" | "login"; phoneE164?: string }) {
   return render(
     <MemoryRouter initialEntries={[{ pathname: "/connexion/numero", state }]}>
       <Routes>
+        <Route path="/connexion" element={<div>ÉCRAN ACCUEIL</div>} />
         <Route path="/connexion/numero" element={<PhoneEntry />} />
         <Route path="/connexion/creer-code" element={<div>ÉCRAN CRÉER CODE</div>} />
         <Route path="/connexion/code" element={<div>ÉCRAN PIN CONNEXION</div>} />
@@ -73,5 +74,20 @@ describe("PhoneEntry — saisie téléphone, purement une étape de navigation (
     renderPhoneEntry();
     expect(screen.queryByText(/authentifiez-vous/i)).not.toBeInTheDocument();
     expect(screen.queryByText(/identifiant/i)).not.toBeInTheDocument();
+  });
+
+  // Corr. Gate Auth navigation §18/§19
+  it("Retour -> /connexion (déterministe, jamais navigate(-1))", async () => {
+    const user = userEvent.setup();
+    renderPhoneEntry({ mode: "register" });
+    await user.click(screen.getByRole("button", { name: "Retour" }));
+    expect(await screen.findByText("ÉCRAN ACCUEIL")).toBeInTheDocument();
+  });
+
+  // Corr. Gate Auth navigation §20 — un retour depuis l'étape suivante ne
+  // doit jamais obliger à tout retaper.
+  it("préremplit le champ avec le numéro déjà saisi lors d'un passage précédent", () => {
+    renderPhoneEntry({ mode: "register", phoneE164: "+221770000001" });
+    expect(screen.getByLabelText("Numéro de téléphone")).toHaveValue("77 00 00 00 1");
   });
 });

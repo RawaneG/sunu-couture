@@ -25,6 +25,13 @@ const GENERIC_ERRORS: Record<string, AuthError> = {
   locked: { code: "locked", message: "Trop d'essais. Réessaie dans quelques minutes." },
 };
 const FALLBACK_ERROR: AuthError = { code: "unknown", message: "Connexion impossible. Réessaie." };
+/** Distinct de `FALLBACK_ERROR` (corr. Gate Auth handoff §7/§11/§12) : l'Edge
+ * Function a RÉELLEMENT réussi (compte/session créés serveur, ou identifiants
+ * vérifiés) — seule l'activation LOCALE de la session a échoué
+ * (`setSession()`). Le message reste générique ici (traduit par écran dans
+ * `PinAuthResult.code`) ; jamais reproposer `register()` sur ce numéro (qui
+ * échouerait en `phone_in_use`, corr. §12 — impasse observée pendant le Gate). */
+const SESSION_ACTIVATION_FAILED: AuthError = { code: "session_activation_failed", message: "Connexion impossible. Réessaie." };
 
 /** Traduit la réponse d'erreur de `tayoo-pin-auth` (voir son `index.ts` pour
  * le contrat exact `{error, message}`) vers un `AuthError` UI — jamais de
@@ -60,7 +67,12 @@ async function callPinAuth(action: "register" | "login", phoneE164: string, pin:
     access_token: data.access_token,
     refresh_token: data.refresh_token,
   });
-  if (setError || !setData.session) return { session: null, error: FALLBACK_ERROR };
+  // Le serveur a RÉELLEMENT réussi (tokens reçus ci-dessus) — un échec ICI est
+  // une panne d'ACTIVATION locale de la session, jamais un échec d'inscription/
+  // connexion côté serveur (corr. Gate Auth handoff §7/§11/§12 : bug observé
+  // pendant le Gate, cause exacte non prouvée à distance — voir rapport de
+  // diagnostic — mais ce cas DOIT être distingué quel qu'en soit la cause).
+  if (setError || !setData.session) return { session: null, error: SESSION_ACTIVATION_FAILED };
   return { session: toAuthSession(setData.session), error: null };
 }
 

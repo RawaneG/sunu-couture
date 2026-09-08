@@ -6,8 +6,23 @@
 import { describe, expect, it, vi, beforeEach } from "vitest";
 import { render, screen, waitFor, fireEvent } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { MemoryRouter } from "react-router-dom";
+import { MemoryRouter, useNavigate } from "react-router-dom";
 import App from "./App";
+
+/** Simule le bouton Back du NAVIGATEUR (jamais disponible autrement avec un
+ * <MemoryRouter> nu) — `navigate(-1)` déclenche exactement la même navigation
+ * de type POP qu'un vrai retour navigateur côté react-router (corr. Gate
+ * Auth navigation §26/§38). Rendu en frère de <App/>, à l'intérieur du MÊME
+ * <MemoryRouter> — un simple utilitaire de test, jamais un composant de
+ * l'application. */
+function BrowserBackTrigger() {
+  const navigate = useNavigate();
+  return (
+    <button type="button" onClick={() => navigate(-1)}>
+      test-navigateur-back
+    </button>
+  );
+}
 
 const { mockGetSession, mockRegister, mockLogin, mockSubscribe, mockCallProvisionWorkshop, mockCreateRepositoryContainer, authState } = vi.hoisted(() => {
   const state: { session: { userId: string; phoneE164: string | null; expiresAt: number } | null; listeners: Array<(s: unknown) => void> } = {
@@ -213,6 +228,131 @@ describe("Protection des routes métier (RequireAuth branché, pivot Gate Auth P
     // trop court sans que la logique elle-même soit en cause.
     await waitFor(() => expect(screen.getByPlaceholderText("Nom du client")).toBeInTheDocument(), { timeout: 5000 });
     expect(mockCreateRepositoryContainer).toHaveBeenCalledWith(expect.objectContaining({ workshopId: "w1" }));
+  });
+});
+
+describe("Navigation Auth — aucune impasse, Retour déterministe (corr. Gate Auth navigation §17/§19/§33)", () => {
+  it("Welcome -> Numéro (inscription) -> Retour -> Welcome", async () => {
+    const user = userEvent.setup();
+    renderAppAt("/connexion");
+    await user.click(await screen.findByRole("button", { name: "Commencer" }));
+    await screen.findByLabelText("Numéro de téléphone");
+
+    await user.click(screen.getByRole("button", { name: "Retour" }));
+    await waitFor(() => expect(screen.getByText(/bienvenue sur tayoo/i)).toBeInTheDocument());
+  });
+
+  it("Numéro -> CreatePinFlow (création) -> Retour -> Numéro préremplit le numéro déjà saisi", async () => {
+    const user = userEvent.setup();
+    renderAppAt("/connexion");
+    await user.click(await screen.findByRole("button", { name: "Commencer" }));
+    await user.type(await screen.findByLabelText("Numéro de téléphone"), "77 000 00 01");
+    await user.click(screen.getByRole("button", { name: "Continuer" }));
+    await screen.findByText("Choisis ton code");
+
+    await user.click(screen.getByRole("button", { name: "Retour" }));
+    const input = await screen.findByLabelText("Numéro de téléphone");
+    expect(input).toHaveValue("77 00 00 00 1");
+  });
+
+  it("CreatePinFlow création -> confirmation -> Retour -> revient à l'étape création (même route, PIN jamais dans history.state)", async () => {
+    const user = userEvent.setup();
+    renderAppAt("/connexion");
+    await user.click(await screen.findByRole("button", { name: "Commencer" }));
+    await user.type(await screen.findByLabelText("Numéro de téléphone"), "77 000 00 01");
+    await user.click(screen.getByRole("button", { name: "Continuer" }));
+    await screen.findByText("Choisis ton code");
+    fireEvent.change(screen.getByLabelText("Choisis ton code"), { target: { value: "1234" } });
+    await screen.findByText("Encore une fois");
+
+    expect(JSON.stringify(window.history.state ?? {})).not.toContain("1234");
+
+    await user.click(screen.getByRole("button", { name: "Retour" }));
+    expect(await screen.findByText("Choisis ton code")).toBeInTheDocument();
+  });
+
+  it("Welcome -> J'ai déjà un code -> Numéro -> PinLogin -> Retour -> Numéro préremplit le numéro déjà saisi", async () => {
+    const user = userEvent.setup();
+    renderAppAt("/connexion");
+    await user.click(await screen.findByText(/j'ai déjà un code/i));
+    await user.type(await screen.findByLabelText("Numéro de téléphone"), "77 000 00 09");
+    await user.click(screen.getByRole("button", { name: "Continuer" }));
+    await screen.findByLabelText("Entre ton code");
+
+    await user.click(screen.getByRole("button", { name: "Retour" }));
+    const input = await screen.findByLabelText("Numéro de téléphone");
+    expect(input).toHaveValue("77 00 00 00 9");
+  });
+});
+
+describe("Impasse d'inscription observée pendant le Gate (corr. Gate Auth handoff §12/§13/§14/§30/§35/§36)", () => {
+  it("phone_in_use -> état d'action, 'Entrer mon code' mène à PinLogin avec le numéro connu, AUCUN second register()", async () => {
+    mockRegister.mockImplementationOnce(async () => ({ session: null, error: { code: "phone_in_use", message: "Ce numéro est déjà utilisé. Choisis « J'ai déjà un code »." } }) as unknown as Awaited<ReturnType<typeof mockRegister>>);
+    mockLogin.mockResolvedValue({ session: { userId: "u-existing", phoneE164: "+221770000001", expiresAt: 9999999999 }, error: null });
+    mockCallProvisionWorkshop.mockResolvedValue({ kind: "workshop", workshop: { id: "w-existing", name: "Espace test" } });
+    const user = userEvent.setup();
+    renderAppAt("/connexion");
+
+    await user.click(await screen.findByRole("button", { name: "Commencer" }));
+    await user.type(await screen.findByLabelText("Numéro de téléphone"), "77 000 00 01");
+    await user.click(screen.getByRole("button", { name: "Continuer" }));
+    fireEvent.change(await screen.findByLabelText("Choisis ton code"), { target: { value: "1234" } });
+    await screen.findByText("Encore une fois");
+    fireEvent.change(screen.getByLabelText("Confirme ton code"), { target: { value: "1234" } });
+
+    await screen.findByText("Ce numéro a déjà un code");
+    await user.click(screen.getByRole("button", { name: "Entrer mon code" }));
+
+    fireEvent.change(await screen.findByLabelText("Entre ton code"), { target: { value: "1234" } });
+    await waitFor(() => expect(mockLogin).toHaveBeenCalledWith("+221770000001", "1234"));
+    expect(mockRegister).toHaveBeenCalledTimes(1);
+  });
+
+  it("register() réussit serveur mais setSession() échoue (session_activation_failed) -> 'Ton code a bien été créé', jamais 'Connexion impossible. Réessaie.', jamais un second register()", async () => {
+    mockRegister.mockImplementationOnce(async () => ({ session: null, error: { code: "session_activation_failed", message: "Connexion impossible. Réessaie." } }) as unknown as Awaited<ReturnType<typeof mockRegister>>);
+    mockLogin.mockResolvedValue({ session: { userId: "u-recovered", phoneE164: "+221770000002", expiresAt: 9999999999 }, error: null });
+    mockCallProvisionWorkshop.mockResolvedValue({ kind: "workshop", workshop: { id: "w-recovered", name: "Espace test" } });
+    const user = userEvent.setup();
+    renderAppAt("/connexion");
+
+    await user.click(await screen.findByRole("button", { name: "Commencer" }));
+    await user.type(await screen.findByLabelText("Numéro de téléphone"), "77 000 00 02");
+    await user.click(screen.getByRole("button", { name: "Continuer" }));
+    fireEvent.change(await screen.findByLabelText("Choisis ton code"), { target: { value: "1234" } });
+    await screen.findByText("Encore une fois");
+    fireEvent.change(screen.getByLabelText("Confirme ton code"), { target: { value: "1234" } });
+
+    expect(await screen.findByText("Ton code a bien été créé")).toBeInTheDocument();
+    expect(screen.queryByText("Connexion impossible. Réessaie.")).not.toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "Entrer mon code" }));
+    fireEvent.change(await screen.findByLabelText("Entre ton code"), { target: { value: "1234" } });
+    await waitFor(() => expect(mockLogin).toHaveBeenCalledWith("+221770000002", "1234"));
+    expect(mockRegister).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("Back navigateur après authentification (corr. Gate Auth navigation §25/§26/§27/§38)", () => {
+  it("session déjà 'ready' -> Back vers un écran /connexion/* -> replace IMMÉDIAT vers l'app, jamais un register()/login() rejoué", async () => {
+    authState.session = { userId: "u-back", phoneE164: "+221770000005", expiresAt: 9999999999 };
+    mockCallProvisionWorkshop.mockResolvedValue({ kind: "workshop", workshop: { id: "w-back", name: "Espace test" } });
+
+    render(
+      <MemoryRouter initialEntries={["/connexion", "/connexion/numero", "/clients/nouveau"]} initialIndex={2}>
+        <App />
+        <BrowserBackTrigger />
+      </MemoryRouter>,
+    );
+
+    await waitFor(() => expect(screen.getByPlaceholderText("Nom du client")).toBeInTheDocument(), { timeout: 5000 });
+
+    fireEvent.click(screen.getByRole("button", { name: "test-navigateur-back" }));
+
+    // Jamais l'écran numéro (route d'auth) — la garde AuthPublicRoute doit
+    // immédiatement rediriger en `replace` vers l'app dès que status="ready".
+    await waitFor(() => expect(screen.queryByLabelText("Numéro de téléphone")).not.toBeInTheDocument());
+    expect(mockRegister).not.toHaveBeenCalled();
+    expect(mockLogin).not.toHaveBeenCalled();
   });
 });
 

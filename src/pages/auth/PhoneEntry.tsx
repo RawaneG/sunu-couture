@@ -5,12 +5,27 @@ import { motion } from "framer-motion";
 import { IconAlert, IconPhone } from "../../lib/icons";
 import { haptic } from "../../lib/haptics";
 import { normalizePhoneSenegal } from "../../lib/phone";
+import AuthBackButton from "../../components/auth/AuthBackButton";
 
 interface PhoneEntryState {
   /** "register" (défaut, depuis Welcome -> Commencer) ou "login" (depuis
    * Welcome -> J'ai déjà un code, sans numéro mémorisé sur cet appareil). */
   mode?: "register" | "login";
   from?: Location;
+  /** Numéro déjà saisi lors d'un passage précédent (corr. Gate Auth
+   * navigation §20) — préremplit le champ au retour depuis l'étape suivante,
+   * l'utilisateur n'a qu'à le corriger, jamais tout retaper. Toujours l'E.164
+   * normalisé (jamais le PIN — celui-ci ne transite JAMAIS par location.state,
+   * corr. §21). */
+  phoneE164?: string;
+}
+
+/** E.164 -> saisie locale affichable dans le champ (ex. "+221770000001" ->
+ * "77 000 00 01"), inverse de `normalizePhoneSenegal` — uniquement pour
+ * préremplir l'input, jamais envoyé tel quel au serveur. */
+function localDigitsForInput(e164: string): string {
+  const local = e164.startsWith("+221") ? e164.slice(4) : e164;
+  return (local.match(/.{1,2}/g) ?? [local]).join(" ");
 }
 
 // Étape PURE numéro — ne parle plus jamais directement à Supabase (pivot
@@ -25,7 +40,7 @@ export default function PhoneEntry() {
   const mode = state?.mode ?? "register";
   const from = state?.from;
 
-  const [rawPhone, setRawPhone] = useState("");
+  const [rawPhone, setRawPhone] = useState(() => (state?.phoneE164 ? localDigitsForInput(state.phoneE164) : ""));
   const [error, setError] = useState<string | null>(null);
 
   const normalized = normalizePhoneSenegal(rawPhone);
@@ -43,21 +58,26 @@ export default function PhoneEntry() {
   }
 
   return (
-    <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.22, ease: "easeOut" }}>
-      <div className="glass-card rounded-3xl shadow-soft p-6 lg:p-10 flex flex-col gap-5">
-        <div className="flex items-center gap-3">
-          <span aria-hidden="true" className="flex h-12 w-12 flex-none items-center justify-center rounded-full bg-amber-tile/20 text-amber-tile">
-            <IconPhone size={22} />
+    <motion.div initial={{ opacity: 0, y: 14 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.28, ease: "easeOut" }}>
+      <div className="glass-card rounded-4xl shadow-lift p-8 lg:p-11 flex flex-col gap-7">
+        <AuthBackButton onClick={() => navigate("/connexion")} />
+        <div className="flex flex-col items-center gap-4 text-center">
+          <span
+            aria-hidden="true"
+            className="flex h-16 w-16 items-center justify-center rounded-full text-amber-tile"
+            style={{ background: "radial-gradient(circle at 35% 30%, color-mix(in oklab, var(--color-amber-tile) 30%, transparent), color-mix(in oklab, var(--color-amber-tile) 12%, transparent))" }}
+          >
+            <IconPhone size={28} />
           </span>
-          <h1 className="text-lg font-bold text-ink">Ton numéro</h1>
+          <h1 className="font-display text-2xl font-bold text-ink">Ton numéro</h1>
         </div>
 
         <div>
           <label htmlFor="phone-input" className="mb-2 block text-[11px] font-bold uppercase tracking-wide text-ink-soft">
             Numéro de téléphone
           </label>
-          <div className="glass-input flex items-center gap-2 rounded-2xl px-4 py-3.5 focus-within:ring-2 focus-within:ring-indigo">
-            <span className="flex-none text-base font-bold text-ink" aria-hidden="true">
+          <div className="glass-input flex items-center gap-3 rounded-2xl px-5 py-4 focus-within:ring-2 focus-within:ring-indigo">
+            <span className="flex-none text-lg font-bold text-ink" aria-hidden="true">
               +221
             </span>
             <input
@@ -71,7 +91,7 @@ export default function PhoneEntry() {
               onChange={(e) => setRawPhone(e.target.value)}
               aria-describedby={error ? errorId : undefined}
               aria-invalid={error ? true : undefined}
-              className="w-full min-w-0 bg-transparent py-3 text-base outline-none placeholder:text-ink-soft"
+              className="w-full min-w-0 bg-transparent py-1 text-lg outline-none placeholder:text-ink-faint"
             />
           </div>
         </div>
@@ -89,7 +109,7 @@ export default function PhoneEntry() {
           disabled={!canSubmit}
           onClick={handleSubmit}
           className={
-            "mt-2 flex min-h-13 items-center justify-center gap-2 rounded-2xl px-4 py-4 font-bold shadow-soft transition-colors " +
+            "flex min-h-14 items-center justify-center gap-2 rounded-2xl px-4 py-4 text-base font-bold shadow-soft transition-colors " +
             (canSubmit ? "bg-amber-tile text-[#2a1c04]" : "bg-surface-3 text-ink-faint")
           }
         >

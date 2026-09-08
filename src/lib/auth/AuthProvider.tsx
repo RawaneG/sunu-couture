@@ -98,13 +98,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const register = useCallback(async (phoneE164: string, pin: string): Promise<PinAuthResult> => {
     const { error: authError } = await authRepository.register(phoneE164, pin);
-    if (authError) return { ok: false, message: authError.message };
+    if (authError) return { ok: false, code: authError.code, message: authError.message };
     return { ok: true };
   }, []);
 
   const login = useCallback(async (phoneE164: string, pin: string): Promise<PinAuthResult> => {
     const { error: authError } = await authRepository.login(phoneE164, pin);
-    if (authError) return { ok: false, message: authError.message };
+    if (authError) return { ok: false, code: authError.code, message: authError.message };
     return { ok: true };
   }, []);
 

@@ -222,7 +222,7 @@ export const IconShieldCheck = base(
     <path d="M9 12 11.2 14.2 15.5 9.8" />
   </>
 );
-// Pivot Gate Auth — écrans PIN (Welcome/PinCreate/PinConfirm/PinLogin)
+// Pivot Gate Auth — écrans PIN (Welcome/CreatePinFlow/PinLogin)
 export const IconLock = base(
   <>
     <rect x="5" y="10.5" width="14" height="9.5" rx="2.2" />

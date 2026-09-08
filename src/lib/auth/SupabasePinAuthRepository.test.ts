@@ -63,6 +63,26 @@ describe("SupabasePinAuthRepository — register()", () => {
     const { error } = await repo.register("+221770000001", "1234");
     expect(error?.message).not.toMatch(/PostgREST|JWT|Supabase|Edge Function|500/i);
   });
+
+  // Corr. Gate Auth handoff §7/§11/§12/§36 — bug observé pendant le Gate : le
+  // serveur RÉUSSIT réellement (compte + atelier + session créés, tokens
+  // reçus) mais l'ACTIVATION locale de la session échoue (`setSession()`).
+  // Ce cas doit être distingué par un code dédié, jamais confondu avec un
+  // échec serveur générique (qui laisserait croire à l'appelant que rien n'a
+  // été créé, menant à un second `register()` -> 409 phone_in_use, l'impasse
+  // observée pendant le Gate).
+  it("register() réussit côté serveur (tokens reçus) mais setSession() échoue -> code 'session_activation_failed', jamais 'unknown'/générique", async () => {
+    mockInvoke.mockResolvedValue({ data: { access_token: "at-1", refresh_token: "rt-1" }, error: null });
+    mockSetSession.mockResolvedValue({ data: { session: null }, error: { name: "AuthApiError", status: 401, message: "invalid claim: missing sub claim" } });
+
+    const repo = new SupabasePinAuthRepository();
+    const { session, error } = await repo.register("+221770000001", "1234");
+
+    expect(mockSetSession).toHaveBeenCalledWith({ access_token: "at-1", refresh_token: "rt-1" });
+    expect(session).toBeNull();
+    expect(error?.code).toBe("session_activation_failed");
+    expect(error?.message).not.toMatch(/PostgREST|JWT|Supabase|Edge Function|AuthApiError|401|missing sub claim/i);
+  });
 });
 
 describe("SupabasePinAuthRepository — login()", () => {

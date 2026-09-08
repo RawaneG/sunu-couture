@@ -1,8 +1,8 @@
 import { useEffect, useId, useState } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 import type { Location } from "react-router-dom";
-import { motion } from "framer-motion";
 import PinPad from "../../components/auth/PinPad";
+import PinScreenCard from "../../components/auth/PinScreenCard";
 import AuthLoading from "../../components/auth/AuthLoading";
 import { IconAlert } from "../../lib/icons";
 import { haptic } from "../../lib/haptics";
@@ -57,7 +57,12 @@ export default function PinLogin() {
     setSubmitting(false);
     if (!result.ok) {
       haptic([10, 40, 10]);
-      setError(result.message);
+      // `session_activation_failed` (corr. Gate Auth handoff §12) : les
+      // identifiants ont réellement été vérifiés côté serveur — un simple
+      // message + nouvelle saisie suffit ici (contrairement à `register()`,
+      // relancer `login()` n'a aucun effet de bord, jamais de risque de
+      // doublon/409) — jamais le jargon technique sous-jacent (§16).
+      setError(result.code === "session_activation_failed" ? "Connexion en cours de finalisation. Réessaie." : result.message);
       setShake(true);
       setTimeout(() => setShake(false), 400);
       setPin("");
@@ -73,46 +78,52 @@ export default function PinLogin() {
     navigate("/connexion/numero", { state: { mode: "login" } });
   }
 
+  // Retour déterministe (corr. Gate Auth navigation §19) — uniquement pour un
+  // numéro fraîchement saisi (via /connexion/numero) : le préremplit au
+  // retour (§20). Sur un appareil déjà reconnu ("Bon retour"), « Ce n'est pas
+  // mon numéro » ci-dessous est déjà la sortie évidente de cet écran (§17) —
+  // un second bouton Retour ferait doublon, jamais ajouté ici.
+  function handleBack() {
+    navigate("/connexion/numero", { state: { mode: "login", phoneE164, from } });
+  }
+
   if (submitting) return <AuthLoading text="Connexion…" />;
 
   return (
-    <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.22, ease: "easeOut" }}>
-      <div className="glass-card rounded-3xl shadow-soft p-6 lg:p-10 flex flex-col items-center gap-6 text-center">
-        <div>
-          <h1 className="text-lg font-bold text-ink">{isRemembered ? "Bon retour" : "Entre ton code"}</h1>
-          {isRemembered && <p className="mt-1 text-sm text-ink-soft">{maskPhoneSenegalDisplay(phoneE164)}</p>}
-        </div>
+    <PinScreenCard
+      title={isRemembered ? "Bon retour" : "Entre ton code"}
+      subtitle={isRemembered ? maskPhoneSenegalDisplay(phoneE164) : undefined}
+      onBack={isRemembered ? undefined : handleBack}
+    >
+      <PinPad value={pin} onChange={setPin} onComplete={handleComplete} length={4} label="Entre ton code" autoFocus shake={shake} />
 
-        <PinPad value={pin} onChange={setPin} onComplete={handleComplete} length={4} label="Entre ton code" autoFocus shake={shake} />
+      {error && (
+        <p id={errorId} role="alert" aria-live="assertive" className="flex items-start gap-2 text-sm font-semibold text-terracotta">
+          <IconAlert size={16} className="mt-0.5 flex-none" />
+          <span>{error}</span>
+        </p>
+      )}
 
-        {error && (
-          <p id={errorId} role="alert" aria-live="assertive" className="flex items-start gap-2 text-sm font-semibold text-terracotta">
-            <IconAlert size={16} className="mt-0.5 flex-none" />
-            <span>{error}</span>
+      <div className="flex flex-col items-center gap-2 text-sm">
+        {isRemembered && (
+          <button type="button" onClick={handleNotMyNumber} className="min-h-11 font-semibold text-ink-soft underline decoration-dotted underline-offset-4">
+            Ce n'est pas mon numéro
+          </button>
+        )}
+        <button
+          type="button"
+          onClick={() => setForgotOpen((o) => !o)}
+          aria-expanded={forgotOpen}
+          className="min-h-11 font-semibold text-ink-soft underline decoration-dotted underline-offset-4"
+        >
+          Code oublié ?
+        </button>
+        {forgotOpen && (
+          <p role="status" className="max-w-xs text-xs text-ink-soft">
+            Contacte l'assistance Tayoo pour récupérer ton accès.
           </p>
         )}
-
-        <div className="flex flex-col items-center gap-2 text-sm">
-          {isRemembered && (
-            <button type="button" onClick={handleNotMyNumber} className="min-h-11 font-semibold text-ink-soft underline decoration-dotted underline-offset-4">
-              Ce n'est pas mon numéro
-            </button>
-          )}
-          <button
-            type="button"
-            onClick={() => setForgotOpen((o) => !o)}
-            aria-expanded={forgotOpen}
-            className="min-h-11 font-semibold text-ink-soft underline decoration-dotted underline-offset-4"
-          >
-            Code oublié ?
-          </button>
-          {forgotOpen && (
-            <p role="status" className="max-w-xs text-xs text-ink-soft">
-              Contacte l'assistance Tayoo pour récupérer ton accès.
-            </p>
-          )}
-        </div>
       </div>
-    </motion.div>
+    </PinScreenCard>
   );
 }
