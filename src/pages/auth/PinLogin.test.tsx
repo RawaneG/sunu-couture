@@ -14,13 +14,18 @@ function Probe() {
   return <div data-testid="probe">app métier — {JSON.stringify(location.pathname)}</div>;
 }
 
+function NumeroProbe() {
+  const location = useLocation();
+  return <div data-testid="numero-probe">{JSON.stringify(location.state)}</div>;
+}
+
 function renderPinLogin(state?: { phoneE164?: string }, initialPath = "/connexion/code") {
   return render(
     <MemoryRouter initialEntries={[{ pathname: initialPath, state }]}>
       <Routes>
         <Route path="/connexion/code" element={<PinLogin />} />
         <Route path="/connexion" element={<div>ÉCRAN ACCUEIL</div>} />
-        <Route path="/connexion/numero" element={<div>ÉCRAN NUMÉRO</div>} />
+        <Route path="/connexion/numero" element={<NumeroProbe />} />
         <Route path="/" element={<Probe />} />
       </Routes>
     </MemoryRouter>,
@@ -58,8 +63,23 @@ describe("PinLogin — connexion via PIN (corr. Gate Auth §6/§34/§46/§48)", 
     const user = userEvent.setup();
     renderPinLogin();
     await user.click(screen.getByText(/ce n'est pas mon numéro/i));
-    expect(screen.getByText("ÉCRAN NUMÉRO")).toBeInTheDocument();
+    expect(screen.getByTestId("numero-probe")).toBeInTheDocument();
     expect(localStorage.getItem("tayoo:last-phone")).toBeNull();
+  });
+
+  // Corr. Gate Auth navigation §18/§19/§20
+  it("Retour (numéro fraîchement saisi) -> /connexion/numero, numéro préservé pour préremplissage", async () => {
+    const user = userEvent.setup();
+    renderPinLogin({ phoneE164: "+221770000001" });
+    await user.click(screen.getByRole("button", { name: "Retour" }));
+    expect(await screen.findByTestId("numero-probe")).toBeInTheDocument();
+    expect(JSON.parse(screen.getByTestId("numero-probe").textContent!)).toMatchObject({ mode: "login", phoneE164: "+221770000001" });
+  });
+
+  it("appareil reconnu ('Bon retour') -> aucun bouton Retour redondant (« Ce n'est pas mon numéro » est déjà la sortie évidente)", () => {
+    localStorage.setItem("tayoo:last-phone", "+221770000099");
+    renderPinLogin();
+    expect(screen.queryByRole("button", { name: "Retour" })).not.toBeInTheDocument();
   });
 
   it("PIN correct -> login() appelé une fois, navigation vers l'app métier, numéro mémorisé", async () => {
@@ -74,7 +94,7 @@ describe("PinLogin — connexion via PIN (corr. Gate Auth §6/§34/§46/§48)", 
   });
 
   it("PIN incorrect -> message générique 'Numéro ou code incorrect.', reste sur l'écran", async () => {
-    mockLogin.mockResolvedValue({ ok: false, message: "Numéro ou code incorrect." });
+    mockLogin.mockResolvedValue({ ok: false, code: "invalid_credentials", message: "Numéro ou code incorrect." });
     renderPinLogin({ phoneE164: "+221770000001" });
     fireEvent.change(screen.getByLabelText("Entre ton code"), { target: { value: "0000" } });
 
@@ -83,13 +103,26 @@ describe("PinLogin — connexion via PIN (corr. Gate Auth §6/§34/§46/§48)", 
   });
 
   it("verrouillage -> message générique de blocage, jamais de détail technique", async () => {
-    mockLogin.mockResolvedValue({ ok: false, message: "Trop d'essais. Réessaie dans quelques minutes." });
+    mockLogin.mockResolvedValue({ ok: false, code: "locked", message: "Trop d'essais. Réessaie dans quelques minutes." });
     renderPinLogin({ phoneE164: "+221770000001" });
     fireEvent.change(screen.getByLabelText("Entre ton code"), { target: { value: "0000" } });
 
     const alert = await screen.findByRole("alert");
     expect(alert).toHaveTextContent("Trop d'essais. Réessaie dans quelques minutes.");
     expect(alert.textContent).not.toMatch(/PostgREST|JWT|Supabase|Edge Function|HTTP|500/i);
+  });
+
+  // Corr. Gate Auth handoff §12/§16 — les identifiants ont réellement été
+  // vérifiés côté serveur ; relancer login() est sans risque (jamais de
+  // 409) — message dédié, jamais le fallback générique ni de jargon technique.
+  it("session_activation_failed -> message dédié 'Connexion en cours de finalisation. Réessaie.', jamais le message générique ni de jargon", async () => {
+    mockLogin.mockResolvedValue({ ok: false, code: "session_activation_failed", message: "Connexion impossible. Réessaie." });
+    renderPinLogin({ phoneE164: "+221770000001" });
+    fireEvent.change(screen.getByLabelText("Entre ton code"), { target: { value: "1234" } });
+
+    const alert = await screen.findByRole("alert");
+    expect(alert).toHaveTextContent("Connexion en cours de finalisation. Réessaie.");
+    expect(alert.textContent).not.toMatch(/setSession|JWT|401|Supabase/i);
   });
 
   it("RÉGRESSION — aucune boucle de soumission : login() n'est appelé qu'une seule fois même après le passage par l'écran de chargement", async () => {

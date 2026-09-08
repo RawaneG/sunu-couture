@@ -16,23 +16,27 @@ export default function Welcome() {
   const from = (location.state as { from?: Location } | null)?.from;
 
   return (
-    <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.22, ease: "easeOut" }}>
-      <div className="glass-card rounded-3xl shadow-soft p-6 lg:p-10 flex flex-col items-center gap-6 text-center">
-        <span aria-hidden="true" className="flex h-16 w-16 items-center justify-center rounded-full bg-amber-tile/20 text-amber-tile">
-          <IconSpool size={30} />
+    <motion.div initial={{ opacity: 0, y: 14 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.28, ease: "easeOut" }}>
+      <div className="glass-card rounded-4xl shadow-lift p-8 lg:p-12 flex flex-col items-center gap-7 text-center">
+        <span
+          aria-hidden="true"
+          className="flex h-20 w-20 items-center justify-center rounded-full text-amber-tile"
+          style={{ background: "radial-gradient(circle at 35% 30%, color-mix(in oklab, var(--color-amber-tile) 30%, transparent), color-mix(in oklab, var(--color-amber-tile) 12%, transparent))" }}
+        >
+          <IconSpool size={36} />
         </span>
 
         <div>
-          <h1 className="text-xl font-bold text-ink">Bienvenue sur Tayoo</h1>
-          <p className="mt-1 text-sm text-ink-soft">Ton carnet, toujours avec toi.</p>
+          <h1 className="font-display text-3xl font-bold text-ink text-balance">Bienvenue sur Tayoo</h1>
+          <p className="mt-2 text-base text-ink-soft">Ton carnet, toujours avec toi.</p>
         </div>
 
-        <div className="flex w-full flex-col gap-3">
+        <div className="flex w-full flex-col gap-3 pt-2">
           <motion.button
             type="button"
             whileTap={{ scale: 0.97 }}
             onClick={() => navigate("/connexion/numero", { state: { mode: "register", from } })}
-            className="flex min-h-13 items-center justify-center rounded-2xl bg-amber-tile px-4 py-4 font-bold text-[#2a1c04] shadow-soft"
+            className="flex min-h-14 items-center justify-center rounded-2xl bg-amber-tile px-4 py-4 text-base font-bold text-[#2a1c04] shadow-soft"
           >
             Commencer
           </motion.button>

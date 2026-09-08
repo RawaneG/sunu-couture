@@ -17,11 +17,11 @@ import ModeleDetail from "./pages/ModeleDetail";
 import LegacySauvegarde from "./pages/LegacySauvegarde";
 import ConnexionEntry from "./pages/auth/ConnexionEntry";
 import PhoneEntry from "./pages/auth/PhoneEntry";
-import PinCreate from "./pages/auth/PinCreate";
-import PinConfirm from "./pages/auth/PinConfirm";
+import CreatePinFlow from "./pages/auth/CreatePinFlow";
 import PinLogin from "./pages/auth/PinLogin";
 import { AuthProvider } from "./lib/auth/AuthProvider";
 import RequireAuth from "./lib/auth/RequireAuth";
+import AuthPublicRoute from "./lib/auth/AuthPublicRoute";
 import { RepositoryProvider } from "./repositories/RepositoryProvider";
 // Seul endroit de ce fichier — et de toute l'application — qui importe le
 // client Supabase concret ET `createSupabaseGateway()` en dehors de
@@ -48,13 +48,17 @@ function OrderToFicheRedirect() {
   return <Navigate to={`/carnet/${id}`} replace />;
 }
 
-// Les 3 routes d'authentification vivent dans AuthLayout (pas AppShell) :
-// aucune navigation métier, carte centrée — voir AuthLayout.tsx.
+// Les routes d'authentification vivent dans AuthLayout (pas AppShell) :
+// aucune navigation métier, carte centrée — voir AuthLayout.tsx. `AuthPublicRoute`
+// (corr. Gate Auth navigation §25/§26) empêche une session déjà "ready" de
+// revisiter ces écrans (Back navigateur après connexion, notamment).
 function AuthRoute() {
   return (
-    <AuthLayout>
-      <Outlet />
-    </AuthLayout>
+    <AuthPublicRoute>
+      <AuthLayout>
+        <Outlet />
+      </AuthLayout>
+    </AuthPublicRoute>
   );
 }
 
@@ -103,14 +107,18 @@ export default function App() {
         <Route element={<AuthRoute />}>
           <Route path="/connexion" element={<ConnexionEntry />} />
           <Route path="/connexion/numero" element={<PhoneEntry />} />
-          <Route path="/connexion/creer-code" element={<PinCreate />} />
-          <Route path="/connexion/confirmer-code" element={<PinConfirm />} />
+          <Route path="/connexion/creer-code" element={<CreatePinFlow />} />
           <Route path="/connexion/code" element={<PinLogin />} />
           {/* Ancienne étape "nom de l'atelier" (pivot Gate Auth : l'atelier est
               désormais créé automatiquement côté serveur, jamais demandé) —
               redirection de compatibilité pour d'anciens liens, jamais un
               écran mort. */}
           <Route path="/connexion/atelier" element={<Navigate to="/connexion" replace />} />
+          {/* Ancienne route "confirmer-code" (create/confirm fusionnés dans
+              CreatePinFlow, corr. Gate Auth handoff §21/§22 — le PIN ne doit
+              plus jamais transiter par location.state entre deux routes) —
+              redirection de compatibilité, jamais un écran mort. */}
+          <Route path="/connexion/confirmer-code" element={<Navigate to="/connexion/creer-code" replace />} />
         </Route>
 
         <Route element={<ProtectedAppRoute />}>

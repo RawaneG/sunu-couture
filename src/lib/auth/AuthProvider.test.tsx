@@ -128,7 +128,7 @@ describe("AuthProvider — register()/login() (corr. Gate Auth §38)", () => {
     expect(result).toEqual({ ok: true });
   });
 
-  it("login() renvoie { ok: false, message } sur échec — jamais de jargon technique exposé", async () => {
+  it("login() renvoie { ok: false, code, message } sur échec — jamais de jargon technique exposé, code préservé pour la logique UI (corr. Gate Auth handoff §15)", async () => {
     mockGetSession.mockResolvedValue(null);
     mockLogin.mockResolvedValue({ session: null, error: { code: "invalid_credentials", message: "Numéro ou code incorrect." } });
 
@@ -145,6 +145,26 @@ describe("AuthProvider — register()/login() (corr. Gate Auth §38)", () => {
     await waitFor(() => expect(mockGetSession).toHaveBeenCalled());
 
     const result = await auth.login("+221770000009", "0000");
-    expect(result).toEqual({ ok: false, message: "Numéro ou code incorrect." });
+    expect(result).toEqual({ ok: false, code: "invalid_credentials", message: "Numéro ou code incorrect." });
+  });
+
+  it("register() renvoie { ok: false, code: 'session_activation_failed' } quand le serveur a réussi mais setSession() a échoué (corr. Gate Auth handoff §12/§36) — jamais confondu avec un échec serveur générique", async () => {
+    mockGetSession.mockResolvedValue(null);
+    mockRegister.mockResolvedValue({ session: null, error: { code: "session_activation_failed", message: "Connexion impossible. Réessaie." } });
+
+    let auth!: ReturnType<typeof useAuth>;
+    function Capture() {
+      auth = useAuth();
+      return null;
+    }
+    render(
+      <AuthProvider>
+        <Capture />
+      </AuthProvider>,
+    );
+    await waitFor(() => expect(mockGetSession).toHaveBeenCalled());
+
+    const result = await auth.register("+221770000003", "1234");
+    expect(result).toEqual({ ok: false, code: "session_activation_failed", message: "Connexion impossible. Réessaie." });
   });
 });

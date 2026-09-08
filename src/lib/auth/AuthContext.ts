@@ -9,7 +9,7 @@
 // `<RepositoryProvider>` seul, sans `<AuthProvider>` ni mock Supabase — d'où
 // ce module séparé, qui ne dépend d'aucun repository Auth concret.
 import { createContext, useContext } from "react";
-import type { AuthSession } from "./AuthRepository";
+import type { AuthError, AuthSession } from "./AuthRepository";
 import type { Workshop } from "../workshop/provisionWorkshop";
 
 /** États du cycle de vie Auth (corr. Gate Auth §38) :
@@ -23,7 +23,14 @@ import type { Workshop } from "../workshop/provisionWorkshop";
  *                       erreur serveur) — jamais un blocage silencieux. */
 export type AuthStatus = "initializing" | "signed_out" | "provisioning" | "ready" | "error";
 
-export type PinAuthResult = { ok: true } | { ok: false; message: string };
+/** `code` correspond exactement à `AuthError["code"]` — jamais un texte à
+ * parser (corr. Gate Auth handoff §15) : chaque écran décide de son propre
+ * traitement (redirection, CTA, message) par ce code, jamais par le texte
+ * `message` (qui reste, lui, un filet d'affichage simple si l'écran n'a pas
+ * de traitement dédié pour ce code précis). */
+export type AuthErrorCode = AuthError["code"];
+
+export type PinAuthResult = { ok: true } | { ok: false; code: AuthErrorCode; message: string };
 
 export interface AuthContextValue {
   status: AuthStatus;

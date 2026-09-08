@@ -15,7 +15,22 @@ export interface AuthSession {
  * simple — jamais de jargon technique (PostgREST/JWT/Supabase/Edge Function/
  * code HTTP/stack trace), corr. Gate Auth §18. */
 export interface AuthError {
-  code: "invalid_phone" | "invalid_pin" | "phone_in_use" | "invalid_credentials" | "locked" | "offline" | "service_unreachable" | "unknown";
+  code:
+    | "invalid_phone"
+    | "invalid_pin"
+    | "phone_in_use"
+    | "invalid_credentials"
+    | "locked"
+    | "offline"
+    | "service_unreachable"
+    /** L'Edge Function a réellement réussi côté serveur (compte/session créés
+     * — `register()` — ou identifiants vérifiés — `login()`) MAIS
+     * `supabase.auth.setSession()` a échoué côté navigateur (corr. Gate Auth
+     * handoff §7/§12) : jamais confondu avec un échec serveur générique — le
+     * compte existe réellement, l'UI doit orienter vers « Entrer mon code »,
+     * jamais reproposer une inscription (qui échouerait en phone_in_use). */
+    | "session_activation_failed"
+    | "unknown";
   message: string;
 }
 
