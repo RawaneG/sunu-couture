@@ -14,12 +14,18 @@ interface SearchBundle {
 export default function PageHeader({
   title,
   backTo,
+  onBack,
   actions,
   search,
   hideActionsOnMobile = false,
 }: {
   title: string;
   backTo?: string;
+  /** Retour piloté par la page elle-même (ex. formulaire à confirmer avant de
+   * quitter, corr. Jakob's Law §15) — quand fourni, remplace la navigation
+   * directe de `backTo` : c'est alors l'appelant qui décide s'il navigue tout
+   * de suite ou affiche d'abord une confirmation. */
+  onBack?: () => void;
   actions?: ReactNode;
   search?: SearchBundle;
   hideActionsOnMobile?: boolean;
@@ -53,7 +59,12 @@ export default function PageHeader({
                 placeholder={search.placeholder}
                 className="w-full min-w-0 bg-transparent text-sm font-semibold outline-none placeholder:text-ink-faint placeholder:font-normal"
               />
-              <button type="button" onClick={closeSearch} aria-label="Fermer la recherche" className="flex-none text-ink-faint">
+              <button
+                type="button"
+                onClick={closeSearch}
+                aria-label="Fermer la recherche"
+                className="flex h-11 w-11 flex-none items-center justify-center rounded-full text-ink-faint"
+              >
                 <IconX size={15} />
               </button>
             </motion.div>
@@ -63,16 +74,27 @@ export default function PageHeader({
               initial={{ opacity: 0 }}
               animate={{ opacity: 1 }}
               transition={{ duration: 0.18 }}
-              className="flex flex-1 items-center gap-2.5 min-w-0"
+              className="flex flex-1 items-center gap-2 min-w-0"
             >
-              {backTo && (
-                <Link
-                  to={backTo}
-                  className="glass-chip flex h-8 w-8 flex-none items-center justify-center rounded-full text-ink shadow-soft ring-1 ring-line-strong/40 active:scale-90 transition-transform"
+              {onBack ? (
+                <button
+                  type="button"
+                  onClick={onBack}
+                  className="glass-chip flex h-11 w-11 flex-none items-center justify-center rounded-full text-ink shadow-soft ring-1 ring-line-strong/40 active:scale-90 transition-transform"
                   aria-label="Retour"
                 >
                   <IconBack size={16} />
-                </Link>
+                </button>
+              ) : (
+                backTo && (
+                  <Link
+                    to={backTo}
+                    className="glass-chip flex h-11 w-11 flex-none items-center justify-center rounded-full text-ink shadow-soft ring-1 ring-line-strong/40 active:scale-90 transition-transform"
+                    aria-label="Retour"
+                  >
+                    <IconBack size={16} />
+                  </Link>
+                )
               )}
               <span className="flex-1 truncate text-[15px] font-bold">{title}</span>
             </motion.div>
@@ -87,7 +109,7 @@ export default function PageHeader({
                 setSearchOpen(true);
               }}
               aria-label="Rechercher"
-              className="glass-chip flex h-8 w-8 flex-none items-center justify-center rounded-full text-ink-soft shadow-soft ring-1 ring-line-strong/40"
+              className="glass-chip flex h-11 w-11 flex-none items-center justify-center rounded-full text-ink-soft shadow-soft ring-1 ring-line-strong/40"
             >
               <IconSearch size={15} />
             </motion.button>

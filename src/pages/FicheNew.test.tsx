@@ -73,14 +73,21 @@ function FicheDestinationProbe() {
   return <p>Destination fiche : {id}</p>;
 }
 
+function ClientDestinationProbe() {
+  const { id } = useParams();
+  return <p>Retour au client : {id}</p>;
+}
+
 function renderFicheNew(fiches: FicheRepository, clients: ClientRepository = new FakeClientRepository([]), initialPath = "/carnet/nouvelle") {
   const container = { ...createRepositoryContainerFor("local"), fiches, clients };
   return render(
     <RepositoryProvider repositories={container}>
       <MemoryRouter initialEntries={[initialPath]}>
         <Routes>
+          <Route path="/" element={<p>Retour au carnet</p>} />
           <Route path="/carnet/nouvelle" element={<FicheNew />} />
           <Route path="/carnet/:id" element={<FicheDestinationProbe />} />
+          <Route path="/clients/:id" element={<ClientDestinationProbe />} />
         </Routes>
       </MemoryRouter>
     </RepositoryProvider>,
@@ -234,5 +241,73 @@ describe("FicheNew — préremplissage à partir du client", () => {
     expect(screen.getByDisplayValue("Awa")).toBeInTheDocument();
     expect(screen.getByDisplayValue("Diouf")).toBeInTheDocument();
     expect(screen.getByDisplayValue("77 512 44 08")).toBeInTheDocument();
+  });
+});
+
+// Corr. Jakob's Law §14/§15/§55 — Retour déterministe (vers le client
+// d'origine s'il y en a un, jamais systématiquement le carnet) + confirmation
+// uniquement si une saisie réelle serait perdue.
+describe("FicheNew — Retour et confirmation avant perte de saisie", () => {
+  it("aucune saisie -> Retour immédiat vers le carnet, aucune confirmation", async () => {
+    const user = userEvent.setup();
+    renderFicheNew(fakeFicheRepository(async () => "x"));
+
+    await user.click(screen.getByRole("button", { name: "Retour" }));
+    expect(await screen.findByText("Retour au carnet")).toBeInTheDocument();
+    expect(screen.queryByText("Quitter sans enregistrer ?")).not.toBeInTheDocument();
+  });
+
+  it("saisie réelle -> Retour affiche une confirmation ; « Continuer ici » reste sur l'écran, saisie conservée", async () => {
+    const user = userEvent.setup();
+    renderFicheNew(fakeFicheRepository(async () => "x"));
+
+    await user.type(screen.getByLabelText("Cou"), "42");
+    await user.click(screen.getByRole("button", { name: "Retour" }));
+
+    expect(await screen.findByText("Quitter sans enregistrer ?")).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Continuer ici" }));
+    expect(screen.queryByText("Quitter sans enregistrer ?")).not.toBeInTheDocument();
+    expect(screen.getByLabelText("Cou")).toHaveValue("42");
+  });
+
+  it("saisie réelle -> « Quitter » navigue vers le carnet, le brouillon est abandonné", async () => {
+    const user = userEvent.setup();
+    renderFicheNew(fakeFicheRepository(async () => "x"));
+
+    await user.type(screen.getByLabelText("Cou"), "42");
+    await user.click(screen.getByRole("button", { name: "Retour" }));
+    await user.click(await screen.findByRole("button", { name: "Quitter" }));
+
+    expect(await screen.findByText("Retour au carnet")).toBeInTheDocument();
+  });
+
+  it("ouverte depuis un client (?client=<id>) -> Retour va vers CE client, jamais le carnet", async () => {
+    const user = userEvent.setup();
+    renderFicheNew(fakeFicheRepository(async () => "x"), new FakeClientRepository([client1]), "/carnet/nouvelle?client=c1");
+
+    await user.click(await screen.findByRole("button", { name: "Retour" }));
+    expect(await screen.findByText("Retour au client : c1")).toBeInTheDocument();
+  });
+
+  it("le préremplissage depuis un client ne déclenche PAS de confirmation à lui seul (rien n'a été réellement saisi)", async () => {
+    const user = userEvent.setup();
+    renderFicheNew(fakeFicheRepository(async () => "x"), new FakeClientRepository([client1]), "/carnet/nouvelle?client=c1");
+
+    await waitFor(() => expect(screen.getByDisplayValue("Awa")).toBeInTheDocument());
+    await user.click(screen.getByRole("button", { name: "Retour" }));
+
+    expect(await screen.findByText("Retour au client : c1")).toBeInTheDocument();
+    expect(screen.queryByText("Quitter sans enregistrer ?")).not.toBeInTheDocument();
+  });
+});
+
+// Corr. demande explicite — formatage réactif « XX XXX XX XX » (2-3-2-2).
+describe("FicheNew — téléphone reformaté en direct", () => {
+  it("reformate visuellement en direct pendant la frappe", async () => {
+    const user = userEvent.setup();
+    renderFicheNew(fakeFicheRepository(async () => "x"));
+
+    await user.type(screen.getByLabelText("Téléphone"), "770123456");
+    expect(screen.getByLabelText("Téléphone")).toHaveValue("77 012 34 56");
   });
 });

@@ -7,6 +7,7 @@
 // clé `${modele.id}:${modele.nom}` force le remontage attendu.
 import { describe, expect, it } from "vitest";
 import { render, screen, waitFor } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { MemoryRouter, Routes, Route } from "react-router-dom";
 import type { Modele, TissuPhoto, VoiceNote } from "../lib/types";
 import type { ModeleRepository, NewModeleInput } from "../repositories/ModeleRepository";
@@ -91,6 +92,7 @@ function renderModeleDetail(modeles: ModeleRepository, media: MediaRepository) {
     <RepositoryProvider repositories={container}>
       <MemoryRouter initialEntries={["/catalogue/m1"]}>
         <Routes>
+          <Route path="/catalogue" element={<p>Retour au catalogue</p>} />
           <Route path="/catalogue/:id" element={<ModeleDetail />} />
         </Routes>
       </MemoryRouter>
@@ -110,5 +112,18 @@ describe("ModeleDetail — ModeleNomEditor resynchronisé après un changement a
     modeles.setNomFromServer("m1", "Robe B");
 
     await waitFor(() => expect(screen.getByLabelText("Nom du modèle")).toHaveValue("Robe B"));
+  });
+});
+
+// Corr. Jakob's Law §14/§53 — Catalogue → modèle → Retour, déterministe.
+describe("ModeleDetail — Retour", () => {
+  it("Retour -> /catalogue (jamais navigate(-1))", async () => {
+    const user = userEvent.setup();
+    const modeles = new FakeModeleRepository([{ id: "m1", nom: "Robe A", photos: [], patronPhotos: [], createdAt: "2026-01-01T00:00:00.000Z" }]);
+    renderModeleDetail(modeles, new FakeMediaRepository());
+
+    await screen.findByLabelText("Nom du modèle");
+    await user.click(screen.getByRole("link", { name: "Retour" }));
+    expect(await screen.findByText("Retour au catalogue")).toBeInTheDocument();
   });
 });

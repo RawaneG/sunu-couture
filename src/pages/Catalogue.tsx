@@ -62,7 +62,7 @@ export default function Catalogue() {
       type="button"
       onClick={handleAdd}
       aria-label="Nouveau modèle"
-      className="flex h-8 w-8 flex-none items-center justify-center rounded-full bg-indigo text-white shadow-soft active:scale-90 transition-transform lg:h-10 lg:w-10"
+      className="flex h-11 w-11 flex-none items-center justify-center rounded-full bg-indigo text-white shadow-soft active:scale-90 transition-transform lg:h-11 lg:w-11"
     >
       <IconPlus size={16} strokeWidth={2} />
     </button>

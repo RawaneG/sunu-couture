@@ -4,10 +4,11 @@ import { motion } from "framer-motion";
 import { useRepositories } from "../repositories/RepositoryProvider";
 import { useClient, useFiches } from "../repositories/hooks";
 import PageHeader from "../components/ui/PageHeader";
+import UnsavedChangesDialog from "../components/ui/UnsavedChangesDialog";
 import FicheChampCell from "../components/ui/FicheChampCell";
 import { IconCheck, IconPhone } from "../lib/icons";
 import { haptic } from "../lib/haptics";
-import { sanitizePhone } from "../lib/format";
+import { formatSenegalLocalNumber } from "../lib/phone";
 import { FICHE_MESURE_KEYS, FICHE_MESURE_LABELS, FICHE_INFO_KEYS, FICHE_INFO_LABELS } from "../lib/types";
 import type { FicheChampKey } from "../lib/types";
 import { emptyFicheDraft, isMeaningfulFicheDraft, type FicheDraft } from "../lib/ficheDraft";
@@ -33,9 +34,15 @@ export default function FicheNew() {
   const [draft, setDraft] = useState<FicheDraft>(emptyFicheDraft);
   const [creating, setCreating] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [leaveConfirmOpen, setLeaveConfirmOpen] = useState(false);
   // Évite de reprérremplir à chaque rerender une fois le client résolu — le
   // tailleur peut ensuite librement modifier/effacer les champs prérempils.
   const prefilledRef = useRef<string | null>(null);
+  // Référence de comparaison pour le formulaire "dirty" (corr. Jakob's Law
+  // §15) — le préremplissage depuis un client existant ne doit JAMAIS, à lui
+  // seul, déclencher une confirmation avant de quitter : seule une saisie
+  // RÉELLE du tailleur, au-delà de ce qui était déjà pré-rempli, compte.
+  const baselineDraftRef = useRef<FicheDraft>(emptyFicheDraft());
 
   useEffect(() => {
     if (!clientId || clientState.status !== "ready" || prefilledRef.current === clientId) return;
@@ -56,11 +63,26 @@ export default function FicheNew() {
           champs[key] = { valeur: lastFiche.champs[key]?.valeur ?? "", historique: [] };
         }
       }
-      return { ...current, clientId, prenom: prenom ?? "", nom: rest.join(" "), telephone: client.phone, champs };
+      const next = { ...current, clientId, prenom: prenom ?? "", nom: rest.join(" "), telephone: formatSenegalLocalNumber(client.phone), champs };
+      baselineDraftRef.current = next;
+      return next;
     });
   }, [clientId, clientState, allFiches]);
 
   const meaningful = useMemo(() => isMeaningfulFicheDraft(draft), [draft]);
+  const dirty = useMemo(() => JSON.stringify(draft) !== JSON.stringify(baselineDraftRef.current), [draft]);
+  // "Retour" logique (corr. Jakob's Law §14) : une fiche ouverte depuis un
+  // client précis retourne à CE client, jamais systématiquement au carnet.
+  const backDestination = clientId ? `/clients/${clientId}` : "/";
+
+  function handleBack() {
+    if (!dirty) {
+      navigate(backDestination);
+      return;
+    }
+    haptic();
+    setLeaveConfirmOpen(true);
+  }
 
   function setChampValeur(key: FicheChampKey, valeur: string) {
     setDraft((d) => ({ ...d, champs: { ...d.champs, [key]: { ...d.champs[key], valeur } } }));
@@ -122,7 +144,7 @@ export default function FicheNew() {
       onClick={() => void handleCreate()}
       disabled={creating}
       aria-label="Créer la fiche"
-      className="glass-chip flex h-8 w-8 flex-none items-center justify-center rounded-full text-teal shadow-soft ring-1 ring-line-strong/40 disabled:opacity-40 lg:h-10 lg:w-10"
+      className="glass-chip flex h-11 w-11 flex-none items-center justify-center rounded-full text-teal shadow-soft ring-1 ring-line-strong/40 disabled:opacity-40 lg:h-11 lg:w-11"
     >
       <IconCheck size={16} />
     </button>
@@ -130,7 +152,13 @@ export default function FicheNew() {
 
   return (
     <div>
-      <PageHeader title="Nouvelle fiche" backTo="/" actions={headerActions} />
+      <PageHeader title="Nouvelle fiche" onBack={handleBack} actions={headerActions} />
+
+      <UnsavedChangesDialog
+        open={leaveConfirmOpen}
+        onStay={() => setLeaveConfirmOpen(false)}
+        onLeave={() => navigate(backDestination)}
+      />
 
       {error && (
         <p role="alert" className="px-4 pt-2 text-[13px] font-semibold text-terracotta lg:px-10">
@@ -221,14 +249,17 @@ function NomField({ label, value, onChange }: { label: string; value: string; on
 }
 
 function TelephoneField({ value = "", onChange }: { value: string | undefined; onChange: (v: string) => void }) {
-  const digits = value.replace(/\s/g, "");
+  // Reformate à l'affichage — pas seulement à la frappe (corr. demande
+  // explicite) : couvre aussi un numéro déjà enregistré dans un ancien format.
+  const displayValue = formatSenegalLocalNumber(value);
+  const digits = displayValue.replace(/\s/g, "");
   return (
     <label className="flex flex-wrap items-baseline gap-x-2 gap-y-1 border-b border-dotted border-line-strong py-2">
       <span className="flex-none text-[13px] font-bold text-ink-soft">Téléphone</span>
       <span className="flex min-w-22 flex-1 items-center justify-end gap-2">
         <input
-          value={value}
-          onChange={(e) => onChange(sanitizePhone(e.target.value))}
+          value={displayValue}
+          onChange={(e) => onChange(formatSenegalLocalNumber(e.target.value))}
           type="tel"
           inputMode="numeric"
           placeholder="77 000 00 00"
@@ -237,8 +268,8 @@ function TelephoneField({ value = "", onChange }: { value: string | undefined; o
         {digits && (
           <a
             href={`tel:${digits}`}
-            aria-label={`Appeler le ${value}`}
-            className="flex h-7 w-7 flex-none items-center justify-center rounded-full bg-teal text-white active:scale-90 transition-transform"
+            aria-label={`Appeler le ${displayValue}`}
+            className="flex h-11 w-11 flex-none items-center justify-center rounded-full bg-teal text-white active:scale-90 transition-transform"
           >
             <IconPhone size={12} />
           </a>

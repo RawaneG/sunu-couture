@@ -66,7 +66,7 @@ export default function PhotoCapture({
             type="button"
             onClick={remove}
             className={clsx(
-              "absolute z-10 flex h-8 w-8 items-center justify-center rounded-full bg-black/55 text-white backdrop-blur-md active:scale-90 transition-transform",
+              "absolute z-10 flex h-11 w-11 items-center justify-center rounded-full bg-black/55 text-white backdrop-blur-md active:scale-90 transition-transform",
               circle ? "-bottom-1 -right-1" : "right-2.5 top-2.5"
             )}
             aria-label="Retirer la photo"

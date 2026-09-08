@@ -150,7 +150,7 @@ export default function VoiceRecorder({
         <button
           type="button"
           onClick={togglePlay}
-          className="flex h-10 w-10 flex-none items-center justify-center rounded-full bg-indigo text-white"
+          className="flex h-11 w-11 flex-none items-center justify-center rounded-full bg-indigo text-white"
           aria-label={playing ? "Pause" : "Écouter"}
         >
           {playing ? <IconPause size={15} /> : <IconPlay size={15} />}
@@ -168,7 +168,7 @@ export default function VoiceRecorder({
         <button
           type="button"
           onClick={remove}
-          className="flex h-8 w-8 flex-none items-center justify-center rounded-full text-ink-faint hover:text-terracotta hover:bg-terracotta-tint"
+          className="flex h-11 w-11 flex-none items-center justify-center rounded-full text-ink-faint hover:text-terracotta hover:bg-terracotta-tint"
           aria-label="Supprimer la note vocale"
         >
           <IconTrash size={15} />

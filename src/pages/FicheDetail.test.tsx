@@ -198,6 +198,7 @@ function renderFicheDetail(fiches: FicheRepository, payments: PaymentRepository,
     <RepositoryProvider repositories={container}>
       <MemoryRouter initialEntries={["/carnet/f1"]}>
         <Routes>
+          <Route path="/" element={<p>Retour au carnet</p>} />
           <Route path="/carnet/:id" element={<FicheDetail />} />
         </Routes>
       </MemoryRouter>
@@ -357,5 +358,18 @@ describe("FicheDetail — prix serveur confirmé -> balance resynchronisée sans
 
     await waitFor(() => expect(refreshBalanceCalls).toBeGreaterThan(0));
     expect(await screen.findByText("8 000")).toBeInTheDocument();
+  });
+});
+
+// Corr. Jakob's Law §14/§53 — Accueil/Commandes → fiche → Retour, déterministe.
+describe("FicheDetail — Retour", () => {
+  it("Retour -> / (jamais navigate(-1))", async () => {
+    const user = userEvent.setup();
+    const fiches = new FakeFicheRepository(makeFiche());
+    const payments = new FakePaymentRepository({ balance: { price: 10000, paid: 0, reste: 10000 } });
+    renderFicheDetail(fiches, payments);
+
+    await user.click(await screen.findByRole("link", { name: "Retour" }));
+    expect(await screen.findByText("Retour au carnet")).toBeInTheDocument();
   });
 });

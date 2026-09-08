@@ -89,11 +89,6 @@ export function sanitizeMeasurement(value: string): string {
   return rest.length ? `${head}.${rest.join("")}` : head;
 }
 
-/** Digits and spaces only, for phone number entry. */
-export function sanitizePhone(value: string): string {
-  return value.replace(/[^\d\s]/g, "");
-}
-
 export function formatDuration(seconds: number): string {
   const m = Math.floor(seconds / 60);
   const s = Math.floor(seconds % 60);

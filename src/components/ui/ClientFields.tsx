@@ -1,4 +1,5 @@
 import PhotoCapture from "./PhotoCapture";
+import { formatSenegalLocalNumber } from "../../lib/phone";
 
 export default function ClientFields({
   photo,
@@ -25,8 +26,11 @@ export default function ClientFields({
       </div>
 
       <div>
-        <p className="mb-2 text-[11px] font-bold uppercase tracking-wide text-ink-faint">Nom</p>
+        <label htmlFor="client-name" className="mb-2 block text-[11px] font-bold uppercase tracking-wide text-ink-faint">
+          Nom
+        </label>
         <input
+          id="client-name"
           autoFocus={autoFocusName}
           value={name}
           onChange={(e) => onNameChange(e.target.value)}
@@ -36,10 +40,13 @@ export default function ClientFields({
       </div>
 
       <div>
-        <p className="mb-2 text-[11px] font-bold uppercase tracking-wide text-ink-faint">Téléphone</p>
+        <label htmlFor="client-phone" className="mb-2 block text-[11px] font-bold uppercase tracking-wide text-ink-faint">
+          Téléphone
+        </label>
         <input
+          id="client-phone"
           value={phone}
-          onChange={(e) => onPhoneChange(e.target.value)}
+          onChange={(e) => onPhoneChange(formatSenegalLocalNumber(e.target.value))}
           placeholder="77 000 00 00"
           inputMode="tel"
           className="glass-input w-full rounded-2xl px-4 py-3 text-sm font-semibold outline-none placeholder:text-ink-faint focus:bg-surface-3"

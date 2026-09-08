@@ -23,6 +23,13 @@ function base(paths: React.ReactNode) {
 }
 
 export const IconPlus = base(<path d="M12 5v14M5 12h14" />);
+export const IconLogout = base(
+  <>
+    <path d="M9 21H6a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h3" />
+    <path d="M16 17l5-5-5-5" />
+    <path d="M21 12H9" />
+  </>,
+);
 export const IconMinus = base(<path d="M5 12h14" />);
 export const IconHanger = base(
   <>

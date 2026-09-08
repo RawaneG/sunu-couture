@@ -1,5 +1,5 @@
 import { useMemo, useState } from "react";
-import { useSearchParams, useMatch } from "react-router-dom";
+import { useNavigate, useSearchParams, useMatch } from "react-router-dom";
 import { AnimatePresence, motion } from "framer-motion";
 import clsx from "clsx";
 import { useFiches, useClients } from "../repositories/hooks";
@@ -33,6 +33,7 @@ export default function OrdersList() {
   const fiches = useFiches();
   const clients = useClients();
   const { payments: paymentRepository } = useRepositories();
+  const navigate = useNavigate();
   const [params, setParams] = useSearchParams();
   const filter = params.get("filter") ?? "all";
   const activeMatch = useMatch("/commandes/:id");
@@ -94,7 +95,29 @@ export default function OrdersList() {
       </div>
 
       <div className="flex-1 lg:overflow-y-auto px-2.5 lg:px-6 pb-4">
-        {filtered.length === 0 ? (
+        {fiches.length === 0 ? (
+          // Genuinely empty (corr. Jakob's Law §23/§24) — jamais confondu avec
+          // "aucun résultat pour ce filtre/cette recherche".
+          <div className="mt-10 flex flex-col items-center gap-3 text-center text-ink-faint">
+            <span className="glass-chip flex h-14 w-14 items-center justify-center rounded-full">
+              <IconHanger size={24} />
+            </span>
+            <p className="text-sm font-semibold">Aucune commande</p>
+            <p className="max-w-60 text-[13px] text-ink-faint">
+              Crée ta première fiche pour suivre une commande.
+            </p>
+            <button
+              type="button"
+              onClick={() => {
+                haptic(16);
+                navigate("/commandes/nouvelle");
+              }}
+              className="mt-1 rounded-full bg-amber-tile px-4 py-2.5 text-[13px] font-bold text-[#2a1c04] shadow-soft"
+            >
+              Créer la fiche
+            </button>
+          </div>
+        ) : filtered.length === 0 ? (
           <div className="mt-10 flex flex-col items-center gap-3 text-ink-faint">
             <span className="glass-chip flex h-12 w-12 items-center justify-center rounded-full">
               <IconHanger size={22} />

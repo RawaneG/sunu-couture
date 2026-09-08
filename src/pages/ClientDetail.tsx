@@ -9,6 +9,7 @@ import OrderRow from "../components/ui/OrderRow";
 import ConfirmDialog from "../components/ui/ConfirmDialog";
 import { IconPhone, IconPlus, IconTrash } from "../lib/icons";
 import { haptic } from "../lib/haptics";
+import { formatSenegalLocalNumber } from "../lib/phone";
 
 export default function ClientDetail() {
   const { id } = useParams();
@@ -85,7 +86,7 @@ export default function ClientDetail() {
         setConfirmDeleteOpen(true);
       }}
       aria-label="Supprimer le client"
-      className="glass-chip flex h-8 w-8 flex-none items-center justify-center rounded-full text-terracotta shadow-soft ring-1 ring-line-strong/40 lg:h-10 lg:w-10"
+      className="glass-chip flex h-11 w-11 flex-none items-center justify-center rounded-full text-terracotta shadow-soft ring-1 ring-line-strong/40 lg:h-11 lg:w-11"
     >
       <IconTrash size={15} />
     </button>
@@ -122,7 +123,7 @@ export default function ClientDetail() {
           <Avatar photo={client.photo} seed={client.colorSeed} size={72} />
           <div className="min-w-0 flex-1">
             <p className="truncate text-lg font-extrabold">{client.name}</p>
-            <p className="text-[13px] text-ink-faint tabular-nums">{client.phone || "Numéro non renseigné"}</p>
+            <p className="text-[13px] text-ink-faint tabular-nums">{client.phone ? formatSenegalLocalNumber(client.phone) : "Numéro non renseigné"}</p>
           </div>
           {client.phone && (
             <a
