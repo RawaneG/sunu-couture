@@ -4,11 +4,27 @@ import type { AddPaymentInput, FicheBalance, Payment, PaymentRepository } from "
 import { addPaymentInputSchema, parseOrThrow } from "../schemas";
 import { subscribeToSlice } from "./subscribeToSlice";
 
+/** Référence STABLE — une fiche introuvable doit toujours renvoyer LE MÊME
+ * objet vide, jamais un objet frais à chaque appel (même bug que
+ * `ZERO_BALANCE` dans `SupabasePaymentRepository`, corr. §13 — sinon
+ * `useFichePayments`/`useSyncExternalStore` voit une "nouvelle" valeur à
+ * chaque rendu et boucle indéfiniment, `FicheDetail` y compris). */
+const ZERO_BALANCE: FicheBalance = { price: 0, paid: 0, reste: 0 };
+
 export class LocalStoragePaymentRepository implements PaymentRepository {
   // Cache par ficheId, tenu par référence de `fiches` — même raison que
   // LocalStorageCarnetRepository : `list()` doit renvoyer la MÊME référence
   // de tableau tant que rien n'a changé (instantané stable, useSyncExternalStore).
   private cache = new Map<string, { fiches: Fiche[]; result: Payment[] }>();
+
+  // Cache par ficheId, tenu par référence de LA FICHE elle-même (pas tout le
+  // tableau `fiches` — `getBalance()` ne dépend que d'UNE fiche) : sans ce
+  // cache, `getBalance()` construisait un objet `{price, paid, reste}` FRAIS
+  // à CHAQUE appel, même quand rien n'avait changé — violation directe du
+  // contrat `useSyncExternalStore` (`useFichePayments`, `hooks.ts`), qui
+  // provoquait une boucle de rendu infinie dès l'ouverture d'une fiche ayant
+  // un prix/avance renseigné.
+  private balanceCache = new Map<string, { fiche: Fiche; balance: FicheBalance }>();
 
   list(ficheId: string): Payment[] {
     const fiches = useStore.getState().fiches;
@@ -54,8 +70,12 @@ export class LocalStoragePaymentRepository implements PaymentRepository {
 
   getBalance(ficheId: string): FicheBalance {
     const fiche = useStore.getState().fiches.find((f) => f.id === ficheId);
-    if (!fiche) return { price: 0, paid: 0, reste: 0 };
-    return { price: fiche.price, paid: fiche.avance, reste: resteFor(fiche) };
+    if (!fiche) return ZERO_BALANCE;
+    const cached = this.balanceCache.get(ficheId);
+    if (cached && cached.fiche === fiche) return cached.balance;
+    const balance: FicheBalance = { price: fiche.price, paid: fiche.avance, reste: resteFor(fiche) };
+    this.balanceCache.set(ficheId, { fiche, balance });
+    return balance;
   }
 
   subscribe(listener: () => void): () => void {
